@@ -1,0 +1,3 @@
+name=AutoMindful multiplayer verification fixture
+id=AutoMindfulMPFixture
+description=Development-only fixture for a disposable loopback client.

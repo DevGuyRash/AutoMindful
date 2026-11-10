@@ -26,8 +26,13 @@ local function edible(item)
     return not required or required:isEmpty()
 end
 
+local function fluidFor(item)
+    local world = item:getWorldItem()
+    return (world and world:getFluidContainer()) or item:getFluidContainer()
+end
+
 local function drinkable(item)
-    local fluid = item:getFluidContainer()
+    local fluid = fluidFor(item)
     return fluid and not fluid:isEmpty() and fluid:canPlayerEmpty()
         and fluid:getCapacity() <= 3 and fluid:isPureFluid(Fluid.Water)
         and not fluid:isPoisonous() and not fluid:isTainted() and not item:isSealed()
@@ -88,7 +93,7 @@ function Supplies.choose(player, kind, includeNearby, rejected)
             local score = entry.owned and 100000 or 0
             if kind == "literature" then score = score - item:getBoredomChange()
             elseif kind == "food" then score = score + math.max(0, item:getCalories()) - item:getBoredomChange() * 5
-            else score = score + item:getFluidContainer():getAmount() end
+            else score = score + fluidFor(item):getAmount() end
             if not bestScore or score > bestScore then best, bestScore = entry, score end
         end
     end

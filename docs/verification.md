@@ -36,7 +36,7 @@ Cover these user journeys before a release:
 - Start at zero skill and verify normal Lifestyle yoga and meditation actions, native XP, natural session completion, and automatic resumption.
 - Exercise boredom above 30, useful and exhausted literature, food, clean water, endurance, embarrassment, fatigue, sleep, waking, and a missing required mat.
 - Enable nearby collection and verify actual transfers from reachable storage. Keep another room and floor inaccessible. Leave manual queued actions intact when cancelling automation.
-- Join an owned loopback multiplayer server as an ordinary player. Install Lifestyle on the server and leave AutoMindful on the client. Use the server's normal configuration to permit the client mod. Check training, care, and reconnect.
+- Join an owned loopback multiplayer server as an ordinary player. Install Lifestyle on the server and advertise AutoMindful through the server's normal mod list. All AutoMindful runtime Lua remains under `client`. Check training, care, and reconnect.
 - Stop all owned clients, servers, and displays. Remove disposable caches and retain only the logs, reports, packages, and screenshots needed to review the result.
 
 ## Evidence limits

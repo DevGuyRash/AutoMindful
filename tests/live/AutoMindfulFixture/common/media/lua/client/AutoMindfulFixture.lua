@@ -16,28 +16,21 @@ Events.OnMainMenuEnter.Add(function()
         onStart = function()
             local player = getSpecificPlayer(0)
             getCore():setOptionPauseOnFocusloss(false)
-            for i=1,8 do
-                player:getInventory():AddItem("Base.Crisps")
-            end
-            for i=1,2 do
-                local bottle = player:getInventory():AddItem("Base.WaterBottle")
-                if bottle and bottle:getFluidContainer() then
-                    bottle:getFluidContainer():Empty()
-                    bottle:getFluidContainer():addFluid(Fluid.Water, 1)
-                end
-            end
-            for i=1,10 do player:getInventory():AddItem("Base.Book") end
             local square = player:getSquare()
             for i=1,120 do square:AddWorldInventoryItem("Base.Crisps", 0.4, 0.4, 0) end
             for i=1,100 do square:AddWorldInventoryItem("Base.Book", 0.4, 0.4, 0) end
             for i=1,30 do
                 local bottle = square:AddWorldInventoryItem("Base.WaterBottle", 0.4, 0.4, 0)
-                if bottle and bottle:getFluidContainer() then
-                    bottle:getFluidContainer():Empty()
-                    bottle:getFluidContainer():addFluid(Fluid.Water, 1)
+                local world = bottle and bottle:getWorldItem()
+                local fluid = (world and world:getFluidContainer()) or (bottle and bottle:getFluidContainer())
+                if fluid then
+                    fluid:Empty()
+                    fluid:addFluid(Fluid.Water, 1)
                 end
             end
             player:getStats():set(CharacterStat.BOREDOM, 40)
+            player:getStats():set(CharacterStat.HUNGER, 0.25)
+            player:getStats():set(CharacterStat.THIRST, 0.25)
             print("[AutoMindfulFixture] SEEDED " .. tostring(getCore():getVersionNumber()))
         end}
     DebugScenarios.instance = DebugScenarios:new(0, 0, 100, 100)

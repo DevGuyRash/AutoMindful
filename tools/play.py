@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 import zipfile
 
 from build import build
@@ -76,9 +77,16 @@ def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[
                 owned.append(display)
                 os.close(write_fd)
                 write_fd = None
-                if not select.select([read_fd], [], [], 10)[0]:
-                    raise RuntimeError("Private display did not become ready")
-                display_name = ":" + os.read(read_fd, 32).decode().strip()
+                deadline, ready = time.monotonic() + 10, b""
+                while not ready.endswith(b"\n"):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not select.select([read_fd], [], [], remaining)[0]:
+                        raise RuntimeError("Private display did not become ready")
+                    chunk = os.read(read_fd, 32)
+                    if not chunk:
+                        raise RuntimeError("Private display closed its readiness pipe")
+                    ready += chunk
+                display_name = ":" + ready.decode().strip()
             finally:
                 os.close(read_fd)
                 if write_fd is not None:

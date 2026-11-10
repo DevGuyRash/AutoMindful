@@ -272,13 +272,19 @@ test("floor provisions use each world item's square when the synthetic container
     local S=require "AutoMindful/Supplies"; local p=T.playerNew(); local floor=T.container(); floor.floor=true
     function floor:getSourceGrid() return nil end
     local function ground(x, z)
-        return {getSquare=function() return {getX=function() return x end, getY=function() return 0 end, getZ=function() return z end} end}
+        return {getSquare=function() return {getX=function() return x end, getY=function() return 0 end, getZ=function() return z end} end,
+            getFluidContainer=function() return nil end}
     end
     T.add(floor,T.item("Food",{world=ground(1,0)}))
     T.add(floor,T.item("Food",{world=ground(2,0)}))
     T.add(floor,T.item("Food",{world=ground(0,1)}))
+    local bottle=T.water(); local fluid=bottle.fluid; bottle.fluid=nil
+    bottle.world=ground(0,0)
+    function bottle.world:getFluidContainer() return fluid end
+    T.add(floor,bottle)
     p.nearby={floor}
     assert(#S.scan(p,false).food == 0 and #S.scan(p,true).food == 1)
+    assert(#S.scan(p,true).water == 1 and S.choose(p,"water",true,{}).item == bottle)
 end)
 test("missing Lifestyle rejects start but status and preparation remain usable",function()
     local upstream=ZenWellnessContextMenu; ZenWellnessContextMenu=nil

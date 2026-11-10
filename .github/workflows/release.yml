@@ -16,7 +16,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: steam-workshop-publishing
@@ -33,6 +32,8 @@ jobs:
       sha: ${{ steps.source.outputs.sha }}
       tag: ${{ steps.source.outputs.tag }}
       publish: ${{ steps.source.outputs.publish }}
+      archive_sha256: ${{ steps.package.outputs.archive_sha256 }}
+      notes_sha256: ${{ steps.package.outputs.notes_sha256 }}
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
       PUBLISH_REQUESTED: ${{ github.event_name == 'release' || inputs.publish }}
@@ -66,15 +67,26 @@ jobs:
         run: |
           python3 tools/verify.py --tag "$RELEASE_TAG" --evidence "$RUNNER_TEMP/verification"
           python3 tools/workshop.py stage --tag "$RELEASE_TAG" --archive "$RUNNER_TEMP/verification/package/AutoMindful-${RELEASE_TAG#v}.zip" --manifest "$RUNNER_TEMP/verification/package/manifest.json" --out "$RUNNER_TEMP/workshop" --notes-file "$RUNNER_TEMP/release-notes.txt"
-      - name: Retain the checked package and upload folder
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: AutoMindful-${{ env.RELEASE_TAG }}
-          path: |
-            ${{ runner.temp }}/verification/package/
-            ${{ runner.temp }}/workshop/
-          if-no-files-found: error
-          retention-days: 30
+      - name: Record the checked release identity
+        id: package
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          package = json.loads((root / "verification/package/manifest.json").read_text())
+          values = {
+              "archive_sha256": package["archiveSha256"],
+              "notes_sha256": hashlib.sha256((root / "release-notes.txt").read_bytes()).hexdigest(),
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write("".join(f"{key}={value}\n" for key, value in values.items()))
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+              summary.write("Checked " + os.environ["RELEASE_TAG"] + "\n\n")
+              summary.write("".join(f"{key}: `{value}`\n\n" for key, value in values.items()))
+          PY
       - name: Require the latest published stable release
         if: github.event_name == 'release' || inputs.publish
         env:
@@ -86,7 +98,7 @@ jobs:
         if: github.event_name == 'release' || inputs.publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/verification/package/AutoMindful-${RELEASE_TAG#v}.zip" "$RUNNER_TEMP/verification/package/manifest.json" --clobber
+        run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/verification/package/AutoMindful-${RELEASE_TAG#v}.zip" "$RUNNER_TEMP/verification/package/manifest.json" "$RUNNER_TEMP/release-notes.txt" --clobber
   publish:
     needs: build
     if: needs.build.result == 'success' && needs.build.outputs.publish == 'true'
@@ -94,7 +106,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      actions: read
     env:
       RELEASE_TAG: ${{ needs.build.outputs.tag }}
     steps:
@@ -102,11 +113,17 @@ jobs:
         with:
           ref: ${{ needs.build.outputs.sha }}
           persist-credentials: false
-      - name: Download the immutable checked release artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: AutoMindful-${{ needs.build.outputs.tag }}
-          path: ${{ runner.temp }}/checked-release
+      - name: Download the checked release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "$RELEASE_TAG" --pattern "AutoMindful-${RELEASE_TAG#v}.zip" --pattern manifest.json --pattern release-notes.txt --dir "$RUNNER_TEMP/checked-release"
+      - name: Verify the cloud build identity and reconstruct its stage
+        env:
+          ARCHIVE_SHA256: ${{ needs.build.outputs.archive_sha256 }}
+          NOTES_SHA256: ${{ needs.build.outputs.notes_sha256 }}
+        run: |
+          python3 -c 'import hashlib,os; from pathlib import Path; root=Path(os.environ["RUNNER_TEMP"])/"checked-release"; tag=os.environ["RELEASE_TAG"]; assert hashlib.sha256((root/f"AutoMindful-{tag[1:]}.zip").read_bytes()).hexdigest()==os.environ["ARCHIVE_SHA256"],"Release archive differs from the passing cloud build"; assert hashlib.sha256((root/"release-notes.txt").read_bytes()).hexdigest()==os.environ["NOTES_SHA256"],"Release notes differ from the passing cloud build"'
+          python3 tools/workshop.py stage --tag "$RELEASE_TAG" --archive "$RUNNER_TEMP/checked-release/AutoMindful-${RELEASE_TAG#v}.zip" --manifest "$RUNNER_TEMP/checked-release/manifest.json" --notes-file "$RUNNER_TEMP/checked-release/release-notes.txt" --out "$RUNNER_TEMP/checked-release/workshop"
       - name: Recheck the latest published stable release before upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

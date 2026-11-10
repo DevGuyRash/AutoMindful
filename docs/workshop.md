@@ -33,10 +33,12 @@ systemctl --user disable --now automindful-workshop-runner.service
 
 ## Publish a version
 
-1. Change `modversion` in `mods/AutoMindful/42/mod.info` to the next stable version, such as `0.1.1`. This is the package version's authoritative source.
+1. Change `modversion` in `mods/AutoMindful/42/mod.info` to the next stable version, such as `0.1.2`. This is the package version's authoritative source.
 2. Merge the change to `main` after checks pass.
-3. Create and publish a GitHub release with the matching tag, such as `v0.1.1`, pointing to that commit on `main`.
-4. Wait for the **Release to Steam Workshop** workflow. It verifies the exact tagged source, stages the tested archive, attaches the package and manifest to the GitHub release, and sends that immutable artifact to the dedicated publishing runner. The runner checks out the verified source SHA, validates the artifact again, and updates the configured Workshop item.
+3. Create and publish a GitHub release with the matching tag, such as `v0.1.2`, pointing to that commit on `main`.
+4. Wait for the **Release to Steam Workshop** workflow. It verifies the exact tagged source, stages the tested archive, and attaches the package, manifest, and release-note snapshot to the GitHub release. The dedicated publishing runner checks out the verified source SHA, downloads those release assets, checks their hashes against the passing cloud job's outputs, reconstructs and validates the stage, and updates the configured Workshop item.
+
+The handoff uses release assets directly and does not require GitHub Actions artifact storage. Dry runs leave their checked hashes in the workflow summary and do not upload or publish a package.
 
 Draft releases and prereleases do not publish to Steam. Version mismatches, missing authentication, an invalid Workshop ID, a release outside `main`, or a failed check stop publication with an error. Uploads are serialized so two releases cannot change the item concurrently. Routine updates preserve the item's existing visibility. Make a hidden initial item public through its Workshop page when it is ready.
 
@@ -47,7 +49,7 @@ Use **Actions > Release to Steam Workshop > Run workflow** with a version tag to
 The staging command can also be exercised locally without Steam credentials:
 
 ```sh
-python3 tools/workshop.py stage --archive /path/to/AutoMindful-0.1.1.zip --manifest /path/to/manifest.json --tag v0.1.1 --out /path/to/new/workshop-stage
+python3 tools/workshop.py stage --archive /path/to/AutoMindful-0.1.2.zip --manifest /path/to/manifest.json --tag v0.1.2 --out /path/to/new/workshop-stage
 ```
 
 It accepts the archive and manifest from the passing build. It verifies their hashes, release version, allowed files, and client-only runtime before constructing the Workshop upload folder. The uploader sends only its `Contents` directory and preview image.

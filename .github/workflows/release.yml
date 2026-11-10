@@ -1,4 +1,4 @@
-name: Release to Steam Workshop
+name: Build release assets
 
 on:
   release:
@@ -10,7 +10,7 @@ on:
         required: true
         type: string
       publish:
-        description: Update the latest published release on Steam Workshop
+        description: Attach checked assets to the latest published GitHub release
         default: false
         type: boolean
 
@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: steam-workshop-publishing
+  group: release-assets
   cancel-in-progress: false
 
 jobs:
@@ -28,12 +28,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
-    outputs:
-      sha: ${{ steps.source.outputs.sha }}
-      tag: ${{ steps.source.outputs.tag }}
-      publish: ${{ steps.source.outputs.publish }}
-      archive_sha256: ${{ steps.package.outputs.archive_sha256 }}
-      notes_sha256: ${{ steps.package.outputs.notes_sha256 }}
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
       PUBLISH_REQUESTED: ${{ github.event_name == 'release' || inputs.publish }}
@@ -93,48 +87,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
-          test "$latest" = "$RELEASE_TAG" || { echo 'Only the latest published stable release may update Workshop.'; exit 1; }
+          test "$latest" = "$RELEASE_TAG" || { echo 'Only the latest published stable release may receive checked assets.'; exit 1; }
       - name: Attach the checked release archive
         if: github.event_name == 'release' || inputs.publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/verification/package/AutoMindful-${RELEASE_TAG#v}.zip" "$RUNNER_TEMP/verification/package/manifest.json" "$RUNNER_TEMP/release-notes.txt" --clobber
-  publish:
-    needs: build
-    if: needs.build.result == 'success' && needs.build.outputs.publish == 'true'
-    runs-on: [self-hosted, Linux, X64, automindful-publisher]
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    env:
-      RELEASE_TAG: ${{ needs.build.outputs.tag }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ needs.build.outputs.sha }}
-          persist-credentials: false
-      - name: Download the checked release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release download "$RELEASE_TAG" --pattern "AutoMindful-${RELEASE_TAG#v}.zip" --pattern manifest.json --pattern release-notes.txt --dir "$RUNNER_TEMP/checked-release"
-      - name: Verify the cloud build identity and reconstruct its stage
-        env:
-          ARCHIVE_SHA256: ${{ needs.build.outputs.archive_sha256 }}
-          NOTES_SHA256: ${{ needs.build.outputs.notes_sha256 }}
-        run: |
-          python3 -c 'import hashlib,os; from pathlib import Path; root=Path(os.environ["RUNNER_TEMP"])/"checked-release"; tag=os.environ["RELEASE_TAG"]; assert hashlib.sha256((root/f"AutoMindful-{tag[1:]}.zip").read_bytes()).hexdigest()==os.environ["ARCHIVE_SHA256"],"Release archive differs from the passing cloud build"; assert hashlib.sha256((root/"release-notes.txt").read_bytes()).hexdigest()==os.environ["NOTES_SHA256"],"Release notes differ from the passing cloud build"'
-          python3 tools/workshop.py stage --tag "$RELEASE_TAG" --archive "$RUNNER_TEMP/checked-release/AutoMindful-${RELEASE_TAG#v}.zip" --manifest "$RUNNER_TEMP/checked-release/manifest.json" --notes-file "$RUNNER_TEMP/checked-release/release-notes.txt" --out "$RUNNER_TEMP/checked-release/workshop"
-      - name: Recheck the latest published stable release before upload
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
-          test "$latest" = "$RELEASE_TAG" || { echo 'Only the latest published stable release may update Workshop.'; exit 1; }
-      - name: Update Workshop through the signed-in desktop Steam client
-        env:
-          PZ_GAME_DIR: ${{ vars.PZ_GAME_DIR }}
-          STEAM_WORKSHOP_ID: ${{ vars.STEAM_WORKSHOP_ID }}
-        run: python3 tools/publish_desktop.py --game "$PZ_GAME_DIR" --stage "$RUNNER_TEMP/checked-release/workshop" --item-id "$STEAM_WORKSHOP_ID"
-      - name: Remove the downloaded staging folder
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/checked-release"

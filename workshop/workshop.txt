@@ -1,0 +1,19 @@
+version=1
+title=AutoMindful - Yoga and Meditation [B42]
+description=Automate Lifestyle: Hobbies meditation and yoga using the mod's normal training actions and XP.
+description=
+description=[h2]Features[/h2]
+description=Train meditation, yoga, or both toward level 10. Take normal reading, food, water, rest and sleep breaks, then resume. Optional collection takes needed supplies from reachable adjacent ground and storage inventories.
+description=
+description=[h2]How to use[/h2]
+description=Enable Lifestyle: Hobbies and AutoMindful. Right-click the world, choose AutoMindful, check supplies, then choose Train both, Meditation or Yoga. Nearby collection is off by default.
+description=Prepare ready-to-eat safe food, clean water, and unread leisure books, comics or magazines. Choose a safe, quiet, lit spot. Stand on a complete deployed yoga mat if the sandbox requires one.
+description=
+description=[h2]Requirements and multiplayer[/h2]
+description=Project Zomboid Build 42.22+ and Lifestyle: Hobbies with yoga support. Tested on 42.22.2 with official Lifestyle 0.4.0.3.
+description=All AutoMindful executable code is client-side. Build 42 multiplayer still needs the server to advertise AutoMindful in its mod list. Server rules and Lifestyle's normal requirements still apply.
+description=
+description=Requires [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858]Lifestyle: Hobbies by Angry[/url]. No Lifestyle files are bundled.
+description=Mod ID: AutoMindful
+tags=Build 42
+visibility=private

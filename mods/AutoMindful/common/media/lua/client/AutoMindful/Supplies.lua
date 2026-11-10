@@ -39,15 +39,24 @@ local predicates = {food = function(_, item) return edible(item) end, water = fu
 function Supplies.scan(player, includeNearby)
     local result = {food = {}, water = {}, literature = {}}
     local inventory, visited = player:getInventory(), {}
-    local function visit(container, owned, recurse)
+    local here = player:getSquare()
+    local function adjacent(square)
+        return square and here and square:getZ() == here:getZ()
+            and math.abs(square:getX() - here:getX()) <= 1
+            and math.abs(square:getY() - here:getY()) <= 1
+    end
+    local function visit(container, owned, recurse, floor)
         if not container or visited[container] then return end
         visited[container] = true
         local items = container:getItems()
         for i = 0, items:size() - 1 do
             local item = items:get(i)
-            for kind, predicate in pairs(predicates) do
-                if predicate(player, item) then
-                    result[kind][#result[kind] + 1] = {item = item, owned = owned}
+            local world = floor and item:getWorldItem()
+            if not floor or (world and adjacent(world:getSquare())) then
+                for kind, predicate in pairs(predicates) do
+                    if predicate(player, item) then
+                        result[kind][#result[kind] + 1] = {item = item, owned = owned}
+                    end
                 end
             end
             if recurse and instanceof(item, "InventoryContainer") then visit(item:getInventory(), owned, true) end
@@ -61,11 +70,9 @@ function Supplies.scan(player, includeNearby)
                 local container = containers:get(i)
                 local owned = container:getOutermostContainer() == inventory
                 local square = container:getSourceGrid()
-                local here = player:getSquare()
-                if owned or (square and here and square:getZ() == here:getZ()
-                        and math.abs(square:getX() - here:getX()) <= 1
-                        and math.abs(square:getY() - here:getY()) <= 1) then
-                    visit(container, owned, owned)
+                local floor = container:getType() == "floor"
+                if owned or floor or adjacent(square) then
+                    visit(container, owned, owned, floor)
                 end
             end
         end

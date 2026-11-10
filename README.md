@@ -18,7 +18,7 @@ The window shows both skill levels and the current activity or reason training c
 
 Bring ready-to-eat safe food, bottles of clean water, and unread books, magazines, comics, or other literature that reduces boredom. Use a lit place so the character can read at night. Open cans and prepare food before starting. Skill books and already-read stories do not provide a reliable supply of boredom relief. An illiterate character needs readable picture literature or another available way to relieve boredom.
 
-Enable **Use supplies in reachable adjacent containers** to let AutoMindful take useful supplies as needed. Collection is off by default. It uses the game's reachable loot containers around your current square, checks carrying capacity, and transfers one item at a time. It does not search distant rooms, walk a looting route, or collect another player's inventory. Put provisions beside your training mat for a long session.
+Enable **Use supplies in reachable adjacent containers** to let AutoMindful take useful supplies as needed. Collection is off by default. It uses the game's reachable ground and storage inventories around your current square, checks carrying capacity, and transfers one item at a time. It does not search distant rooms, walk a looting route, or collect another player's inventory. Put provisions beside your training mat for a long session.
 
 Yoga itself reduces boredom and pain when successful, so it can help meditation training without consuming literature. At low levels yoga can fail and cause embarrassment. Recovery and repeated sessions are part of normal progression. Food and water totals in the checklist count items, not the number of days they will last.
 

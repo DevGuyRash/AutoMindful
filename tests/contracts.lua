@@ -30,6 +30,7 @@ function T.container(x, y)
     local c = {items={}}
     function c:getItems() return T.list(self.items) end
     function c:getOutermostContainer() return self end
+    function c:getType() return self.floor and "floor" or "container" end
     function c:hasRoomFor() return not self.full end
     function c:getSourceGrid() return {getX=function() return x or 0 end, getY=function() return y or 0 end, getZ=function() return 0 end} end
     return c
@@ -41,6 +42,7 @@ function T.item(kind, properties)
     i.kind, i.id, i.tags, i.data = kind, nextID, i.tags or {}, i.data or {}
     function i:getID() return self.id end
     function i:getContainer() return self.container end
+    function i:getWorldItem() return self.world end
     function i:getDisplayName() return self.name or self.kind end
     function i:getBoredomChange() return self.boredom or (self.kind == "Literature" and -20 or 0) end
     function i:getHungerChange() return self.hunger or -0.5 end
@@ -265,6 +267,18 @@ test("nearby collection is opt-in and respects adjacent range and capacity",func
     assert(#S.scan(p,false).food == 0 and #S.scan(p,true).food == 1)
     p.inventory.full=true; assert(not S.choose(p,"food",true,{}))
     p.inventory.full=false; assert(S.choose(p,"food",true,{}).item == near.items[1])
+end)
+test("floor provisions use each world item's square when the synthetic container has no grid",function()
+    local S=require "AutoMindful/Supplies"; local p=T.playerNew(); local floor=T.container(); floor.floor=true
+    function floor:getSourceGrid() return nil end
+    local function ground(x, z)
+        return {getSquare=function() return {getX=function() return x end, getY=function() return 0 end, getZ=function() return z end} end}
+    end
+    T.add(floor,T.item("Food",{world=ground(1,0)}))
+    T.add(floor,T.item("Food",{world=ground(2,0)}))
+    T.add(floor,T.item("Food",{world=ground(0,1)}))
+    p.nearby={floor}
+    assert(#S.scan(p,false).food == 0 and #S.scan(p,true).food == 1)
 end)
 test("missing Lifestyle rejects start but status and preparation remain usable",function()
     local upstream=ZenWellnessContextMenu; ZenWellnessContextMenu=nil

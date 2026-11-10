@@ -38,6 +38,10 @@ Python 3.10 or later and `luac5.1` are development tools. The installed mod need
 python3 tools/build.py
 ```
 
-The build checks every runtime Lua file and creates `dist/AutoMindful-0.1.0.zip` with a `Contents/mods/AutoMindful` layout and a SHA256 manifest. Only the `mods` tree goes into the archive. Upstream game and Workshop content stay in their original installations.
+The build checks every runtime Lua file and creates `dist/AutoMindful-<modversion>.zip` with a `Contents/mods/AutoMindful` layout and a SHA256 manifest. The version comes from `mods/AutoMindful/42/mod.info`. Only the mod and its license go into the archive. Upstream game and Workshop content stay in their original installations.
 
 See [verification](docs/verification.md) for repeatable checks and the tested scope.
+
+## Publish releases
+
+Publishing a stable versioned GitHub release runs the checks, builds and attaches the package, and updates the existing Steam Workshop item through the dedicated publishing runner. The runner reuses the publishing host's signed-in Steam client. See [Workshop publishing](docs/workshop.md) for the version source, automatic workflow, runner controls, and retry procedure.

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -15,7 +16,7 @@ from build import ROOT, build
 
 def fingerprint() -> str:
     digest = hashlib.sha256()
-    for directory in ("mods", "tests", "tools"):
+    for directory in ("mods", "tests", "tools", "workshop", ".github"):
         for path in sorted((ROOT / directory).rglob("*")):
             if path.is_file() and "__pycache__" not in path.parts:
                 digest.update(path.relative_to(ROOT).as_posix().encode())
@@ -34,11 +35,11 @@ def check(evidence: Path, name: str, command: list[str], *, cwd: Path = ROOT, en
             "elapsedSeconds": round(time.monotonic() - started, 3), "log": str(log)}
 
 
-def verify(evidence: Path, game: Path | None, lifestyle: Path | None) -> bool:
+def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str | None = None) -> bool:
     evidence = evidence.expanduser().resolve()
     evidence.mkdir(parents=True, exist_ok=False)
     source_before = fingerprint()
-    build(evidence / "package")
+    build(evidence / "package", tag)
     lua = shutil.which("lua5.1")
     if not lua:
         raise RuntimeError("Lua 5.1 (lua5.1) is required")
@@ -53,6 +54,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None) -> bool:
     if reference_root:
         command.append(str(reference_root))
     checks = [check(evidence, "portable-contracts", command)]
+    checks.append(check(evidence, "release-contracts", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_release.py"]))
     native_scope = "not requested"
     if game:
         game = game.expanduser().resolve()
@@ -63,7 +65,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None) -> bool:
         with tempfile.TemporaryDirectory(prefix="automindful-kahlua-") as temporary:
             classes = Path(temporary)
             checks.append(check(evidence, "native-compile", [compiler, "--release", "25", "-cp", str(jar),
-                "-d", str(classes), str(ROOT / "tools/KahluaCheck.java")]))
+                "-d", str(classes), str(ROOT / "tools/KahluaCheck.java"), str(ROOT / "tools/SteamWorkshopBootstrap.java")]))
             if checks[-1]["passed"]:
                 env = {key: value for key, value in os.environ.items() if key not in {
                     "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "JAVA_OPTS", "CLASSPATH", "LD_PRELOAD"}}
@@ -86,8 +88,9 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None) -> bool:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path)
+    parser.add_argument("--tag", help="Require the package version to match this stable release tag")
     parser.add_argument("--lifestyle", type=Path, help="Installed Lifestyle mod root; read without modification")
     parser.add_argument("--evidence", type=Path, default=Path.home() / ".local/state/app-verification/AutoMindful" /
                         time.strftime("verify-%Y%m%d-%H%M%S", time.gmtime()))
     args = parser.parse_args()
-    raise SystemExit(0 if verify(args.evidence, args.game, args.lifestyle) else 1)
+    raise SystemExit(0 if verify(args.evidence, args.game, args.lifestyle, args.tag) else 1)

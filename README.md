@@ -44,4 +44,4 @@ See [verification](docs/verification.md) for repeatable checks and the tested sc
 
 ## Publish releases
 
-Publishing a stable versioned GitHub release runs the checks, builds and attaches the package, and updates the existing Steam Workshop item through the dedicated publishing runner. The runner reuses the publishing host's signed-in Steam client. See [Workshop publishing](docs/workshop.md) for the version source, automatic workflow, runner controls, and retry procedure.
+Publishing a stable versioned GitHub release checks and attaches its package. Upload that release explicitly with the shared [Steam Workshop publisher](https://github.com/DevGuyRash/steam-workshop-publisher), using a local `just` command or a manual GitHub workflow. The former local service has been removed. See [Workshop publishing](docs/workshop.md) for setup, validation, and retries.

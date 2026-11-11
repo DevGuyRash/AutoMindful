@@ -1,47 +1,77 @@
 # AutoMindful
 
-AutoMindful automates meditation and yoga in Project Zomboid's [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858) mod. It starts Lifestyle's own actions, takes recovery breaks, and resumes training toward level 10 in both skills. It does not award XP or change training rules.
+AutoMindful automates yoga and meditation in Project Zomboid's [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858). It uses Lifestyle's normal actions and XP, takes care breaks, and resumes toward level 10. The window can stay closed while the loop runs.
 
-This is a client Lua mod for Build 42.22 and later. Lifestyle: Hobbies must already be active. AutoMindful contains no server scripts. Build 42 normally replaces the client's active code-mod list on joining a server, so the server must advertise AutoMindful in its mod list for ordinary native loading. Lifestyle's server component must already support its normal actions and XP. AutoMindful does not install Lifestyle on a server or bypass a server's checks.
+## Install
 
-## Install and start
+1. Subscribe to [AutoMindful](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362) and [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858).
+2. Enable both for your game and restart the client.
+3. For a manual installation, copy `mods/AutoMindful` into your Zomboid user folder's `mods` directory. Linux normally uses `~/Zomboid/mods/AutoMindful`.
 
-1. Subscribe to [AutoMindful on Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362) and the required [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858). For a manual installation, copy `mods/AutoMindful` into your Zomboid user folder's `mods` directory; Linux normally uses `~/Zomboid/mods/AutoMindful`.
-2. Enable Lifestyle: Hobbies and AutoMindful for your game. Restart the client after installation.
-3. Choose a safe training spot. If the server or sandbox requires a yoga mat, stand on a complete, deployed mat.
-4. Right-click the world and choose **AutoMindful**.
-5. Select **Check supplies**, then **Train both**, **Meditation**, or **Yoga**.
+AutoMindful uses client Lua for Build 42.22 and later. It has no server scripts. Ordinary Build 42 multiplayer loading still requires the server to advertise AutoMindful, and Lifestyle's normal server components must be available. The mod does not bypass server checks.
 
-The window shows both skill levels and the current activity or reason training cannot continue. Closing the window keeps training running. Use **Stop training** to cancel. Training starts only when you request it; loading a save never starts it automatically.
+## Start from the right-click menu
+
+1. Choose a safe training spot. Deploy a complete yoga mat if the sandbox requires one.
+2. Right-click near your survivor and open Lifestyle's **Wellness** menu.
+3. While standing, open **Yoga**. While sitting on the ground, open **Meditate**.
+4. Choose **Open AutoMindful** to see the full window, or **Train yoga** or **Train meditation** for a quick start. **Check supplies** opens the live report without interrupting training.
+
+The original single-session Lifestyle action remains in the submenu. **Train both** is available in the AutoMindful window. Context menus follow Lifestyle's posture and availability rules instead of appearing everywhere by default.
+
+During a running session, **AutoMindful (running)** lets you reopen the window even while Lifestyle hides its normal menu for timed actions. Closing the window or pressing Escape hides it without cancelling training. Loading a save or rejoining a server does not start the loop automatically.
+
+## Use the live window
+
+| Section | What it shows |
+| --- | --- |
+| Activity | Current training, care break, pause, or stop reason. |
+| Progress | Meditation and yoga levels with separate colors and progress bars. |
+| Supplies | Usable food, hydration, and literature in inventory and reachable nearby containers. |
+| Preparation and returns | Requirements, warnings, and borrowed items waiting to go back. |
+
+Counts refresh while the window is open, including after walking, inventory changes, and toggling collection. **Check supplies** refreshes immediately and confirms that the check happened. It does not collect or consume items. Counts represent usable items, not servings or days. A nourishing drink can count toward both food and hydration.
+
+You can start with no food or water. Empty supply counts are warnings, not a start requirement. AutoMindful uses provisions when available and continues while the survivor's condition permits training. It stops for a genuine blocking condition rather than an empty inventory alone.
+
+**Use adjacent supplies** starts off disabled. Enable it to let the loop borrow nearby provisions and appropriate opening tools as needed. You can change this setting during training. Previewing nearby stock does not enable collection.
 
 ## Prepare supplies
 
-Bring ready-to-eat safe food, bottles of clean water, and unread books, magazines, comics, or other literature that reduces boredom. Use a lit place so the character can read at night. Open cans and prepare food before starting. Skill books and already-read stories do not provide a reliable supply of boredom relief. An illiterate character needs readable picture literature or another available way to relieve boredom.
+- Bring food, safe hydration, and useful literature for a long session. Available resources do not need to be consumed all at once.
+- Native opening recipes handle supported cans and sealed items when the required tools are available. Items without a usable native opening recipe need manual preparation.
+- Safe milk and other nourishing drinks can help where their native properties provide hunger or thirst relief. Worn hydration containers can also be used. Poisoned, tainted, alcoholic, spoiled, burnt, frozen, or dangerously uncooked sources are rejected.
+- Nearby sinks, baths, toilets, showers, and ground water containers can supply clean water when adjacent collection is enabled. Native plumbing, remaining water, reach, locks, safehouses, and water safety still apply. Direct drinking takes the amount needed for current thirst rather than draining the source or requiring it to be picked up.
+- Unread literature is preferred. When fiction becomes eligible for rereading under the game's cooldown, the oldest native reading date is preferred. Already-read print media and books still on cooldown are not forced into a useless reading loop.
+- Use a lit place for reading. Yoga can also relieve boredom when its normal requirements permit it.
 
-Enable **Use supplies in reachable adjacent containers** to let AutoMindful take useful supplies as needed. Collection is off by default. It uses the game's reachable ground and storage inventories around your current square, checks carrying capacity, and transfers one item at a time. It does not search distant rooms, walk a looting route, or collect another player's inventory. Put provisions beside your training mat for a long session.
+Borrowed books, unused food or drink, opening tools, and attributable leftover containers are returned to their original reachable source. Your own supplies and worn equipment stay yours. If a return is blocked or its source is no longer reachable, the item stays in inventory and the window explains it. The mod does not walk away to return an item or move unrelated inventory.
 
-Yoga itself reduces boredom and pain when successful, so it can help meditation training without consuming literature. At low levels yoga can fail and cause embarrassment. Recovery and repeated sessions are part of normal progression. Food and water totals in the checklist count items, not the number of days they will last.
+## Keep control of the loop
 
-## Understand the training loop
+**Stop training** cancels explicitly. Clear movement, sustained aiming, or another gameplay action taking control also cancels, with a short reason above the survivor. Looking at the window or context menu does not cancel. Inventory transfers can pause the automatic work and let it resume afterward.
 
-Meditation is a normal perk. Yoga is Lifestyle's separate hidden skill. AutoMindful reads each through the corresponding native API. It uses Lifestyle's current level-specific action selection instead of copying pose tables, XP formulas, or animations.
+Meditation needs sitting on the ground and cannot start above Lifestyle's boredom limit. Yoga needs standing and may require a complete two-tile mat. Native exhaustion, embarrassment, injuries, unsafe surroundings, and missing essentials can limit what the survivor can do. AutoMindful uses normal game time and XP rates; reaching both level caps can take many game days.
 
-Meditation requires sitting on the ground and cannot start above 30 boredom. Yoga requires standing, can require a complete two-tile mat, and has configurable exhaustion and embarrassment limits. Interrupting yoga early can remove some session XP. AutoMindful lets yoga finish naturally except when you cancel or safety requires stopping. See [the upstream source notes](docs/upstream.md) for the exact lifecycle and dependencies.
+## Configure access
 
-Keep the character safe, clothed, and supplied. Automation cannot guarantee safety in a changing world or cure injuries, infection, temperature problems, or unavailable server actions. Long training uses the game's normal passage of time and XP rates and can require many game days. A missing essential provision or an unrecoverable condition stops training with a reason.
+Open **Options > Mods > AutoMindful** to assign **Open AutoMindful window** to a key. It starts unbound to avoid taking another control. The shortcut is suppressed while typing or chatting.
 
-## Build
+Enable **Always show AutoMindful in the world context menu** there if you prefer the general entry. It starts off disabled. Window position and the nearby-collection choice are remembered for the survivor.
 
-Python 3.10 or later and `luac5.1` are development tools. The installed mod needs neither.
+## Build and verify
+
+Python 3.10+ and `luac5.1` are development tools. The installed mod needs neither.
 
 ```sh
 python3 tools/build.py
+python3 tools/verify.py
 ```
 
-The build checks every runtime Lua file and creates `dist/AutoMindful-<modversion>.zip` with a `Contents/mods/AutoMindful` layout and a SHA256 manifest. The version comes from `mods/AutoMindful/42/mod.info`. Only the mod and its license go into the archive. Upstream game and Workshop content stay in their original installations.
+The archive contains only AutoMindful and its license under `Contents/mods/AutoMindful`. The authoritative version is `mods/AutoMindful/42/mod.info`. Game and Workshop libraries remain in their installed locations.
 
-See [verification](docs/verification.md) for repeatable checks and the tested scope.
+See [verification](docs/verification.md) for the native and portable checks, [candidate verification](docs/verification-0.1.2.md) for the observed gameplay scope and [upstream notes](docs/upstream.md) for Lifestyle's action lifecycle.
 
-## Publish releases
+## Publish
 
-Publishing a stable versioned GitHub release checks and attaches its package. Upload that release explicitly with the shared [Steam Workshop publisher](https://github.com/DevGuyRash/steam-workshop-publisher), using a local `just` command or a manual GitHub workflow. The former local service has been removed. See [Workshop publishing](docs/workshop.md) for setup, validation, and retries.
+This public repository owns [workshop-publisher.json](workshop-publisher.json), its existing Workshop item ID, and checked release assets. The shared [Steam Workshop publisher](https://github.com/DevGuyRash/steam-workshop-publisher) remains generic. See [Workshop publishing](docs/workshop.md) for manual local or cloud publishing and authentication.

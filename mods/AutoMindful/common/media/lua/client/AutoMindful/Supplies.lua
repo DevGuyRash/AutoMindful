@@ -1,82 +1,106 @@
 require "ISUI/ISInventoryPaneContextMenu"
 require "TimedActions/ISInventoryTransferUtil"
+require "TimedActions/ISDropWorldItemAction"
+local Consumables = require "AutoMindful/Consumables"
+local WaterSources = require "AutoMindful/WaterSources"
 
 AutoMindful = AutoMindful or {}
 local Supplies = {}
 AutoMindful.Supplies = Supplies
+local refreshes = {}
 
-local function readable(player, item)
+local function readingHistory(player, item)
+    local data = item:hasModData() and item:getModData()
+    if data and data.literatureTitle then
+        local last = player:getReadLiterature():get(data.literatureTitle)
+        return data.literatureTitle, last and tonumber(last) or nil
+    end
+    local key = "item:" .. tostring(item:getID())
+    local history = player:getModData().AutoMindfulReadHistory
+    return key, history and history[key] or nil
+end
+
+local function readingState(player, item)
     if not instanceof(item, "Literature") or item:getBoredomChange() >= 0 then return false end
     if SkillBook[item:getSkillTrained()] or item:hasTag(ItemTag.UNINTERESTING) then return false end
     if player:hasTrait(CharacterTrait.ILLITERATE)
             and not item:hasTag(ItemTag.PICTUREBOOK) and not item:hasTag(ItemTag.PICTURE) then return false end
     local data = item:hasModData() and item:getModData()
-    if data and data.literatureTitle and player:isLiteratureRead(data.literatureTitle) then return false end
+    if data and data.literatureTitle and player:isLiteratureRead(data.literatureTitle) then return "cooldown" end
     if data and data.printMedia and player:getReadPrintMedia():contains(data.printMedia.id) then return false end
-    return true
+    local _, last = readingHistory(player, item)
+    return last ~= nil and "reread" or "unread"
 end
 
-local function edible(item)
-    if not instanceof(item, "Food") or item:getHungerChange() >= 0 then return false end
-    if item:isRotten() or item:isBurnt() or item:isFrozen() or item:isTainted()
-            or item:isPoison() or item:getPoisonPower() > 0 or item:getFoodSicknessChange() > 0
-            or item:isAlcoholic() or item:isSealed() then return false end
-    if item:isbDangerousUncooked() and not item:isCooked() then return false end
-    local required = item:getRequireInHandOrInventory()
-    return not required or required:isEmpty()
-end
-
-local function fluidFor(item)
-    local world = item:getWorldItem()
-    return (world and world:getFluidContainer()) or item:getFluidContainer()
-end
-
-local function drinkable(item)
-    local fluid = fluidFor(item)
-    return fluid and not fluid:isEmpty() and fluid:canPlayerEmpty()
-        and fluid:getCapacity() <= 3 and fluid:isPureFluid(Fluid.Water)
-        and not fluid:isPoisonous() and not fluid:isTainted() and not item:isSealed()
-end
-
-local predicates = {food = function(_, item) return edible(item) end, water = function(_, item) return drinkable(item) end,
-    literature = readable}
-
-function Supplies.scan(player, includeNearby)
-    local result = {food = {}, water = {}, literature = {}}
-    local inventory, visited = player:getInventory(), {}
-    local here = player:getSquare()
-    local function adjacent(square)
-        return square and here and square:getZ() == here:getZ()
-            and math.abs(square:getX() - here:getX()) <= 1
-            and math.abs(square:getY() - here:getY()) <= 1
+local function containers(player)
+    local index = player:getPlayerNum()
+    local loot = getPlayerLoot(index)
+    if not getPlayerInventory(index) or not loot then return nil end
+    local now, square = getTimestampMs(), player:getSquare()
+    local previous = refreshes[player]
+    if not previous or previous.square ~= square or now - previous.time >= 1000 then
+        loot:refreshBackpacks()
+        refreshes[player] = {square = square, time = now}
     end
+    return ISInventoryPaneContextMenu.getContainers(player)
+end
+
+local function reachable(player, square)
+    local here = player:getSquare()
+    return square and here and square:getZ() == here:getZ()
+        and math.abs(square:getX() - here:getX()) <= 1
+        and math.abs(square:getY() - here:getY()) <= 1
+        and (square == here or here:canReachTo(square))
+end
+
+local function containerSquare(container)
+    local square = container:getSourceGrid()
+    if square then return square end
+    local item = container:getContainingItem()
+    local world = item and item:getWorldItem()
+    return world and world:getSquare()
+end
+
+function Supplies.scan(player, includeNearby, useNearbyTools)
+    if useNearbyTools == nil then useNearbyTools = includeNearby end
+    local result = {food = {}, water = {}, literature = {}, cooldownLiterature = 0, nearbyCooldownLiterature = 0}
+    result.waterSources = includeNearby and WaterSources.scan(player) or {}
+    local inventory, visited = player:getInventory(), {}
+    local nearby = includeNearby and containers(player) or nil
     local function visit(container, owned, recurse, floor)
         if not container or visited[container] then return end
         visited[container] = true
         local items = container:getItems()
-        for i = 0, items:size() - 1 do
-            local item = items:get(i)
+        for index = 0, items:size() - 1 do
+            local item = items:get(index)
             local world = floor and item:getWorldItem()
-            if not floor or (world and adjacent(world:getSquare())) then
-                for kind, predicate in pairs(predicates) do
-                    if predicate(player, item) then
-                        result[kind][#result[kind] + 1] = {item = item, owned = owned}
-                    end
+            if not floor or (world and reachable(player, world:getSquare())) then
+                local entry = {item = item, owned = owned}
+                local consumable = Consumables.inspect(player, item, useNearbyTools)
+                if consumable.food then result.food[#result.food + 1] = entry end
+                if consumable.water then result.water[#result.water + 1] = entry end
+                if consumable.needsOpening and consumable.reason then result.openingReason = consumable.reason end
+                local reading = readingState(player, item)
+                if reading == "cooldown" then
+                    local key = owned and "cooldownLiterature" or "nearbyCooldownLiterature"
+                    result[key] = result[key] + 1
+                elseif reading then
+                    local _, last = readingHistory(player, item)
+                    entry.lastRead = last
+                    result.literature[#result.literature + 1] = entry
                 end
             end
             if recurse and instanceof(item, "InventoryContainer") then visit(item:getInventory(), owned, true) end
         end
     end
     visit(inventory, true, true)
-    if includeNearby and getPlayerInventory(player:getPlayerNum()) and getPlayerLoot(player:getPlayerNum()) then
-        local containers = ISInventoryPaneContextMenu.getContainers(player)
-        if containers then
-            for i = 0, containers:size() - 1 do
-                local container = containers:get(i)
+    if includeNearby then
+        if nearby then
+            for index = 0, nearby:size() - 1 do
+                local container = nearby:get(index)
                 local owned = container:getOutermostContainer() == inventory
-                local square = container:getSourceGrid()
                 local floor = container:getType() == "floor"
-                if owned or floor or adjacent(square) then
+                if owned or floor or reachable(player, containerSquare(container)) then
                     visit(container, owned, owned, floor)
                 end
             end
@@ -89,15 +113,33 @@ function Supplies.choose(player, kind, includeNearby, rejected)
     local best, bestScore
     for _, entry in ipairs(Supplies.scan(player, includeNearby)[kind]) do
         local item = entry.item
-        if not rejected[item:getID()] and (entry.owned or player:getInventory():hasRoomFor(player, item)) then
+        local rejection = rejected[item:getID()]
+        if type(rejection) == "number" and getTimestampMs() >= rejection then rejected[item:getID()] = nil; rejection = nil end
+        if not rejection and (entry.owned or player:getInventory():hasRoomFor(player, item)) then
             local score = entry.owned and 100000 or 0
-            if kind == "literature" then score = score - item:getBoredomChange()
-            elseif kind == "food" then score = score + math.max(0, item:getCalories()) - item:getBoredomChange() * 5
-            else score = score + fluidFor(item):getAmount() end
-            if not bestScore or score > bestScore then best, bestScore = entry, score end
+            if kind == "literature" then
+                if not best or (entry.lastRead == nil and best.lastRead ~= nil)
+                        or ((entry.lastRead == nil) == (best.lastRead == nil)
+                            and ((entry.lastRead or -1) < (best.lastRead or -1)
+                                or (entry.lastRead == best.lastRead and score > bestScore))) then
+                    best, bestScore = entry, score
+                end
+            else
+                local descriptor = Consumables.inspect(player, item, includeNearby)
+                score = score + (kind == "food" and descriptor.calories or descriptor.thirstRelief)
+                if not bestScore or score > bestScore then best, bestScore = entry, score end
+            end
         end
     end
     return best
+end
+
+function Supplies.markRead(player, item)
+    local data = item:hasModData() and item:getModData()
+    if data and data.literatureTitle then return end
+    local saved = player:getModData()
+    saved.AutoMindfulReadHistory = saved.AutoMindfulReadHistory or {}
+    saved.AutoMindfulReadHistory["item:" .. tostring(item:getID())] = getGameTime():getNightsSurvived()
 end
 
 function Supplies.transfer(player, item)
@@ -109,30 +151,150 @@ function Supplies.transfer(player, item)
     return true
 end
 
-function Supplies.report(player, includeNearby)
-    local scan = Supplies.scan(player, includeNearby)
-    local report = {food = 0, water = 0, literature = 0, nearbyFood = 0, nearbyWater = 0,
-        nearbyLiterature = 0, warnings = {}}
-    local nearbyKeys = {food = "nearbyFood", water = "nearbyWater", literature = "nearbyLiterature"}
-    for kind, entries in pairs(scan) do
-        for _, entry in ipairs(entries) do
-            local key = entry.owned and kind or nearbyKeys[kind]
-            report[key] = report[key] + 1
+function Supplies.inventoryItem(player, item)
+    return player:getInventory():getItemById(item:getID())
+end
+
+function Supplies.inventoryIDs(player)
+    local ids = {}
+    local items = player:getInventory():getItems()
+    for index = 0, items:size() - 1 do ids[items:get(index):getID()] = true end
+    return ids
+end
+
+function Supplies.newOutputs(player, before, types)
+    local found = {}
+    local items = player:getInventory():getItems()
+    for index = 0, items:size() - 1 do
+        local item = items:get(index)
+        if not before[item:getID()] and types[item:getFullType()] then found[#found + 1] = item end
+    end
+    return found
+end
+
+function Supplies.loan(player, item)
+    if item:getContainer() == player:getInventory() then return nil end
+    local loan = {origin = item:getContainer(), items = {item}, original = item,
+        before = Supplies.inventoryIDs(player), expected = Consumables.replacements(item), defer = true}
+    local world = item:getWorldItem()
+    if world then
+        loan.floor = {square = world:getSquare(), x = world:getOffX(), y = world:getOffY(), z = world:getOffZ()}
+    end
+    return loan
+end
+
+function Supplies.watchLoan(player, loan, item)
+    if not loan then return end
+    loan.before = Supplies.inventoryIDs(player)
+    loan.interference = nil
+    loan.expected = Consumables.replacements(item)
+    loan.usedItem = item
+    local known = false
+    for index, entry in ipairs(loan.items) do
+        if entry:getID() == item:getID() then loan.items[index] = item; known = true; break end
+    end
+    if not known then loan.items[#loan.items + 1] = item end
+end
+
+function Supplies.finishLoan(player, loan, now)
+    if not loan or not loan.usedItem then return true end
+    if not Supplies.inventoryItem(player, loan.usedItem) and not loan.interference then
+        local replacements = Supplies.newOutputs(player, loan.before, loan.expected)
+        if #replacements == 1 then loan.items[#loan.items + 1] = replacements[1]
+        elseif #replacements > 1 then loan.notice = "An empty container could not be identified safely; it stays in your inventory."
+        elseif next(loan.expected) and now then
+            loan.awaitResultUntil = loan.awaitResultUntil or now + 3000
+            if now < loan.awaitResultUntil then return false end
+            loan.notice = "The game did not confirm an empty container; any delayed result stays in your inventory."
         end
     end
-    if report.food + report.nearbyFood == 0 then report.warnings[#report.warnings + 1] = "Bring ready-to-eat, safe food. Open cans and thaw or cook meals first." end
-    if report.water + report.nearbyWater == 0 then report.warnings[#report.warnings + 1] = "Bring bottles of clean water." end
-    if report.literature + report.nearbyLiterature == 0 then report.warnings[#report.warnings + 1] = "Bring unread boredom-reducing literature. Yoga can also relieve boredom when available." end
+    loan.usedItem, loan.awaitResultUntil = nil, nil
+    return true
+end
+
+function Supplies.returnAction(player, loan)
+    local inventory = player:getInventory()
+    local origin = loan.origin
+    local item
+    for _, candidate in ipairs(loan.items) do
+        local current = Supplies.inventoryItem(player, candidate)
+        if current and current:getContainer() ~= origin then item = current; break end
+    end
+    if not item then return nil, nil, true end
+    if loan.floor then
+        if not reachable(player, loan.floor.square) then
+            return nil, "Borrowed supplies stay with you because their original floor square is out of reach."
+        end
+        local floor = loan.floor
+        local action = ISDropWorldItemAction:new(player, item, floor.square, floor.x, floor.y, floor.z, 0, false)
+        action.isPlaceItem = true
+        if not action:isValid() then return nil, "Borrowed supplies stay with you because the original floor square cannot accept them." end
+        return action
+    end
+    local owned = origin:getOutermostContainer() == inventory
+    if not owned then
+        local nearby = containers(player)
+        if not nearby or not nearby:contains(origin) or not reachable(player, containerSquare(origin)) then
+            return nil, "Borrowed supplies stay with you because their original container is no longer reachable."
+        end
+    end
+    if not origin:hasRoomFor(player, item) then
+        return nil, "Borrowed supplies stay with you because their original container is full."
+    end
+    local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, item:getContainer(), origin)
+    if action.ignoreAction or not action:isValid() then
+        return nil, "Borrowed supplies stay with you because the original container cannot currently accept them."
+    end
+    return action
+end
+
+function Supplies.report(player, includeNearby, collectNearby)
+    if collectNearby == nil then collectNearby = includeNearby end
+    local scan = Supplies.scan(player, includeNearby, collectNearby)
+    local report = {food = 0, water = 0, literature = 0, nearbyFood = 0, nearbyWater = 0,
+        nearbyLiterature = 0, unreadLiterature = 0, rereadLiterature = 0,
+        nearbyUnreadLiterature = 0, nearbyRereadLiterature = 0, warnings = {}}
+    report.cooldownLiterature, report.nearbyCooldownLiterature = scan.cooldownLiterature, scan.nearbyCooldownLiterature
+    report.openingReason = scan.openingReason
+    report.nearbyWaterSourceCount = #scan.waterSources
+    report.waterSourceReason = scan.waterSources.reason
+    local nearbyKeys = {food = "nearbyFood", water = "nearbyWater", literature = "nearbyLiterature"}
+    for _, kind in ipairs({"food", "water", "literature"}) do
+        for _, entry in ipairs(scan[kind]) do
+            local key = entry.owned and kind or nearbyKeys[kind]
+            report[key] = report[key] + 1
+            if kind == "literature" then
+                local typeKey = entry.lastRead and "rereadLiterature" or "unreadLiterature"
+                if not entry.owned then typeKey = entry.lastRead and "nearbyRereadLiterature" or "nearbyUnreadLiterature" end
+                report[typeKey] = report[typeKey] + 1
+            end
+        end
+    end
+    local portableWater = {}
+    for _, entry in ipairs(scan.water) do portableWater[entry.item] = true end
+    for _, source in ipairs(scan.waterSources) do
+        if not source.item or not portableWater[source.item] then report.nearbyWater = report.nearbyWater + 1 end
+    end
+    local usableFood = report.food + (collectNearby and report.nearbyFood or 0)
+    local usableWater = report.water + (collectNearby and report.nearbyWater or 0)
+    local usableLiterature = report.literature + (collectNearby and report.nearbyLiterature or 0)
+    if includeNearby and not collectNearby then report.warnings[#report.warnings + 1] = "Nearby stock is visible, but collection is off. Enable it or move supplies into your inventory." end
+    if usableFood == 0 then report.warnings[#report.warnings + 1] = scan.openingReason or "Bring safe food or a nourishing drink. Opening tools must be available for sealed food." end
+    if usableWater == 0 then report.warnings[#report.warnings + 1] = report.waterSourceReason or "Bring safe water or another safe hydrating drink, or enable a reachable clean-water source." end
+    if usableLiterature == 0 then
+        report.warnings[#report.warnings + 1] = scan.cooldownLiterature + scan.nearbyCooldownLiterature > 0
+            and "Available literature was read too recently. The native reread cooldown must expire; unread literature or yoga can help now."
+            or "Bring boredom-reducing literature that is unread or past the game's reread cooldown. Yoga can also help."
+    end
     if player:tooDarkToRead() then report.warnings[#report.warnings + 1] = "It is too dark to read here. Use a lit training spot." end
     if SandboxVars.Yoga and SandboxVars.Yoga.RequiresMat then report.warnings[#report.warnings + 1] = "Yoga requires a deployed, complete yoga mat under your current square." end
-    local lines = {string.format("In your inventory: %d safe food, %d clean water, %d useful literature.", report.food, report.water, report.literature)}
+    local lines = {string.format("In your inventory: %d food, %d hydrating drinks, %d useful literature.", report.food, report.water, report.literature)}
     if includeNearby then
-        lines[#lines + 1] = string.format("Within adjacent loot range: %d food, %d water, %d literature.", report.nearbyFood, report.nearbyWater, report.nearbyLiterature)
-        lines[#lines + 1] = "Nearby collection takes supplies as needed, one item at a time. It does not walk away."
+        lines[#lines + 1] = string.format("Within adjacent loot range: %d food, %d drinks, %d literature.", report.nearbyFood, report.nearbyWater, report.nearbyLiterature)
+        lines[#lines + 1] = "Borrowed supplies and their empty containers are returned to their original reachable source."
     end
     for _, warning in ipairs(report.warnings) do lines[#lines + 1] = warning end
-    lines[#lines + 1] = "Use a safe, quiet, lit spot. Training uses normal XP rates and may take many game days."
-    lines[#lines + 1] = "AutoMindful rests and sleeps in place when needed, then resumes. Move, aim, or press Stop to cancel."
+    lines[#lines + 1] = "Unread literature is used first, then eligible rereads from oldest to newest. Native cooldowns still apply."
     report.message = table.concat(lines, "\n")
     return report
 end

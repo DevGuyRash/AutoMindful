@@ -4,6 +4,8 @@ AutoMindful's release workflow builds and checks versioned GitHub assets. Worksh
 
 Follow the publisher's [generic setup guide](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/setup.md) to configure local SteamCMD, GitHub authentication, or another Project Zomboid mod. That guide owns the reusable procedure. `AGENTS.md` links this file as AutoMindful's publishing entrypoint.
 
+Local candidates can be built and tested without creating a release tag, publishing a GitHub release, or uploading to Workshop. Complete local acceptance before those publication steps. The native desktop-client command below can reuse an existing signed-in Steam client; both the shared local `publish` command and the cloud uploader use a separate SteamCMD login, which can replace another Steam session on the same account.
+
 ## Build a release
 
 1. Set `modversion` in `mods/AutoMindful/42/mod.info` to the next stable version. This file is the authoritative package version.

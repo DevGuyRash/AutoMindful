@@ -54,6 +54,12 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     if reference_root:
         command.append(str(reference_root))
     checks = [check(evidence, "portable-contracts", command)]
+    for name, script in (("ui-contracts", "ui.lua"), ("consumable-contracts", "consumables.lua"),
+                         ("water-source-contracts", "water_sources.lua")):
+        suite = [lua, "tests/" + script]
+        if game and script == "water_sources.lua":
+            suite.append(str(game.expanduser().resolve() / "media"))
+        checks.append(check(evidence, name, suite))
     checks.append(check(evidence, "release-contracts", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_release.py"]))
     native_scope = "not requested"
     if game:
@@ -69,11 +75,13 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
             if checks[-1]["passed"]:
                 env = {key: value for key, value in os.environ.items() if key not in {
                     "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "JAVA_OPTS", "CLASSPATH", "LD_PRELOAD"}}
-                command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),
-                           "KahluaCheck", str(ROOT)]
-                if reference_root:
-                    command.append(str(reference_root))
-                checks.append(check(evidence, "native-contracts", command, cwd=game, env=env))
+                for name, script in (("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"),
+                                     ("native-consumable-contracts", "consumables.lua"),
+                                     ("native-water-source-contracts", "water_sources.lua")):
+                    suite_reference = game / "media" if script == "water_sources.lua" else reference_root
+                    command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),
+                               "KahluaCheck", str(ROOT), str(suite_reference) if suite_reference else "-", script]
+                    checks.append(check(evidence, name, command, cwd=game, env=env))
         native_scope = "Installed Kahlua interpreter. Game, player, queue, mood and XP receiver boundaries are explicit doubles."
     stable = source_before == fingerprint()
     report = {"passed": stable and all(item["passed"] for item in checks), "sourceStable": stable,

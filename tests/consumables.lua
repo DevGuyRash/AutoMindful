@@ -70,6 +70,7 @@ local function fluid(settings)
     function result:isTainted() return self.tainted == true end
     function result:canPlayerEmpty() return self.locked ~= true end
     function result:getCapacity() return self.capacity or 1 end
+    function result:getAmount() return self.amount or 1 end
     return result
 end
 
@@ -212,7 +213,27 @@ check("safe milk restores either need without drinking the whole item", function
     near(description.calories, 307.5)
     player.values.hunger, player.values.thirst = 0.05, 0.1
     near(C.portion(player, milk, "food"), 0.2)
+    near(C.portion(player, milk, "water"), 0.2)
+    player.values.hunger = 0
     near(C.portion(player, milk, "water"), 0.4)
+    player.values.hunger, player.values.thirst = 0.15, 0.2
+    near(C.portion(player, milk, "water"), 0.6)
+    player.values.hunger, player.values.thirst = 0.2, 0.001
+    near(C.portion(player, milk, "food"), 0.8)
+end)
+
+check("selection predicts signed need changes and the same portion that is consumed", function()
+    local dry = item({kind = "Food", hunger = -0.24, thirst = 0.2, container = inventory})
+    player.values.hunger, player.values.thirst = 0.12, 0.2
+    local description = C.inspect(player, dry)
+    near(description.hungerEffect, 0.24)
+    near(description.thirstEffect, -0.2)
+    local plan = C.plan(player, description, "food")
+    near(plan.fraction, 0.5)
+    near(plan.primary, 1)
+    near(plan.utility, 0.5)
+    near(C.consume(player, dry, "food"), 0.5)
+    near(events[1].portion, plan.fraction)
 end)
 
 check("worn hydration containers are usable and hydration food uses native eating", function()
@@ -251,6 +272,7 @@ check("native opening obeys nearby scope and exposes exact tool origins", functi
     assert(unavailable.needsOpening and not unavailable.food and unavailable.reason:find("can opener", 1, true))
     local description = C.inspect(player, beans, true)
     assert(description.food and description.needsOpening and description.outputTypes["Base.OpenBeans"])
+    near(description.hungerEffect, 0.24)
     assert(description.returnItems[1] == opener and opener:getContainer() == nearby)
     assert(C.prepare(player, beans, description))
     assert(#events == 2 and events[1].kind == "transfer" and events[1].item == opener)

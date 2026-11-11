@@ -54,11 +54,14 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     if reference_root:
         command.append(str(reference_root))
     checks = [check(evidence, "portable-contracts", command)]
-    for name, script in (("ui-contracts", "ui.lua"), ("consumable-contracts", "consumables.lua"),
+    for name, script in (("ui-contracts", "ui.lua"), ("progress-contracts", "progress.lua"),
+                         ("consumable-contracts", "consumables.lua"), ("supply-policy-contracts", "supply_policy.lua"),
                          ("water-source-contracts", "water_sources.lua")):
         suite = [lua, "tests/" + script]
         if game and script == "water_sources.lua":
             suite.append(str(game.expanduser().resolve() / "media"))
+        elif reference_root and script == "progress.lua":
+            suite.append(str(reference_root))
         checks.append(check(evidence, name, suite))
     checks.append(check(evidence, "release-contracts", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_release.py"]))
     native_scope = "not requested"
@@ -76,6 +79,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                 env = {key: value for key, value in os.environ.items() if key not in {
                     "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "JAVA_OPTS", "CLASSPATH", "LD_PRELOAD"}}
                 for name, script in (("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"),
+                                     ("native-progress-contracts", "progress.lua"), ("native-supply-policy-contracts", "supply_policy.lua"),
                                      ("native-consumable-contracts", "consumables.lua"),
                                      ("native-water-source-contracts", "water_sources.lua")):
                     suite_reference = game / "media" if script == "water_sources.lua" else reference_root

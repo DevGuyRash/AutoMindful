@@ -2,11 +2,11 @@
 
 This report covers the unpublished local-test candidate. Publication is held for the user's local acceptance. Committing and pushing the candidate does not create a release tag, GitHub release, or Workshop upload.
 
-The runtime contains eight client Lua modules, native Build 42 Mod Options, and the required `LifestyleHobbies` dependency. It adds no server code and does not award XP, change native skill thresholds, or copy upstream training actions.
+The runtime contains nine client Lua modules, native Build 42 Mod Options, and the required `LifestyleHobbies` dependency. It adds no server code and does not award XP, change native skill thresholds, or copy upstream training actions.
 
 ## Automated checks
 
-The verification entry point builds the complete versioned archive before running the portable controller/supply, UI/context, consumable, water-source, and release-integrity suites. It also compiles the native Java helpers and runs each Lua suite in a fresh installed Kahlua environment. With installed references, the core suite exercises real Lifestyle Lua and the water suite exercises real `ISTakeWaterAction.lua`; game and network receivers remain explicit boundary doubles.
+The verification entry point builds the complete versioned archive before running the portable controller/supply, UI/context, XP progress, supply policy, consumable, water-source, and release-integrity suites. It also compiles the native Java helpers and runs each Lua suite in a fresh installed Kahlua environment. With installed references, the core and XP suites exercise real Lifestyle Lua and the water suite exercises real `ISTakeWaterAction.lua`; game and network receivers remain explicit boundary doubles.
 
 Important regressions include native-recursive carried-bag lookup, completion of returned loans, transfers from the actual current container, hunger-based portions without an extra calorie reserve, empty reserve starts, native critical need stops, oldest eligible rereads, separate opening-tool sources, and native source positions for ground bags without `SourceGrid`.
 
@@ -33,6 +33,16 @@ The native client ran with a disposable cache and the optional verification fixt
 
 An initially overloaded test floor correctly prevented a return. The item stayed in inventory with a notice. Successful return checks were repeated with stock below the native floor limit. A suspected stale view was rechecked with exact UI and controller telemetry in a controlled native process and did not reproduce.
 
+## XP, layout, and supply follow-up
+
+A fresh disposable native client exercised the XP and resizing update. Clicking Meditation started native sitting and meditation and showed `1.25 / 75 XP`; Yoga remained `0 / 100 XP`. Controlled native XP adjustments in the test fixture produced a green `+10 XP` and a red `-3 XP`, with rising and fading indicators. These fixture adjustments are outside the product archive. The first window had no Activity scrollbar and no unnecessary outer scrollbar. Dragging the native resize handle reduced it to `540 × 487`, where outer scrolling became necessary; expanding it to `827 × 801` removed that need, and reopening preserved the geometry.
+
+With boredom 40, no eligible literature, and yoga available, the actual Meditation button stopped at the meditation blocker without queuing yoga. Selecting Train both then stood up and queued native yoga.
+
+The source-selection pass exposed an independent native behavior: Zomboid's automatic drinking consumed carried water before a care break. The controlled comparison was repeated after disabling that option through the real Options > Accessibility screen in the disposable cache only. The native action then selected a `5 L` ground bucket over an owned `0.5 L` bottle, leaving the bottle unchanged and about `4.5916 L` in the bucket. With both needs around `0.20`, a `1 L` milk container won over the bucket, retained about `0.5996 L`, and meditation resumed. Once hunger was restored, the same milk was preserved while the bucket supplied thirst relief. The product does not change the user's automatic-drinking option or install its global native hook.
+
+This native snapshot preceded the final controller bookkeeping adjustment that marks both triggered care needs before the first supply action. Portable and installed Kahlua integration checks cover that adjustment in both directions: milk followed by plain water for residual thirst, and milk followed by plain food for residual hunger. The current complete verification run has 14 passing checks with a stable source fingerprint. The XP, UI, selection, and portion code match the native follow-up snapshot.
+
 ## Native multiplayer checks
 
 An owned loopback server advertised Lifestyle, AutoMindful, and the client-only test fixture. The survivor had ordinary `access=user`; Lua checksum enforcement was disabled in this test environment.
@@ -46,6 +56,8 @@ This MP snapshot preceded the final carried-bag completion, hunger-only food pol
 ## Evidence and limits
 
 Evidence is retained outside Git under `${XDG_STATE_HOME:-$HOME/.local/state}/app-verification/automindful/ui-loop-update/`. The single-player observations are in `live-1/sp-observations.json`; multiplayer observations are in `mp-client-1/report.json` and `native-journey.log`. Named screenshots, logs, package manifests, and the final verification report identify the tested candidates.
+
+The XP and supply follow-up artifacts are under `xp-supplies-native/`; the current full check report is `xp-supplies-final-passed-checks/report.json`. `docs/supplies.md` records the shared ranking rule and independently calculated example outcomes.
 
 The installed game was Linux x86-64 Project Zomboid `42.22.2 3d39148846`, with bundled Java 25 and official Lifestyle: Hobbies `0.4.0.3`. The SP fixture requested accelerated sandbox XP settings; MP observations and a model reaching level 10 establish different facts. No normal-speed level 0–10 journey in both skills was completed for this candidate. Every plumbing sprite was not consumed from individually. Native metadata, cooldowns, source capacity, taint, permissions, and server restrictions still apply.
 

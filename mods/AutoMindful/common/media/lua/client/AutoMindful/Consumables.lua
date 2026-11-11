@@ -2,7 +2,7 @@ require "ISUI/ISInventoryPaneContextMenu"
 require "TimedActions/ISDrinkFluidAction"
 
 AutoMindful = AutoMindful or {}
-local Consumables = {}
+local Consumables = {careThreshold = 0.15, restoredThreshold = 0.01}
 AutoMindful.Consumables = Consumables
 
 local function fluidFor(item)
@@ -65,9 +65,15 @@ function Consumables.replacements(item)
     return result
 end
 
+local function effects(description, hunger, thirst)
+    description.hungerEffect, description.thirstEffect = hunger, thirst
+    description.hungerRelief, description.thirstRelief = math.max(0, hunger), math.max(0, thirst)
+    description.food, description.water = hunger > 0, thirst > 0
+end
+
 function Consumables.inspect(player, item, includeNearby)
     local description = {food = false, water = false, needsOpening = false,
-        outputTypes = {}, hungerRelief = 0, thirstRelief = 0, calories = 0}
+        outputTypes = {}, hungerRelief = 0, thirstRelief = 0, hungerEffect = 0, thirstEffect = 0, calories = 0}
     local food = instanceof(item, "Food")
     local fluid = fluidFor(item)
     local cantEat = food and item:getScriptItem():isCantEat()
@@ -101,23 +107,26 @@ function Consumables.inspect(player, item, includeNearby)
         end
         description.outputTypes[item:getFullType()] = true
         local outputs = recipe:getOutputs()
+        local consumableOutputs = 0
         for index = 0, outputs:size() - 1 do
             local output = outputs:get(index)
             local result = output:getResourceType() == ResourceType.Item and output:getItem(recipeData)
             if result then
                 description.outputTypes[result:getFullName()] = true
-                if safeScriptFood(result) then
-                    description.food = description.food or result:getHungerChange() < 0
-                    description.water = description.water or result:getThirstChange() < 0
+                if safeScriptFood(result) and (result:getHungerChange() < 0 or result:getThirstChange() < 0) then
+                    consumableOutputs = consumableOutputs + 1
+                    effects(description, -result:getHungerChange() / 100, -result:getThirstChange() / 100)
                 end
             end
         end
+        if consumableOutputs > 1 then
+            effects(description, 0, 0)
+            description.reason = "Opening creates several usable items. Open it before training so each item can be assessed."
+            return description
+        end
     end
     if food and not cantEat and not description.needsOpening and requiredItemsAvailable(player, item) then
-        description.hungerRelief = math.max(0, -item:getHungerChange())
-        description.thirstRelief = math.max(0, -item:getThirstChange())
-        description.food = description.hungerRelief > 0
-        description.water = description.thirstRelief > 0
+        effects(description, -item:getHungerChange(), -item:getThirstChange())
         description.calories = math.max(0, item:getCalories())
     end
     if fluid and not fluid:isEmpty() then
@@ -137,11 +146,9 @@ function Consumables.inspect(player, item, includeNearby)
             return description
         end
         description.fluid = fluid
-        description.hungerRelief = math.max(0, -properties:getHungerChange())
-        description.thirstRelief = math.max(0, -properties:getThirstChange())
+        effects(description, -properties:getHungerChange(), -properties:getThirstChange())
+        description.remainingLiters = fluid:getAmount()
         description.calories = math.max(0, properties:getCalories())
-        description.water = description.thirstRelief > 0
-        description.food = description.hungerRelief > 0
     end
     return description
 end
@@ -171,15 +178,31 @@ function Consumables.prepare(player, item, description)
     return true
 end
 
+function Consumables.plan(player, description, kind)
+    local hunger = math.max(0, player:getStats():get(CharacterStat.HUNGER))
+    local thirst = math.max(0, player:getStats():get(CharacterStat.THIRST))
+    local hungerEffect, thirstEffect = description.hungerEffect, description.thirstEffect
+    local need, otherNeed = kind == "water" and thirst or hunger, kind == "water" and hunger or thirst
+    local effect, otherEffect = kind == "water" and thirstEffect or hungerEffect, kind == "water" and hungerEffect or thirstEffect
+    if need <= 0 or effect <= 0 then return nil end
+    local fraction = math.min(1, need / effect)
+    if hunger > Consumables.restoredThreshold and thirst > Consumables.restoredThreshold and hungerEffect > 0 and thirstEffect > 0 then
+        fraction = math.min(fraction, hunger / hungerEffect, thirst / thirstEffect)
+    end
+    local primary = math.min(1, effect * fraction / need)
+    local secondary = otherNeed > 0 and math.min(1, math.max(0, otherEffect * fraction) / otherNeed) or 0
+    local penalty = (math.max(0, -otherEffect * fraction) + math.max(0, otherEffect * fraction - otherNeed)) / math.max(otherNeed, Consumables.careThreshold)
+    return {fraction = fraction, primary = primary, secondary = secondary,
+        utility = primary + math.min(primary, secondary) - penalty}
+end
+
 function Consumables.portion(player, item, kind)
     local description = Consumables.inspect(player, item)
     if description.needsOpening then return false, "Open this item before measuring its portion." end
     if not description[kind] then return false, description.reason or "This item cannot restore that need." end
-    local need = math.max(0, player:getStats():get(kind == "water" and CharacterStat.THIRST or CharacterStat.HUNGER))
-    local relief = kind == "water" and description.thirstRelief or description.hungerRelief
-    local remainingFraction = relief > 0 and need / relief or 0
-    remainingFraction = math.min(1, remainingFraction)
-    if remainingFraction <= 0 then return false, "That need is already restored." end
+    local plan = Consumables.plan(player, description, kind)
+    if not plan then return false, "That need is already restored." end
+    local remainingFraction = plan.fraction
     if description.fluid then return remainingFraction end
     local baseHunger, remainingHunger = item:getBaseHunger(), item:getHungChange()
     if baseHunger ~= 0 and remainingHunger ~= 0 then

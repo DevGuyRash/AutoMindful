@@ -223,8 +223,10 @@ ISDrinkFluidAction = {new=function(_, p, item, percentage)
     p.drinkPercentage = percentage
     return T.action(p,"drink",function()
         if not p.refuseCare then
-            local relief=-item.fluid:getProperties():getThirstChange()
-            p.values.THIRST=math.max(0,p.values.THIRST-relief*percentage)
+            local properties=item.fluid:getProperties()
+            p.values.THIRST=math.max(0,p.values.THIRST+properties:getThirstChange()*percentage)
+            p.values.HUNGER=math.max(-0.1,p.values.HUNGER+properties:getHungerChange()*percentage)
+            p.calories=p.calories+properties:getCalories()*percentage
             item.fluid.amount=item.fluid.amount*(1-percentage)
         end
     end)
@@ -243,6 +245,7 @@ ISInventoryPaneContextMenu = {
                 local eaten=math.min(remaining,-item:getBaseHunger()*fraction)
                 local ratio=eaten/remaining
                 p.values.HUNGER=math.max(-0.1,p.values.HUNGER-eaten)
+                p.values.THIRST=math.max(0,p.values.THIRST+item:getThirstChange()*ratio)
                 p.calories=p.calories+item:getCalories()*ratio
                 item.hunger=-(remaining-eaten)
                 item.calories=item:getCalories()*(1-ratio)
@@ -361,6 +364,56 @@ test("without literature the native meditation boredom limit remains authoritati
     p.values.BOREDOM=31; T.tick(p,false); T.tick(p,false)
     assert(not C.status(p).active and C.status(p).message:find("above 30 boredom",1,true))
 end)
+test("meditation only stops at its blocker instead of training available yoga",function()
+    for _,boredom in ipairs({20,40}) do
+        local p=T.playerNew(); p.values.BOREDOM=boredom
+        assert(C.start(p,"meditation",false)); local status=T.run(p)
+        assert(not status.active and status.phase=="stopped" and status.message:find("above 30 boredom",1,true))
+        assert(not hasHistory(p,"Yoga") and p.yoga[1]==0,"Selecting meditation must never train yoga")
+        if boredom==20 then assert(hasHistory(p,"Meditation")) end
+    end
+end)
+test("critical hunger takes priority over ordinary thirst",function()
+    local p=T.playerNew(); p.values.HUNGER=.7; p.hungerMoodle=4; p.values.THIRST=.2
+    T.add(p.inventory,T.water()); T.add(p.inventory,T.item("Food"))
+    assert(C.start(p,"meditation",false)); T.tick(p)
+    assert(p.history[1]=="eat" and not hasHistory(p,"drink"))
+    C.stop(p)
+end)
+test("milk care finishes residual thirst from plain water before resuming",function()
+    local sources=require "AutoMindful/WaterSources"
+    local scan,drink=sources.scan,sources.drink
+    local p=T.playerNew(); p.values.HUNGER=.15; p.values.THIRST=.2
+    local milk=T.add(p.inventory,T.water({hunger=-.5,thirst=-.5}))
+    local water={object={},remainingLiters=20}; local drinks=0
+    sources.scan=function() return {water} end
+    sources.drink=function(player)
+        ISTimedActionQueue.add(T.action(player,"world-drink",function()
+            water.remainingLiters=water.remainingLiters-player.values.THIRST*2
+            player.values.THIRST=0; drinks=drinks+1
+        end))
+        return true
+    end
+    assert(C.start(p,"meditation",true)); T.tick(p)
+    assert(math.abs(milk.fluid.amount-.7)<.000001 and math.abs(p.values.THIRST-.05)<.000001)
+    for i=1,5 do T.tick(p) end
+    assert(drinks==1 and math.abs(water.remainingLiters-19.9)<.000001)
+    assert(p.values.HUNGER==0 and p.values.THIRST==0 and hasHistory(p,"Meditation"))
+    assert(math.abs(milk.fluid.amount-.7)<.000001,"Plain water should finish thirst after hunger is restored")
+    C.stop(p); sources.scan,sources.drink=scan,drink
+end)
+test("paired care remembers hunger even when milk restores thirst first",function()
+    local p=T.playerNew(); p.values.HUNGER=.2; p.values.THIRST=.15
+    local milk=T.add(p.inventory,T.water({hunger=-.5,thirst=-.5}))
+    local meal=T.add(p.inventory,T.item("Food",{hunger=-.6,baseHunger=-.6}))
+    assert(C.start(p,"meditation",false)); T.tick(p)
+    assert(math.abs(milk.fluid.amount-.7)<.000001 and math.abs(p.values.HUNGER-.05)<.000001)
+    for i=1,5 do T.tick(p) end
+    assert(math.abs(p.values.HUNGER)<.000001 and math.abs(p.values.THIRST)<.000001 and hasHistory(p,"eat") and hasHistory(p,"Meditation"))
+    assert(math.abs(meal:getHungerChange()+.55)<.000001,"Food care must finish the .05 hunger left after the mixed drink")
+    assert(math.abs(milk.fluid.amount-.7)<.000001,"The adequate plain food should preserve the remaining milk")
+    C.stop(p)
+end)
 test("water uses native fluid portions and waits for the native fullness gate",function()
     local p=T.playerNew(); p.values.THIRST=0.2; p.foodMoodle=3
     T.add(p.inventory,T.water()); assert(C.start(p,"yoga",false)); T.tick(p)
@@ -439,6 +492,7 @@ test("nearby portable bags use their native world anchor when source grid is abs
 end)
 test("floor provisions use each world item's square when the synthetic container has no grid",function()
     local S=require "AutoMindful/Supplies"; local p=T.playerNew(); local floor=T.container(); floor.floor=true
+    p.values.THIRST=.2
     function floor:getSourceGrid() return nil end
     local function ground(x, z)
         return {getSquare=function() return {getX=function() return x end, getY=function() return 0 end, getZ=function() return z end} end,

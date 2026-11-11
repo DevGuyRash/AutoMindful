@@ -22,25 +22,29 @@ function Widget:setVisible(value) self.visible = value end
 function Widget:getIsVisible() return self.visible end
 function Widget:getX() return self.x end
 function Widget:getY() return self.y end
+function Widget:setX(value) self.x = value end
+function Widget:setY(value) self.y = value end
+function Widget:setWidth(value) self.width = value end
 function Widget:getBottom() return self.y + self.height end
 function Widget:setHeight(value) self.height = value end
 function Widget:setEnable(value) self.enable = value end
 function Widget:bringToTop() end
 function Widget:setScrollChildren(value) self.scrollChildren = value end
-function Widget:addScrollBars() end
+function Widget:addScrollBars() self.hasScrollbars = true end
 function Widget:setScrollHeight(value) self.scrollHeight = value end
 function Widget:getScrollHeight() return self.scrollHeight or 0 end
 function Widget:setYScroll(value) self.scrollY = value end
 function Widget:getYScroll() return self.scrollY or 0 end
 function Widget:setStencilRect() end
 function Widget:clearStencilRect() end
-function Widget:drawText(text, x, y, r, g, b) self.draws[#self.draws + 1] = {text=text,x=x,y=y,r=r,g=g,b=b} end
+function Widget:drawText(text, x, y, r, g, b, a) self.draws[#self.draws + 1] = {text=text,x=x,y=y,r=r,g=g,b=b,a=a} end
 Widget.drawTextRight = Widget.drawText
 ISPanel = Widget:derive("ISPanel")
 function ISPanel:prerender() end
 ISCollapsableWindow = ISPanel:derive("ISCollapsableWindow")
 function ISCollapsableWindow:createChildren() end
 function ISCollapsableWindow:update() end
+function ISCollapsableWindow:onResize() end
 function ISCollapsableWindow:titleBarHeight() return 24 end
 ISButton = Widget:derive("ISButton")
 ISTickBox = Widget:derive("ISTickBox")
@@ -108,7 +112,9 @@ function PZAPI.ModOptions:create(id)
     return object
 end
 
-local Controller = {state={active=false,phase="idle",message="Choose a mode.",meditation=2,yoga=0.5},
+local Controller = {state={active=false,phase="idle",message="Choose a mode.",meditation=2,yoga=0,
+    progress={meditation={level=2,current=25,required=200,fraction=0.125,total=175},
+        yoga={level=0,current=40,required=100,fraction=0.4}}},
     inventory={food=3,water=2,literature=1,nearbyFood=5,nearbyWater=4,nearbyLiterature=2,warnings={}}, stops=0, scans=0, starts=0}
 function Controller.status() return Controller.state end
 function Controller.prepare(_, collect, preview)
@@ -198,6 +204,7 @@ assert(parent.onSelect == nil and not parent.notAvailable, "A blocked native act
 assert(parent.toolTip == nil, "Parent tooltips do not cover the quick-action submenu")
 assert(submenu.options[1].name == "Open AutoMindful" and submenu.options[2].name == "Train meditation"
     and submenu.options[3].name == "Check supplies", "Open window precedes the mode-specific quick actions")
+assert(submenu.options[2].toolTip.description:find("25 / 200 XP",1,true), "Quick-action tooltips include progress toward the next level")
 local manual = submenu.options[4]
 assert(manual.notAvailable and manual.iconTexture == "native meditation icon" and manual.toolTip, "Native availability and presentation are retained")
 assert(manual.onSelect(manual.target) == "native meditation")
@@ -254,7 +261,62 @@ UI.windows[1] = nil
 core.getScreenHeight = screenHeight
 assert(Controller.lastScope.collect == false and Controller.lastScope.preview == true, "Preview uses the actual collection setting")
 assert(window.report.food == 3 and window.report.nearbyFood == 5)
-assert(window.skills[1].bar.progress == 0.2 and window.skills[2].bar.progress == 0.05, "Skill bars represent actual levels")
+assert(window.skills[1].bar.progress == 0.125 and window.skills[2].bar.progress == 0.4, "Skill bars represent XP within the current level")
+assert(window.skills[1].label.name=="Meditation - Level 2 / 10" and window.skills[1].bar.text=="25 / 200 XP (12.5%)")
+assert(not window.skills[1].flash and not window.skills[2].flash, "The first sample must not invent XP gains")
+assert(not window.activity.hasScrollbars and window.activity:getScrollHeight() <= window.activity.height,
+    "Ordinary activity text fits without an inner scrollbox")
+assert(window.resizable and window.body:getScrollHeight() <= window.body.height,
+    "The ordinary window fits its content and exposes native resizing")
+Controller.state.progress.meditation={level=2,current=30,required=200,fraction=0.15,total=180}
+now=now+200; window:refresh()
+local flash=window.skills[1].flash
+assert(flash and flash.text=="+5 XP" and flash.positive)
+window.progressFrame.draws={}; window.progressFrame:prerender()
+local startDraw=window.progressFrame.draws[#window.progressFrame.draws]
+assert(startDraw.text=="+5 XP" and startDraw.g>startDraw.r and startDraw.a==1)
+now=now+500; window.progressFrame.draws={}; window.progressFrame:prerender()
+local laterDraw=window.progressFrame.draws[#window.progressFrame.draws]
+assert(laterDraw.y<startDraw.y and laterDraw.a==0.5,"The one-second XP indication rises and fades")
+Controller.state.progress.meditation={level=2,current=27,required=200,fraction=0.135,total=177}
+now=now+100; window:refresh(); window.progressFrame.draws={}; window.progressFrame:prerender()
+local loss=window.progressFrame.draws[#window.progressFrame.draws]
+assert(loss.text=="-3 XP" and loss.r>loss.g,"XP losses show the amount in red")
+now=now+1001; window.progressFrame:prerender()
+assert(not window.skills[1].flash,"XP indication expires after one second")
+Controller.state.meditation=3
+Controller.state.progress.meditation={level=3,current=2,required=500,fraction=0.004,total=352}
+window:refresh()
+assert(window.skills[1].flash.text=="+175 XP" and window.skills[1].bar.progress==0.004,
+    "Level transitions retain the actual cumulative XP change")
+Controller.state.yoga=1
+Controller.state.progress.yoga={level=1,current=5,required=250,fraction=0.02}
+window:refresh()
+assert(window.skills[2].flash.text=="+65 XP","A Yoga level transition counts the previous threshold and new progress")
+Controller.state.yoga=9
+Controller.state.progress.yoga={level=9,current=8995,required=9000,fraction=8995/9000}
+window:refresh()
+Controller.state.yoga=10
+Controller.state.progress.yoga={level=10,current=0,required=0,fraction=1,capped=true}
+window:refresh()
+assert(window.skills[2].bar.text=="MAX" and window.skills[2].bar.progress==1 and window.skills[2].flash.text=="+1 level",
+    "Yoga cap uses an honest level indication when upstream does not retain the exact XP award")
+window:setWidth(760); window:setHeight(850); window:onResize()
+assert(window.body.width==736 and window.ledger.width==721 and window.starts[1].width==(736-12)/3)
+assert(window.body:getScrollHeight()<=window.body.height and window.player.data.AutoMindfulPreferences.width==760
+    and window.player.data.AutoMindfulPreferences.height==850,"Resizing reflows content and remembers the chosen dimensions")
+assertFooterVisible(window)
+Controller.state.message="First line\nSecond line\nThird line\nFourth line"
+window:refresh()
+assert(window.activity:getScrollHeight()<=window.activity.height and not window.activity.hasScrollbars,
+    "Long activity text grows its frame instead of hiding status behind an inner scrollbar")
+Controller.state.message="Choose a mode."
+Controller.inventory.warnings={}
+for index=1,12 do Controller.inventory.warnings[index]="Supply warning "..index end
+window:refresh()
+assert(window.guidance.hasScrollbars and window.guidance:getScrollHeight()>window.guidance.height,
+    "Long preparation details remain accessible through their own scroll area")
+Controller.inventory.warnings={};window:refresh()
 assert(window.checked.name == "Supplies checked just now")
 Controller.inventory.food = 7
 now = now + 600
@@ -288,9 +350,12 @@ window:close()
 assert(not window.ledger.tooltipUI:getIsVisible() and window.ledger.tooltipUI.removed, "Closing resets tooltip visibility so it can appear after reopening")
 local scans = Controller.scans
 now = now + 600
+Controller.state.progress.meditation={level=3,current=52,required=500,fraction=0.104,total=402}
 window:update()
 assert(Controller.scans == scans and Controller.state.active and Controller.stops == 0, "Closing hides the view without ending the loop")
 assert(UI.open(player) == window and window.x == 120 and window.y == 130 and window.nearby:isSelected(1), "Reopening preserves position and collection preference")
+assert(window.width==760 and window.height==850 and not window.skills[1].flash and not window.skills[2].flash,
+    "Reopening preserves geometry and establishes a fresh XP baseline without replaying hidden gains")
 
 require "AutoMindful_Main"
 settings:getOption("openWindow"):setValue(66)

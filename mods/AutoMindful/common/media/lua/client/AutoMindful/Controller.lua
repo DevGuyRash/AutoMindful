@@ -6,6 +6,7 @@ require "ISUI/ISWorldObjectContextMenu"
 local Supplies = require "AutoMindful/Supplies"
 local Consumables = require "AutoMindful/Consumables"
 local WaterSources = require "AutoMindful/WaterSources"
+local Progress = require "AutoMindful/Progress"
 
 AutoMindful = AutoMindful or {}
 local Controller = {}
@@ -262,10 +263,9 @@ end
 local function supply(player, state, kind, onlyWorldWater)
     if kind == "literature" and player:tooDarkToRead() then return false end
     state.supplyMissingReason = nil
-    local entry = not onlyWorldWater and Supplies.choose(player, kind, state.collectNearby, state.rejected) or nil
-    local source = kind == "water" and state.collectNearby and (not entry or not entry.owned)
-        and WaterSources.choose(player, state.rejected)
-    if source and (not entry or not entry.owned) then
+    local entry = Supplies.choose(player, kind, state.collectNearby, state.rejected, onlyWorldWater)
+    while entry and entry.source do
+        local source = entry.source
         state.supplyItem, state.supplyLoan, state.collectingItem = nil, nil, nil
         state.supplyKind, state.supplySource = "water", source
         state.supplyBaseline = {thirst = stat(player, "THIRST")}
@@ -279,6 +279,7 @@ local function supply(player, state, kind, onlyWorldWater)
             state.pending = nil
         end
         if queued then return true end
+        entry = Supplies.choose(player, kind, state.collectNearby, state.rejected, onlyWorldWater)
     end
     if not entry then
         if kind ~= "literature" then
@@ -324,43 +325,43 @@ end
 local function comfortSupplyAvailable(player, state, kind)
     if kind == "literature" then
         if player:tooDarkToRead() then return false end
-    elseif player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN) >= 3 then
-        return kind == "water" and state.collectNearby and WaterSources.choose(player, state.rejected) ~= nil
     end
-    return Supplies.choose(player, kind, state.collectNearby, state.rejected) ~= nil
-        or (kind == "water" and state.collectNearby and WaterSources.choose(player, state.rejected) ~= nil)
+    local full = kind ~= "literature" and player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN) >= 3
+    if full and kind == "food" then return false end
+    return Supplies.choose(player, kind, state.collectNearby, state.rejected, full) ~= nil
 end
 
 local function care(player, state)
     state.careNotice = nil
     local fullness = player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)
-    if stat(player, "THIRST") >= 0.15 or criticalNeed(player, "water") then
-        if supply(player, state, "water", fullness >= 3) then return true end
-        if criticalNeed(player, "water") then
-            if fullness >= 3 then
-                setPhase(state, "recovering", "Thirst is critical, but the game currently refuses another drink. Waiting for the drinking restriction to end.")
-            else
-                Controller.stop(player, "Stopped because thirst reached the game's Dying of Thirst stage and no suitable drink is available."
-                    .. (state.supplyMissingReason and (" " .. state.supplyMissingReason) or ""))
-            end
-            return true
-        end
-        state.careNotice = state.supplyMissingReason and (state.supplyMissingReason .. " Training can continue.")
-            or "No drink found; continuing while thirst is safe."
+    for _, kind in ipairs({"water", "food"}) do
+        local value = stat(player, kind == "water" and "THIRST" or "HUNGER")
+        if value <= Consumables.restoredThreshold then state.careNeeds[kind] = nil end
+        if value >= Consumables.careThreshold or criticalNeed(player, kind) then state.careNeeds[kind] = true end
     end
-    local hungry = stat(player, "HUNGER") >= 0.15
-    if hungry or criticalNeed(player, "food") then
-        if fullness < 3 and supply(player, state, "food") then return true end
-        if criticalNeed(player, "food") then
-            if fullness >= 3 then
-                setPhase(state, "recovering", "Hunger is critical, but the game currently refuses more food. Waiting for the eating restriction to end.")
-            else
-                Controller.stop(player, "Stopped because hunger reached the game's Starving to Death stage and no suitable food is available.")
+    local order = criticalNeed(player, "food") and not criticalNeed(player, "water")
+        and {"food", "water"} or {"water", "food"}
+    for _, kind in ipairs(order) do
+        local critical = criticalNeed(player, kind)
+        if state.careNeeds[kind] then
+            if (kind == "water" or fullness < 3) and supply(player, state, kind, kind == "water" and fullness >= 3) then return true end
+            if critical then
+                if fullness >= 3 then
+                    setPhase(state, "recovering", kind == "water"
+                        and "Thirst is critical, but the game currently refuses another drink. Waiting for the drinking restriction to end."
+                        or "Hunger is critical, but the game currently refuses more food. Waiting for the eating restriction to end.")
+                else
+                    Controller.stop(player, (kind == "water"
+                        and "Stopped because thirst reached the game's Dying of Thirst stage and no suitable drink is available."
+                        or "Stopped because hunger reached the game's Starving to Death stage and no suitable food is available.")
+                        .. (state.supplyMissingReason and (" " .. state.supplyMissingReason) or ""))
+                end
+                return true
             end
-            return true
+            state.careNeeds[kind] = nil
+            state.careNotice = state.supplyMissingReason and (state.supplyMissingReason .. " Training can continue.")
+                or (kind == "water" and "No drink found; continuing while thirst is safe." or "No food found; continuing while hunger is safe.")
         end
-        state.careNotice = state.supplyMissingReason and (state.supplyMissingReason .. " Training can continue.")
-            or "No food found; continuing while hunger is safe."
     end
     if needSleep(player) then
         if isClient() and not getServerOptions():getBoolean("SleepAllowed") then
@@ -410,13 +411,14 @@ local function advance(player, state)
     if needsMeditation and boredom >= 20 then
         if supply(player, state, "literature") then return end
         if boredom > 30 then
-            if canYoga then train(player, state, "yoga") return end
-            if yogaMessage == getText("ContextMenu_Embarrassed") then
+            if state.mode == "both" and canYoga then train(player, state, "yoga") return end
+            if state.mode == "both" and yogaMessage == getText("ContextMenu_Embarrassed") then
                 if sit(player, state) then setPhase(state, "recovering", "Waiting for embarrassment to fade so yoga can relieve boredom.") end
                 return
             end
-            Controller.stop(player, player:tooDarkToRead() and "Too dark to read and yoga is unavailable. Move to a lit training spot."
-                or "Meditation is blocked above 30 boredom. Bring eligible leisure literature or make yoga available.")
+            Controller.stop(player, "Meditation is blocked above 30 boredom. "
+                .. (player:tooDarkToRead() and "Move to a lit spot to read. " or "Bring eligible leisure literature. ")
+                .. (state.mode == "both" and "Yoga is currently unavailable." or "Select Train both if you also want yoga."))
             return
         end
         state.careNotice = "No eligible literature found; meditation is still allowed."
@@ -646,7 +648,7 @@ function Controller.start(player, mode, collectNearby)
     if player:isAsleep() then return false, "Wait until the survivor wakes up." end
     local yoga = HiddenSkills.getSkill(player, "Yoga")
     local state = {active = true, mode = mode, collectNearby = collectNearby == true, phase = "starting",
-        message = "Checking supplies and training requirements.", rejected = {}, failures = 0, hoursWithoutXP = 0,
+        message = "Checking supplies and training requirements.", rejected = {}, careNeeds = {}, failures = 0, hoursWithoutXP = 0,
         observedGameHours = player:getHoursSurvived(), progressMeditation = player:getXp():getXP(Perks.Meditation),
         progressYogaLevel = yoga[1], progressYogaXP = yoga[2]}
     state.loans, state.returnNotice = old.loans or {}, old.returnNotice
@@ -659,7 +661,8 @@ function Controller.status(player)
     local state = stateFor(player)
     local meditation, yoga = levels(player)
     return {active = state.active, phase = state.phase, message = state.message, meditation = meditation, yoga = yoga,
-        mode = state.mode, collectNearby = state.collectNearby, returnNotice = state.returnNotice, careNotice = state.careNotice, pendingReturns = #state.loans}
+        progress = Progress.snapshot(player), mode = state.mode, collectNearby = state.collectNearby,
+        returnNotice = state.returnNotice, careNotice = state.careNotice, pendingReturns = #state.loans}
 end
 
 function Controller.prepare(player, collectNearby, showNearby)

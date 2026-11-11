@@ -6,6 +6,7 @@ require "ISUI/ISLabel"
 require "ISUI/ISRichTextPanel"
 require "ISUI/ISProgressBar"
 local Controller = require "AutoMindful/Controller"
+local Progress = require "AutoMindful/Progress"
 
 AutoMindful = AutoMindful or {}
 local UI = ISCollapsableWindow:derive("AutoMindfulWindow")
@@ -22,6 +23,7 @@ local palette = {
     yoga = {r=0.82, g=0.69, b=0.45, a=1},
     water = {r=0.47, g=0.69, b=0.78, a=1},
     missing = {r=0.85, g=0.47, b=0.42, a=1},
+    gain = {r=0.45, g=0.88, b=0.56, a=1},
 }
 
 local function preferences(player)
@@ -57,6 +59,24 @@ function Frame:prerender()
     ISPanel.prerender(self)
     local c = palette.text
     self:drawText(self.heading, 12, 8, c.r, c.g, c.b, c.a, UIFont.Medium)
+end
+
+local SkillFrame = Frame:derive("AutoMindfulSkillFrame")
+function SkillFrame:prerender()
+    Frame.prerender(self)
+    local now = getTimestampMs()
+    for _, skill in ipairs(self.skills) do
+        local flash = skill.flash
+        if flash then
+            local age = (now - flash.started) / 1000
+            if age >= 1 then skill.flash = nil
+            else
+                local c = flash.positive and palette.gain or palette.missing
+                self:drawTextRight(flash.text, self.width - 12, skill.labelY - math.max(0, age) * 8,
+                    c.r, c.g, c.b, 1 - math.max(0, age), UIFont.Small)
+            end
+        end
+    end
 end
 
 local Ledger = Frame:derive("AutoMindfulSupplyLedger")
@@ -118,6 +138,7 @@ end
 function UI:savePreferences()
     local saved = preferences(self.player)
     saved.x, saved.y, saved.pin = self:getX(), self:getY(), self.pin
+    saved.width, saved.height = self.width, self.height
     saved.collectNearby = self.nearby:isSelected(1)
 end
 
@@ -169,12 +190,24 @@ function UI:refresh()
     local phase = status.active and (status.mode == "both" and "Training both" or status.mode == "yoga" and "Training yoga" or "Training meditation") or "Ready"
     if status.phase == "stopped" then phase = "Stopped"; activityColor = palette.yoga end
     setText(self.activity, colored(activityColor, phase) .. " <LINE> " .. colored(palette.text, self.startError or status.message))
+    local now = getTimestampMs()
     for _, skill in ipairs(self.skills) do
         local level = math.max(0, math.min(10, status[skill.field] or 0))
-        skill.bar:setProgress(level / 10)
-        skill.bar:setText(string.format(skill.field == "yoga" and "%.1f / 10" or "%.0f / 10", level))
+        local progress = status.progress and status.progress[skill.field]
+        skill.label:setName(string.format("%s - Level %d / 10", skill.name, level))
+        skill.bar:setProgress(progress and progress.fraction or 0)
+        skill.bar:setText(Progress.xpText(progress))
         skill.bar.textColor = level >= 10 and palette.yoga or (level > 0 and skill.color or palette.muted)
+        local change = self.progressObserved and Progress.change(skill.sample, progress)
+        if change then
+            local amount = change.amount or change.levels
+            local unit = change.amount and " XP" or (math.abs(amount) == 1 and " level" or " levels")
+            skill.flash = {positive=change.positive, started=now,
+                text=(amount > 0 and "+" or "") .. Progress.number(amount) .. unit}
+        end
+        skill.sample = progress
     end
+    self.progressObserved = self:getIsVisible()
     self.checked:setName(getTimestampMs() - (self.checkedAt or -10000) < 3000 and "Supplies checked just now" or "Live supply refresh")
     local tips = {}
     if status.returnNotice then tips[#tips + 1] = colored(palette.yoga, status.returnNotice) end
@@ -197,6 +230,7 @@ function UI:refresh()
     local literatureHelp = unread and string.format("Literature in inventory: %d unread, %d eligible rereads. ", unread, rereads or 0) or ""
     self.ledger.tooltip = "Counts refresh while you move or change inventory. Hydration includes safe drinks and hydrating food; one item can count in both food and hydration. " .. literatureHelp
         .. "Training can start with no supplies. Missing stock becomes a stop only when the survivor's condition actually requires it. Unread literature is preferred, then eligible rereads. Recently read material can be unavailable until the game's cooldown ends. Nearby supplies are used only when collection is enabled."
+    self:layout()
 end
 
 function UI:createChildren()
@@ -213,9 +247,12 @@ function UI:createChildren()
     self.body:addScrollBars()
     local contentWidth, y = width - 15, 0
     local activity = frame(self.body, Frame, "Activity", 0, y, contentWidth, line * 4 + 20)
-    self.activity = textPanel(activity, 12, line + 17, contentWidth - 24, activity.height - line - 23, true)
+    self.activityFrame = activity
+    self.activity = textPanel(activity, 12, line + 17, contentWidth - 24, activity.height - line - 23, false)
+    self.activity.marginTop, self.activity.marginBottom = 0, 0
     y = y + activity.height + 8
-    local progress = frame(self.body, Frame, "Progress", 0, y, contentWidth, line * 5 + 32)
+    local progress = frame(self.body, SkillFrame, "Progress", 0, y, contentWidth, line * 5 + 32)
+    self.progressFrame = progress
     self.skills = {}
     local skillY = line + 20
     for _, entry in ipairs({{"Meditation", "meditation", palette.meditation}, {"Yoga", "yoga", palette.yoga}}) do
@@ -226,16 +263,19 @@ function UI:createChildren()
         bar:initialise()
         bar.progressColor, bar.borderColor = entry[3], palette.border
         progress:addChild(bar)
-        self.skills[#self.skills + 1] = {field=entry[2], bar=bar, color=entry[3]}
+        self.skills[#self.skills + 1] = {name=entry[1], field=entry[2], label=label, labelY=skillY, bar=bar, color=entry[3]}
         skillY = skillY + line * 2 + 12
     end
     progress:setHeight(skillY + 7)
+    progress.skills = self.skills
     y = y + progress.height + 8
     self.ledger = frame(self.body, Ledger, "Supplies", 0, y, contentWidth, line * 7 + 58)
     self.ledger.line, self.ledger.window = line, self
     y = y + self.ledger.height + 8
     local guide = frame(self.body, Frame, "Preparation and returns", 0, y, contentWidth, line * 6 + 28)
+    self.guideFrame = guide
     self.guidance = textPanel(guide, 12, line + 18, contentWidth - 24, guide.height - line - 23, true)
+    self.guidance.marginTop, self.guidance.marginBottom = 0, 0
     self.body:setScrollHeight(y + guide.height + 4)
     y = self.body:getBottom() + 6
     self.nearby = ISTickBox:new(pad, y, width, row, "Adjacent supplies", self, UI.onNearbyChanged)
@@ -272,9 +312,66 @@ function UI:createChildren()
     self.checked:initialise()
     self:addChild(self.checked)
     local footer = textPanel(self, pad, y + line + 2, width, line * 2 + 4, false)
+    self.footer = footer
     footer.marginTop, footer.marginBottom = 0, 0
     setText(footer, colored(palette.muted, "Close to hide. Training continues.") .. " <LINE> "
         .. colored(palette.muted, "Shortcut: Options > Mods > AutoMindful."))
+    self:layout()
+end
+
+function UI:layout()
+    if not self.footer then return end
+    local pad, line = 12, getTextManager():getFontHeight(UIFont.Small)
+    local row = math.max(28, line + 10)
+    local width = self.width - pad * 2
+    local bodyY = self:titleBarHeight() + 10
+    self.footer:setWidth(width)
+    self.footer:paginate()
+    self.footer:setHeight(math.max(line * 2 + 4, self.footer:getScrollHeight()))
+    local controlsHeight = row * 3 + line + self.footer.height + 26
+    self.body:setWidth(width)
+    self.body:setHeight(math.max(1, self.height - bodyY - controlsHeight - 8))
+    local contentWidth = width - 15
+    for _, panel in ipairs({self.activityFrame, self.progressFrame, self.ledger, self.guideFrame}) do panel:setWidth(contentWidth) end
+    for _, panel in ipairs({self.activity, self.guidance}) do
+        panel:setWidth(contentWidth - 24)
+        if panel.text then panel:paginate() end
+    end
+    self.activity:setHeight(math.max(line * 2, self.activity:getScrollHeight()) + 2)
+    self.activityFrame:setHeight(line + 23 + self.activity.height)
+    local y = self.activityFrame:getBottom() + 8
+    self.progressFrame:setY(y)
+    for _, skill in ipairs(self.skills) do skill.bar:setWidth(contentWidth - 24) end
+    self.ledger:setY(self.progressFrame:getBottom() + 8)
+    self.guideFrame:setY(self.ledger:getBottom() + 8)
+    self.guidance:setHeight(math.min(line * 6, math.max(line * 2, self.guidance:getScrollHeight())) + 2)
+    self.guideFrame:setHeight(line + 24 + self.guidance.height)
+    self.body:setScrollHeight(self.guideFrame:getBottom() + 4)
+    y = self.body:getBottom() + 6
+    self.nearby:setY(y)
+    self.nearby:setWidth(width)
+    y = y + row + 4
+    local buttonWidth = (width - 12) / 3
+    for index, button in ipairs(self.starts) do
+        button:setX(pad + (index - 1) * (buttonWidth + 6))
+        button:setY(y)
+        button:setWidth(buttonWidth)
+    end
+    y = y + row + 4
+    self.check:setY(y)
+    self.check:setWidth(width / 2 - 3)
+    self.stopButton:setX(pad + width / 2 + 3)
+    self.stopButton:setY(y)
+    self.stopButton:setWidth(width / 2 - 3)
+    y = y + row + 6
+    self.checked:setY(y)
+    self.footer:setY(y + line + 2)
+end
+
+function UI:onResize()
+    ISCollapsableWindow.onResize(self)
+    self:layout()
+    if self.footer then self:savePreferences() end
 end
 
 function UI:update()
@@ -289,6 +386,8 @@ end
 
 function UI:close()
     self:savePreferences()
+    self.progressObserved = false
+    for _, skill in ipairs(self.skills) do skill.flash, skill.sample = nil, nil end
     if self.ledger.tooltipUI then
         self.ledger.tooltipUI:setVisible(false)
         self.ledger.tooltipUI:removeFromUIManager()
@@ -304,14 +403,17 @@ function UI.open(player)
     if not window then
         local saved = preferences(player)
         local line = getTextManager():getFontHeight(UIFont.Small)
-        local width = math.min(math.max(540, getTextManager():MeasureStringX(UIFont.Small, "Use adjacent supplies") + 56), getCore():getScreenWidth() - 24)
-        local height = math.min(math.max(690, line * 32 + 100), getCore():getScreenHeight() - 40)
+        local minimumWidth = math.min(480, getCore():getScreenWidth() - 24)
+        local minimumHeight = math.min(math.max(440, line * 17 + 100), getCore():getScreenHeight() - 40)
+        local width = math.min(math.max(minimumWidth, tonumber(saved.width) or 540), getCore():getScreenWidth() - 24)
+        local height = math.min(math.max(minimumHeight, tonumber(saved.height) or math.max(800, line * 37 + 171)), getCore():getScreenHeight() - 40)
         local x = math.max(0, math.min(tonumber(saved.x) or 70, getCore():getScreenWidth() - width))
         local y = math.max(0, math.min(tonumber(saved.y) or 70, getCore():getScreenHeight() - height))
         window = UI:new(x, y, width, height)
         window.player, window.title = player, "AutoMindful"
         window.backgroundColor, window.borderColor = palette.background, palette.border
-        window.resizable, window.pin = false, saved.pin ~= false
+        window.resizable, window.pin = true, saved.pin ~= false
+        window.minimumWidth, window.minimumHeight = minimumWidth, minimumHeight
         window.nextRefresh = 0
         window:initialise()
         UI.windows[index] = window

@@ -28,11 +28,13 @@ During a running session, **AutoMindful (running)** lets you reopen the window e
 | Section | What it shows |
 | --- | --- |
 | Activity | Current training, care break, pause, or stop reason. |
-| Progress | Meditation and yoga levels with separate colors and progress bars. |
+| Progress | Skill levels, XP toward the next level, and a brief green gain or red loss indicator. |
 | Supplies | Usable food, hydration, and literature in inventory and reachable nearby containers. |
 | Preparation and returns | Requirements, warnings, and borrowed items waiting to go back. |
 
 Counts refresh while the window is open, including after walking, inventory changes, and toggling collection. **Check supplies** refreshes immediately and confirms that the check happened. It does not collect or consume items. Counts represent usable items, not servings or days. A nourishing drink can count toward both food and hydration.
+
+Drag the window's bottom or right resize handle to make more room. Its size and position are remembered. The Activity area expands for its status text; the main content scrolls when the available window space is too small. XP bars show progress within the current level. Exact XP changes appear briefly when the underlying skill exposes enough information; otherwise a level change is shown.
 
 You can start with no food or water. Empty supply counts are warnings, not a start requirement. AutoMindful uses provisions when available and continues while the survivor's condition permits training. It stops for a genuine blocking condition rather than an empty inventory alone.
 
@@ -49,11 +51,17 @@ You can start with no food or water. Empty supply counts are warnings, not a sta
 
 Borrowed books, unused food or drink, opening tools, and attributable leftover containers are returned to their original reachable source. Your own supplies and worn equipment stay yours. If a return is blocked or its source is no longer reachable, the item stays in inventory and the window explains it. The mod does not walk away to return an item or move unrelated inventory.
 
+Supply choices compare the portion that would help your current needs. A useful drink or food that restores both can win; a tiny dual-purpose item does not automatically beat an adequate source. Otherwise, equally useful water choices prefer the largest current reserve, including permitted nearby plumbing. Food choices favor an adequate convenient portion over unnecessary preparation or borrowing. Calories do not make butter or another rich food win by themselves. See [supply selection](docs/supplies.md) for the policy and examples.
+
+Zomboid's separate automatic-drinking option can still use carried water before a care break. AutoMindful leaves that preference unchanged. For exclusive control by these care actions, turn off **Automatically drink water when thirsty** under the game's **Options > Accessibility**.
+
 ## Keep control of the loop
 
 **Stop training** cancels explicitly. Clear movement, sustained aiming, or another gameplay action taking control also cancels, with a short reason above the survivor. Looking at the window or context menu does not cancel. Inventory transfers can pause the automatic work and let it resume afterward.
 
 Meditation needs sitting on the ground and cannot start above Lifestyle's boredom limit. Yoga needs standing and may require a complete two-tile mat. Native exhaustion, embarrassment, injuries, unsafe surroundings, and missing essentials can limit what the survivor can do. AutoMindful uses normal game time and XP rates; reaching both level caps can take many game days.
+
+**Meditation** trains only meditation, and **Yoga** trains only yoga. A single-skill loop stops with its blocking reason if care cannot make that skill available. **Train both** permits alternating skills, including yoga to relieve boredom that blocks meditation.
 
 ## Configure access
 

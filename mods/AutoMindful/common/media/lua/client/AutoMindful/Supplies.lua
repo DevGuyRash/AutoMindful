@@ -77,6 +77,7 @@ function Supplies.scan(player, includeNearby, useNearbyTools)
             if not floor or (world and reachable(player, world:getSquare())) then
                 local entry = {item = item, owned = owned}
                 local consumable = Consumables.inspect(player, item, useNearbyTools)
+                entry.description = consumable
                 if consumable.food then result.food[#result.food + 1] = entry end
                 if consumable.water then result.water[#result.water + 1] = entry end
                 if consumable.needsOpening and consumable.reason then result.openingReason = consumable.reason end
@@ -109,25 +110,74 @@ function Supplies.scan(player, includeNearby, useNearbyTools)
     return result
 end
 
-function Supplies.choose(player, kind, includeNearby, rejected)
-    local best, bestScore
-    for _, entry in ipairs(Supplies.scan(player, includeNearby)[kind]) do
-        local item = entry.item
-        local rejection = rejected[item:getID()]
-        if type(rejection) == "number" and getTimestampMs() >= rejection then rejected[item:getID()] = nil; rejection = nil end
-        if not rejection and (entry.owned or player:getInventory():hasRoomFor(player, item)) then
-            local score = entry.owned and 100000 or 0
-            if kind == "literature" then
-                if not best or (entry.lastRead == nil and best.lastRead ~= nil)
+local function rejectedItem(rejected, key)
+    local rejection = rejected[key]
+    if type(rejection) == "number" and getTimestampMs() >= rejection then
+        rejected[key], rejection = nil, nil
+    end
+    return rejection
+end
+
+local function preparationCost(player, entry)
+    if entry.source then return 1 + (player:isSitOnGround() and 1 or 0) end
+    local description, inventory = entry.description, player:getInventory()
+    local cost = 1 + (description.needsOpening and 1 or 0)
+    if entry.item:getContainer() ~= inventory then cost = cost + 2 end
+    for _, tool in ipairs(description.returnItems or {}) do
+        if tool:getContainer() ~= inventory then cost = cost + 2 end
+    end
+    return cost
+end
+
+local function better(candidate, best, kind, critical)
+    if not best then return true end
+    local comparisons = {}
+    if critical then comparisons[#comparisons + 1] = {candidate.plan.primary, best.plan.primary} end
+    comparisons[#comparisons + 1] = {candidate.plan.utility, best.plan.utility}
+    comparisons[#comparisons + 1] = {candidate.plan.secondary > 0 and 1 or 0, best.plan.secondary > 0 and 1 or 0}
+    if kind == "water" then comparisons[#comparisons + 1] = {candidate.reserve, best.reserve} end
+    comparisons[#comparisons + 1] = {-candidate.cost, -best.cost}
+    for _, comparison in ipairs(comparisons) do
+        if math.abs(comparison[1] - comparison[2]) > 0.000001 then return comparison[1] > comparison[2] end
+    end
+    return candidate.item and best.item and candidate.item:getID() < best.item:getID() or false
+end
+
+function Supplies.choose(player, kind, includeNearby, rejected, worldOnly)
+    local scan = Supplies.scan(player, includeNearby)
+    local best
+    if kind == "literature" then
+        for _, entry in ipairs(scan.literature) do
+            if not rejectedItem(rejected, entry.item:getID()) and (entry.owned or player:getInventory():hasRoomFor(player, entry.item))
+                    and (not best or (entry.lastRead == nil and best.lastRead ~= nil)
                         or ((entry.lastRead == nil) == (best.lastRead == nil)
                             and ((entry.lastRead or -1) < (best.lastRead or -1)
-                                or (entry.lastRead == best.lastRead and score > bestScore))) then
-                    best, bestScore = entry, score
-                end
-            else
-                local descriptor = Consumables.inspect(player, item, includeNearby)
-                score = score + (kind == "food" and descriptor.calories or descriptor.thirstRelief)
-                if not bestScore or score > bestScore then best, bestScore = entry, score end
+                                or (entry.lastRead == best.lastRead and entry.owned and not best.owned)))) then
+                best = entry
+            end
+        end
+        return best
+    end
+    local critical = player:getMoodles():getMoodleLevel(kind == "water" and MoodleType.THIRST or MoodleType.HUNGRY) >= 4
+    local function consider(entry)
+        entry.plan = Consumables.plan(player, entry.description, kind)
+        if not entry.plan then return end
+        entry.reserve = entry.description.remainingLiters or entry.description.thirstRelief * 2
+        entry.cost = preparationCost(player, entry)
+        if better(entry, best, kind, critical) then best = entry end
+    end
+    if not worldOnly then
+        for _, entry in ipairs(scan[kind]) do
+            if not rejectedItem(rejected, entry.item:getID()) and (entry.owned or player:getInventory():hasRoomFor(player, entry.item)) then
+                consider(entry)
+            end
+        end
+    end
+    if kind == "water" then
+        for _, source in ipairs(scan.waterSources) do
+            if not rejectedItem(rejected, source.object) and not (source.item and rejectedItem(rejected, source.item:getID())) then
+                consider({source = source, description = {hungerEffect = 0, thirstEffect = source.remainingLiters / 2,
+                    thirstRelief = source.remainingLiters / 2, remainingLiters = source.remainingLiters}})
             end
         end
     end

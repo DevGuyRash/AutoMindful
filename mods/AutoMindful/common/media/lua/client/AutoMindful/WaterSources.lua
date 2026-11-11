@@ -40,7 +40,7 @@ function WaterSources.inspect(player, object, part)
     elseif object:getPrimaryFluid() ~= Fluid.Water then
         return nil
     end
-    return {object = object, part = part, item = item, square = square}
+    return {object = object, part = part, item = item, square = square, remainingLiters = object:getFluidAmount()}
 end
 
 function WaterSources.scan(player)
@@ -71,14 +71,16 @@ function WaterSources.scan(player)
 end
 
 function WaterSources.choose(player, rejected)
+    local best
     for _, source in ipairs(WaterSources.scan(player)) do
         local rejection = rejected[source.object]
         if type(rejection) == "number" and getTimestampMs() >= rejection then
             rejected[source.object] = nil
             rejection = nil
         end
-        if not rejection then return source end
+        if not rejection and (not best or source.remainingLiters > best.remainingLiters) then best = source end
     end
+    return best
 end
 
 function WaterSources.drink(player, source)

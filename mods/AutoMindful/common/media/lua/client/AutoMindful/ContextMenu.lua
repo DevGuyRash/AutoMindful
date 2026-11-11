@@ -4,6 +4,7 @@ require "ISMeditation/ZenWellnessContextMenu"
 local UI = require "AutoMindful/UI"
 local Options = require "AutoMindful/Options"
 local Controller = require "AutoMindful/Controller"
+local Progress = require "AutoMindful/Progress"
 
 AutoMindful = AutoMindful or {}
 local Context = AutoMindful.ContextMenu or {}
@@ -37,7 +38,8 @@ local function decorate(menu, option, player, mode)
     local status = Controller.status(player)
     train.notAvailable = status.active
     local level = status[mode] or 0
-    local description = string.format("Level %.1f / 10 <LINE> ", level)
+    local description = (status.progress and status.progress[mode] and Progress.text(status.progress[mode])
+        or string.format("Level %.1f / 10", level)) .. " <LINE> "
         .. (mode == "yoga" and "Practice Lifestyle's poses and rest between sessions. Normal yoga requirements still apply."
             or "Sit, meditate, and take care breaks before resuming. Eligible literature can relieve boredom.")
         .. " <LINE> " .. (status.active and "Stop the current loop before changing modes."

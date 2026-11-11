@@ -140,6 +140,20 @@ test("ground water stays in place without a portable size restriction", function
     assert(#queue == 1 and queue[1].item == nil and queue[1].waterObject == barrel)
 end)
 
+test("selection prefers current remaining water rather than discovery order or capacity", function()
+    local p = player()
+    local small = source(p.square); small.amount, small.capacity = 0.5, 100
+    local large = source(square(1,0)); large.amount, large.capacity = 5, 5
+    local unsafe = source(square(0,1)); unsafe.amount, unsafe.tainted = 10000, true
+    assert(Sources.choose(p, {}).object == large)
+    large.amount = 0.1
+    assert(Sources.choose(p, {}).object == small)
+    large.amount = 10000
+    assert(Sources.choose(p, {[large]=clock + 1000}).object == small)
+    clock = clock + 1001
+    assert(Sources.choose(p, {}).object == large)
+end)
+
 test("unsafe and sealed sources cannot enter the drink queue", function()
     for _, flag in ipairs({"tainted", "poison", "sickness", "alcohol", "otherFluid", "sealed"}) do
         local p = player()

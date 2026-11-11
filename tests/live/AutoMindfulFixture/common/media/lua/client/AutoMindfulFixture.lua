@@ -29,6 +29,51 @@ local function clearProvisions(player)
     end
 end
 
+local function clearLiterature(player)
+    local inventory = player:getInventory()
+    for i=inventory:getItems():size()-1,0,-1 do
+        local item = inventory:getItems():get(i)
+        if instanceof(item, "Literature") then inventory:Remove(item) end
+    end
+    local square = player:getSquare()
+    for i=square:getWorldObjects():size()-1,0,-1 do
+        local world = square:getWorldObjects():get(i)
+        if instanceof(world, "IsoWorldInventoryObject") and instanceof(world:getItem(), "Literature") then
+            world:removeFromWorld()
+            world:removeFromSquare()
+        end
+    end
+end
+
+local function progressSnapshot(player)
+    local window = AutoMindful.UI.windows[0]
+    local status = Controller.status(player)
+    for _, name in ipairs({"meditation", "yoga"}) do
+        local sample = status.progress[name]
+        if sample then
+            print("[AutoMindfulFixture] XP skill=" .. name .. " level=" .. sample.level
+                .. " current=" .. sample.current .. " required=" .. sample.required
+                .. " fraction=" .. sample.fraction .. " total=" .. tostring(sample.total))
+        end
+    end
+    if window then
+        print("[AutoMindfulFixture] GEOMETRY x=" .. window:getX() .. " y=" .. window:getY()
+            .. " width=" .. window.width .. " height=" .. window.height
+            .. " bodyHeight=" .. window.body.height .. " bodyScrollHeight=" .. window.body:getScrollHeight()
+            .. " activityHeight=" .. window.activity.height .. " activityScrollHeight=" .. window.activity:getScrollHeight()
+            .. " activityVScroll=" .. tostring(window.activity.vscroll) .. " visible=" .. tostring(window:getIsVisible()))
+    end
+    for _, kind in ipairs({"food", "water"}) do
+        local choice = AutoMindful.Supplies.choose(player, kind, true, {})
+        print("[AutoMindfulFixture] CHOICE kind=" .. kind
+            .. " item=" .. tostring(choice and choice.item and choice.item:getFullType())
+            .. " world=" .. tostring(choice and choice.source ~= nil)
+            .. " reserve=" .. tostring(choice and choice.reserve)
+            .. " utility=" .. tostring(choice and choice.plan.utility)
+            .. " fraction=" .. tostring(choice and choice.plan.fraction))
+    end
+end
+
 local function stockSnapshot(player)
     local counts = {inventoryBooks=0, floorBooks=0, inventoryFood=0, floorFood=0,
         inventoryTools=0, floorTools=0, inventoryEmptyCans=0, floorEmptyCans=0}
@@ -172,6 +217,41 @@ Events.OnPlayerUpdate.Add(function(player)
                     .. " screen=" .. getCore():getScreenWidth() .. "x" .. getCore():getScreenHeight()
                     .. " position=" .. player:getX() .. "," .. player:getY())
             elseif command == "open" then AutoMindful.UI.open(player)
+            elseif command == "xpstate" then progressSnapshot(player)
+            elseif command == "xpadd" then
+                local amount = tonumber(line:match("^%S+%s+([%d%.%-]+)"))
+                if amount then player:getXp():AddXPNoMultiplier(Perks.Meditation, amount) end
+            elseif command == "calm" then
+                player:getStats():set(CharacterStat.HUNGER, 0)
+                player:getStats():set(CharacterStat.THIRST, 0)
+                player:getStats():set(CharacterStat.BOREDOM, 0)
+                player:getStats():set(CharacterStat.FATIGUE, 0)
+                player:getStats():set(CharacterStat.ENDURANCE, 1)
+                player:getStats():set(CharacterStat.PANIC, 0)
+            elseif command == "medblock" then
+                clearLiterature(player)
+                player:getStats():set(CharacterStat.HUNGER, 0)
+                player:getStats():set(CharacterStat.THIRST, 0)
+                player:getStats():set(CharacterStat.BOREDOM, 40)
+                player:getStats():set(CharacterStat.FATIGUE, 0)
+                player:getStats():set(CharacterStat.ENDURANCE, 1)
+                SandboxVars.Yoga.RequiresMat = false
+            elseif command == "watermix" or command == "milkmix" then
+                clearProvisions(player)
+                local bucket = player:getSquare():AddWorldInventoryItem("Base.Bucket", 0.4, 0.4, 0)
+                fluid(bucket):Empty()
+                fluid(bucket):addFluid(Fluid.Water, 5)
+                local bottle = player:getInventory():AddItem(command == "milkmix" and "Base.Milk" or "Base.WaterBottle")
+                local contents = fluid(bottle)
+                local milk = instanceItem("Base.Milk"):getFluidContainer():getPrimaryFluid()
+                contents:Empty()
+                contents:addFluid(command == "milkmix" and milk or Fluid.Water, command == "milkmix" and 1 or 0.5)
+                player:getStats():set(CharacterStat.HUNGER, command == "milkmix" and 0.2 or 0)
+                player:getStats():set(CharacterStat.THIRST, 0.2)
+                player:getStats():set(CharacterStat.BOREDOM, 0)
+                print("[AutoMindfulFixture] MIX bucket=" .. bucket:getID() .. " amount=" .. fluid(bucket):getAmount()
+                    .. " owned=" .. bottle:getFullType() .. " amount=" .. contents:getAmount())
+                progressSnapshot(player)
             elseif command == "waterlocate" then
                 local seen = {}
                 for x=player:getSquare():getX()-20,player:getSquare():getX()+20 do

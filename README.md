@@ -8,6 +8,8 @@ AutoMindful automates yoga and meditation in Project Zomboid's [Lifestyle: Hobbi
 2. Enable both for your game and restart the client.
 3. For a manual installation, copy `mods/AutoMindful` into your Zomboid user folder's `mods` directory. Linux normally uses `~/Zomboid/mods/AutoMindful`.
 
+If you already have a development copy under `~/Zomboid/Workshop/AutoMindful/Contents/mods/AutoMindful`, check which directory the game actually selects for mod ID `AutoMindful`. A new copy in `mods` does not replace the files in that staging directory. Update the selected copy, check its `42/mod.info` version, and restart the client. When using LuaBuddy, its `Zomboid/LuaBuddy/diagnostics.json` records the selected source and roots. Local installation does not update the public Workshop item.
+
 AutoMindful uses client Lua for Build 42.22 and later. It has no server scripts. Ordinary Build 42 multiplayer loading still requires the server to advertise AutoMindful, and Lifestyle's normal server components must be available. The mod does not bypass server checks.
 
 ## Start from the right-click menu

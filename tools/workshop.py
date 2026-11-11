@@ -48,8 +48,10 @@ def preview_bytes() -> bytes:
         raise ValueError("Invalid preview PNG compressed image data") from failure
     if len(decoded) > decoded_limit:
         raise ValueError("Preview PNG decompressed image data is too large")
-    if not decoder.eof or decoder.unused_data:
-        raise ValueError("Incomplete or trailing preview PNG compressed image data")
+    if not decoder.eof:
+        raise ValueError("Incomplete preview PNG compressed image data")
+    # PNG permits unused bytes after the zlib stream in the final IDAT chunk.
+    # They are not image data and must not be inflated as a second stream.
     return data
 
 

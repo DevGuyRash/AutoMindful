@@ -67,11 +67,12 @@ class PreviewTests(unittest.TestCase):
             with self.subTest(length=len(payload)), self.assertRaisesRegex(ValueError, "compressed image data"):
                 self.check_preview(preview_png([payload]))
 
-    def test_trailing_data_and_second_stream_are_rejected(self):
+    def test_unused_trailing_idat_bytes_are_ignored(self):
         compressed = zlib.compress((b"\0" + b"\0" * (256 * 4)) * 256)
         for extra in (b"trailing", zlib.compress(b"another stream")):
-            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, "compressed image data"):
-                self.check_preview(preview_png([compressed, extra]))
+            with self.subTest(extra=extra):
+                data = preview_png([compressed + extra])
+                self.assertEqual(self.check_preview(data), data)
 
     def test_decompression_is_bounded(self):
         oversized = preview_png([zlib.compress(b"\0" * (256 * (256 * 8 + 2) + 1))])

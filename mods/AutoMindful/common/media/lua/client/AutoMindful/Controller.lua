@@ -214,10 +214,22 @@ local function stand(player, state)
     return false
 end
 
+local function resetSupply(state)
+    state.supplyItem, state.supplyKind, state.supplyLoan, state.supplySource = nil, nil, nil, nil
+    state.supplyBaseline, state.awaitSupplyUntil, state.preparation = nil, nil, nil
+end
+
 local function useSupply(player, state, kind, item, loan)
+    local descriptor = Consumables.inspect(player, item, state.collectNearby)
+    if kind ~= "literature" and not descriptor[kind] then
+        state.rejected[item:getID()] = getTimestampMs() + 60000
+        state.supplyMissingReason = descriptor.reason or "This supply is no longer usable."
+        if loan then loan.defer = nil end
+        resetSupply(state)
+        return false
+    end
     state.supplyItem, state.supplyKind, state.supplyLoan = item, kind, loan
     if loan then loan.defer = true end
-    local descriptor = Consumables.inspect(player, item, state.collectNearby)
     local queued
     if kind ~= "literature" and descriptor.needsOpening then
         local tools = {}
@@ -418,11 +430,6 @@ local function advance(player, state)
     else
         Controller.stop(player, yogaMessage or "Yoga is unavailable. Check the mat and Lifestyle sandbox requirements.")
     end
-end
-
-local function resetSupply(state)
-    state.supplyItem, state.supplyKind, state.supplyLoan, state.supplySource = nil, nil, nil, nil
-    state.supplyBaseline, state.awaitSupplyUntil, state.preparation = nil, nil, nil
 end
 
 local function allowedManual(action)

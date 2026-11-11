@@ -699,6 +699,23 @@ test("opening borrowed food returns the new empty can and borrowed opener to the
     assert(#pantry.items==1 and pantry.items[1]:getFullType()=="Base.EmptyFixtureCan" and pantry.items[1]~=ownedCan)
     assert(p.inventory:contains(ownedCan) and C.status(p).pendingReturns==0)
     C.stop(p)
+    local interrupted=T.playerNew(); interrupted.values.HUNGER=.3
+    local foodSource,toolSource=T.container(1,0),T.container(0,1)
+    local closed=T.add(foodSource,T.item("Food",{fullType="Base.ClosedFixtureCan",hunger=0,cantEat=true,sealed=true,openingRecipe="OpenFixture"}))
+    local sharedOpener=T.add(toolSource,T.item("InventoryItem",{fullType="Base.FixtureOpener"}))
+    interrupted.nearby={foodSource,toolSource}
+    assert(C.start(interrupted,"yoga",true)); T.tick(interrupted)
+    assert(C.status(interrupted).phase=="collecting" and interrupted.inventory:contains(closed))
+    T.remove(toolSource,sharedOpener)
+    for i=1,6 do T.tick(interrupted) end
+    assert(C.status(interrupted).active and hasHistory(interrupted,"Yoga"),"Losing a shared opener must not stop noncritical training")
+    assert(foodSource:contains(closed) and C.status(interrupted).pendingReturns==0,"The unopened borrowed can must return to its source")
+    assert(not hasHistory(interrupted,"ISHandcraftAction") and #interrupted.halos==0)
+    T.add(toolSource,sharedOpener); T.now=T.now+61000
+    for i=1,14 do T.tick(interrupted) end
+    assert(hasHistory(interrupted,"ISHandcraftAction") and hasHistory(interrupted,"eat"),"A usable opener permits a later retry")
+    assert(C.status(interrupted).pendingReturns==0 and toolSource:contains(sharedOpener))
+    C.stop(interrupted)
     ArrayList,HandcraftLogic,getScriptManager,ISEntityUI,ResourceType,ISCraftingUI=saved.ArrayList,saved.HandcraftLogic,saved.getScriptManager,saved.ISEntityUI,saved.ResourceType,saved.ISCraftingUI
 end)
 print("CONTRACTS PASS "..passed.." cases; game boundaries are explicit doubles, not gameplay evidence")

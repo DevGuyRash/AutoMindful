@@ -10,6 +10,8 @@ The verification entry point builds the complete versioned archive before runnin
 
 Important regressions include native-recursive carried-bag lookup, completion of returned loans, transfers from the actual current container, hunger-based portions without an extra calorie reserve, empty reserve starts, native critical need stops, oldest eligible rereads, separate opening-tool sources, and native source positions for ground bags without `SourceGrid`.
 
+The final review also reproduced an opener disappearing after a borrowed can was collected. Supply use now revalidates the item, returns the unopened can, and continues noncritical training. The controller contract covers that transition and a later successful retry after the opener becomes available again. This specific race was checked in the portable and installed Kahlua suites with explicit game-boundary doubles, rather than in another native multiplayer session.
+
 ## Native single-player checks
 
 The native client ran with a disposable cache and the optional verification fixture. Real controls started the actions. The fixture arranged resources and needs; it did not replace the training, opening, eating, drinking, or transfer effects.

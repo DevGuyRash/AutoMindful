@@ -6,7 +6,7 @@ This is a client Lua mod for Build 42.22 and later. Lifestyle: Hobbies must alre
 
 ## Install and start
 
-1. Copy `mods/AutoMindful` into your Zomboid user folder's `mods` directory. On Linux, the usual destination is `~/Zomboid/mods/AutoMindful`.
+1. Subscribe to [AutoMindful on Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362) and the required [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858). For a manual installation, copy `mods/AutoMindful` into your Zomboid user folder's `mods` directory; Linux normally uses `~/Zomboid/mods/AutoMindful`.
 2. Enable Lifestyle: Hobbies and AutoMindful for your game. Restart the client after installation.
 3. Choose a safe training spot. If the server or sandbox requires a yoga mat, stand on a complete, deployed mat.
 4. Right-click the world and choose **AutoMindful**.

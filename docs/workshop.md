@@ -1,6 +1,6 @@
 # Publish AutoMindful releases to Steam Workshop
 
-AutoMindful's release workflow builds and checks versioned GitHub assets. Workshop uploads are explicit foreground commands or manual runs of the shared [Zomboid Workshop publisher](https://github.com/DevGuyRash/steam-workshop-publisher). The former desktop service and dedicated GitHub runner have been removed. No background local publisher is required.
+AutoMindful's release workflow builds and checks versioned GitHub assets. Workshop uploads are explicit foreground commands or manual runs of the shared [Steam Workshop publisher](https://github.com/DevGuyRash/steam-workshop-publisher). The former desktop service and dedicated GitHub runner have been removed. No background local publisher is required.
 
 Follow the publisher's [generic setup guide](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/setup.md) to configure local SteamCMD, GitHub authentication, or another Project Zomboid mod. That guide owns the reusable procedure. `AGENTS.md` links this file as AutoMindful's publishing entrypoint.
 
@@ -18,22 +18,22 @@ The build uses release assets and does not require Actions artifact storage. A r
 From the shared publisher checkout, validate the latest built release, then request the upload locally or on GitHub.
 
 ```sh
-just validate automindful v0.1.1
-just publish automindful v0.1.1
+just validate DevGuyRash/AutoMindful v0.1.1
+just publish DevGuyRash/AutoMindful v0.1.1
 ```
 
-The local publish command uses a dedicated SteamCMD login established by `just login`. It runs in the foreground. To use GitHub instead, configure the shared publisher once using its setup guide, then run these commands.
+The local publish command uses a dedicated SteamCMD login established by `just login`. It runs in the foreground. To use GitHub instead, configure the shared publisher once using `just setup-github --source DevGuyRash/AutoMindful`. It uses your existing local GitHub login and requests only the missing Steam sign-in for this public source. Then run these commands.
 
 ```sh
-just github automindful v0.1.1
-just github-publish automindful v0.1.1
+just github DevGuyRash/AutoMindful v0.1.1
+just github-publish DevGuyRash/AutoMindful v0.1.1
 ```
 
-The first command requests cloud validation. The second requests an upload. You can make the same choices under **Actions > Publish Workshop item > Run workflow** in the publisher repository. Follow the dispatched run to completion. With cloud authentication configured, this desktop can be off. Standard hosted jobs in the public publisher repository do not consume your private Actions minutes. AutoMindful's private release build still uses its own quota.
+The first command requests cloud validation. The second requests an upload. You can make the same choices under **Actions > Publish Workshop item > Run workflow** in the publisher repository. Follow the dispatched run to completion. With cloud authentication configured, this desktop can be off. Standard hosted jobs in the public publisher repository do not consume your private Actions minutes. AutoMindful is public, so its standard GitHub-hosted release build also avoids private Actions minutes. No extra GitHub token is needed to download its public releases.
 
 ## Keep the existing item
 
-AutoMindful's registry entry maps source `DevGuyRash/AutoMindful` and mod ID `AutoMindful` to existing Workshop item [`3837554362`](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362), under Project Zomboid application ID `108600`. Routine updates preserve the title, description, tags, visibility, and required items. Do not create a replacement item to repair an upload or authentication failure.
+AutoMindful's own [workshop-publisher.json](../workshop-publisher.json) maps mod ID `AutoMindful` to existing Workshop item [`3837554362`](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362), under Project Zomboid application ID `108600`. Routine updates preserve the title, description, tags, visibility, and required items. Do not create a replacement item to repair an upload or authentication failure.
 
 The listing requires official [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858). AutoMindful's packaged executable files remain under `media/lua/client`. Normal Build 42 multiplayer loading still requires the server to advertise the mod.
 

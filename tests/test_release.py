@@ -16,6 +16,70 @@ import build
 import workshop
 
 
+def png_chunk(kind, data):
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+
+def preview_png(parts, *, depth=8, interlaced=False):
+    header = struct.pack(">IIBBBBB", 256, 256, depth, 6, 0, 0, int(interlaced))
+    return (b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", header)
+        + b"".join(png_chunk(b"IDAT", part) for part in parts) + png_chunk(b"IEND", b""))
+
+
+class PreviewTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="automindful-preview-test-")
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        (self.root / "workshop").mkdir()
+
+    def check_preview(self, data):
+        (self.root / "workshop/preview.png").write_bytes(data)
+        with mock.patch.object(workshop, "ROOT", self.root):
+            return workshop.preview_bytes()
+
+    def test_real_preview_is_accepted_unchanged(self):
+        data = (ROOT / "workshop/preview.png").read_bytes()
+        self.assertEqual(self.check_preview(data), data)
+
+    def test_valid_stream_split_across_idat_chunks_is_accepted(self):
+        compressed = zlib.compress((b"\0" + b"\0" * (256 * 4)) * 256)
+        for parts in ([compressed], [compressed[:1], compressed[1:-1], compressed[-1:]],
+                      [b"", compressed, b""]):
+            with self.subTest(chunks=len(parts)):
+                data = preview_png(parts)
+                self.assertEqual(self.check_preview(data), data)
+
+    def test_largest_supported_pixel_format_and_adam7_rows_fit(self):
+        # Each pass has a filter byte per row and eight bytes per RGBA16 pixel.
+        passes = ((32, 32), (32, 32), (64, 32), (64, 64), (128, 64), (128, 128), (256, 128))
+        raw = b"".join((b"\0" + b"\0" * (width * 8)) * height for width, height in passes)
+        data = preview_png([zlib.compress(raw)], depth=16, interlaced=True)
+        self.assertEqual(self.check_preview(data), data)
+
+    def test_invalid_stream_is_rejected_even_with_valid_chunk_checksums(self):
+        with self.assertRaisesRegex(ValueError, "compressed image data"):
+            self.check_preview(preview_png([b"not a zlib stream"]))
+
+    def test_truncated_and_missing_streams_are_rejected(self):
+        compressed = zlib.compress((b"\0" + b"\0" * (256 * 4)) * 256)
+        for payload in (b"", compressed[:1], compressed[:-1], compressed[:-4]):
+            with self.subTest(length=len(payload)), self.assertRaisesRegex(ValueError, "compressed image data"):
+                self.check_preview(preview_png([payload]))
+
+    def test_trailing_data_and_second_stream_are_rejected(self):
+        compressed = zlib.compress((b"\0" + b"\0" * (256 * 4)) * 256)
+        for extra in (b"trailing", zlib.compress(b"another stream")):
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, "compressed image data"):
+                self.check_preview(preview_png([compressed, extra]))
+
+    def test_decompression_is_bounded(self):
+        oversized = preview_png([zlib.compress(b"\0" * (256 * (256 * 8 + 2) + 1))])
+        self.assertLess(len(oversized), 1_000_000)
+        with self.assertRaisesRegex(ValueError, "too large"):
+            self.check_preview(oversized)
+
+
 class ReleaseTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -108,6 +172,16 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             workshop.stage(self.archive, self.manifest, self.tag, stage)
         workshop.checked_stage(stage)
+
+    def test_invalid_preview_stops_before_creating_stage(self):
+        assets = self.root / "workshop"
+        assets.mkdir()
+        (assets / "workshop.txt").write_bytes((ROOT / "workshop/workshop.txt").read_bytes())
+        (assets / "preview.png").write_bytes(preview_png([b"not a zlib stream"]))
+        output = self.root / "rejected-stage"
+        with mock.patch.object(workshop, "ROOT", self.root), self.assertRaisesRegex(ValueError, "compressed image data"):
+            workshop.stage(self.archive, self.manifest, self.tag, output)
+        self.assertFalse(output.exists())
 
     def test_preview_dimensions_and_metadata_id_are_checked(self):
         assets = self.root / "workshop"

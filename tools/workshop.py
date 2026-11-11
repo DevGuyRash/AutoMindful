@@ -20,7 +20,7 @@ def preview_bytes() -> bytes:
     data = (ROOT / "workshop/preview.png").read_bytes()
     if len(data) > 1_000_000 or data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("Workshop preview must be a PNG no larger than 1000 KB")
-    offset, chunks = 8, []
+    offset, chunks, image_data = 8, [], []
     while offset < len(data):
         if offset + 12 > len(data):
             raise ValueError("Truncated preview PNG")
@@ -30,11 +30,26 @@ def preview_bytes() -> bytes:
         if end + 4 > len(data) or zlib.crc32(data[offset + 4:end]) != struct.unpack(">I", data[end:end + 4])[0]:
             raise ValueError("Invalid preview PNG checksum")
         chunks.append(kind)
+        if kind == b"IDAT":
+            image_data.append(data[offset + 8:end])
         if kind == b"IHDR" and (size != 13 or struct.unpack(">II", data[offset + 8:offset + 16]) != (256, 256)):
             raise ValueError("Workshop preview must be exactly 256 by 256 pixels")
         offset = end + 4
     if not chunks or chunks[0] != b"IHDR" or chunks[-1] != b"IEND" or b"IDAT" not in chunks:
         raise ValueError("Incomplete preview PNG")
+    # A 256-square PNG uses at most eight bytes per pixel (16-bit RGBA).
+    # Two filter bytes per image row also cover all 480 Adam7 pass rows.
+    # Bound inflation before trusting the stream; this is not a full PNG decoder.
+    decoded_limit = 256 * (256 * 8 + 2)
+    decoder = zlib.decompressobj()
+    try:
+        decoded = decoder.decompress(b"".join(image_data), decoded_limit + 1)
+    except zlib.error as failure:
+        raise ValueError("Invalid preview PNG compressed image data") from failure
+    if len(decoded) > decoded_limit:
+        raise ValueError("Preview PNG decompressed image data is too large")
+    if not decoder.eof or decoder.unused_data:
+        raise ValueError("Incomplete or trailing preview PNG compressed image data")
     return data
 
 

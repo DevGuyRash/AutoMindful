@@ -1,5 +1,7 @@
 # AutoMindful
 
+![AutoMindful logo](workshop/preview.png)
+
 AutoMindful automates yoga and meditation in Project Zomboid's [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858). It uses Lifestyle's normal actions and XP, takes care breaks, and resumes toward level 10. The window can stay closed while the loop runs.
 
 ## Install

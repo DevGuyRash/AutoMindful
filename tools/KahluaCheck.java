@@ -12,7 +12,8 @@ public final class KahluaCheck {
     public static void main(String[] args) throws Exception {
         Path root = Path.of(args[0]).toRealPath();
         Path modules = root.resolve("mods/AutoMindful/common/media/lua/client");
-        Path references = args.length > 1 ? Path.of(args[1]).toRealPath() : null;
+        Path references = args.length > 1 && !args[1].equals("-") ? Path.of(args[1]).toRealPath() : null;
+        String script = args.length > 2 ? args[2] : "contracts.lua";
         J2SEPlatform platform = J2SEPlatform.getInstance();
         KahluaTable environment = platform.newEnvironment();
         KahluaThread thread = new KahluaThread(System.out, platform, environment);
@@ -50,8 +51,8 @@ public final class KahluaCheck {
             environment.rawset("loadUpstream", (JavaFunction) (frame, count) -> frame.push(
                     evaluate(thread, environment, within(references.resolve("lua"), (String) frame.get(0)))));
         }
-        evaluate(thread, environment, root.resolve("tests/contracts.lua"));
-        System.out.println("KAHLUA PASS; installed interpreter with explicit game-boundary doubles");
+        evaluate(thread, environment, within(root.resolve("tests"), script));
+        System.out.println("KAHLUA PASS " + script + "; installed interpreter with explicit game-boundary doubles");
     }
 
     private static Path within(Path base, String name) {

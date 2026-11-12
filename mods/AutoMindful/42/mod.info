@@ -1,5 +1,6 @@
 name=AutoMindful
 id=AutoMindful
-description=Automate Lifestyle meditation and yoga with normal reading, meals, hydration and recovery breaks. Right-click the world and choose AutoMindful. Client scripts only. Lifestyle: Hobbies must be active.
-modversion=0.1.1
+require=LifestyleHobbies
+description=Automate Lifestyle meditation and yoga with normal meals, hydration, reading and recovery. Open AutoMindful from Lifestyle's Wellness yoga or meditation menu. Client scripts only; Lifestyle: Hobbies must be active.
+modversion=0.1.2
 versionMin=42.22

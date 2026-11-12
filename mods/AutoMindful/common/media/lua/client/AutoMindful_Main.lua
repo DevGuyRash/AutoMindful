@@ -1,18 +1,26 @@
 local UI = require "AutoMindful/UI"
+local Options = require "AutoMindful/Options"
+local Context = require "AutoMindful/ContextMenu"
 
-local function contextMenu(playerIndex, context, worldobjects, test)
-    if test then return end
-    local player = getSpecificPlayer(playerIndex)
-    if not player or player:isDead() then return end
-    context:addOption("AutoMindful", player, UI.open)
-end
-
-local function escape(key)
-    if key ~= Keyboard.KEY_ESCAPE then return end
-    for _, window in pairs(UI.windows) do
-        if window:isVisible() then window:close() end
+local function keyPressed(key)
+    if getCore():isDoingTextEntry() or (ISChat and ISChat.focused) then return end
+    if key == Keyboard.KEY_ESCAPE then
+        for _, window in pairs(UI.windows) do
+            if window:getIsVisible() then window:close() end
+        end
+    elseif key ~= 0 and key == Options.windowKey() then
+        local player = getSpecificPlayer(0)
+        if player and not player:isDead() then UI.open(player) end
     end
 end
 
-Events.OnFillWorldObjectContextMenu.Add(contextMenu)
-Events.OnKeyPressed.Add(escape)
+local old = AutoMindful.uiEvents
+if old then
+    Events.OnFillWorldObjectContextMenu.Remove(old.context)
+    Events.OnKeyPressed.Remove(old.key)
+    Events.OnGameStart.Remove(old.start)
+end
+AutoMindful.uiEvents = {context=Context.generalMenu, key=keyPressed, start=Context.install}
+Events.OnFillWorldObjectContextMenu.Add(Context.generalMenu)
+Events.OnKeyPressed.Add(keyPressed)
+Events.OnGameStart.Add(Context.install)

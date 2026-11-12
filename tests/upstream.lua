@@ -11,7 +11,7 @@ function getTexture(path) return path end
 function getSoundManager() return {playUISound=noop} end
 function LSupdateZenBonus() end
 function forceDropHeavyItems() end
-function getGameTime() return {getGameWorldSecondsSinceLastUpdate=function() return 120 end} end
+function getGameTime() return {getGameWorldSecondsSinceLastUpdate=function() return 120 end,getNightsSurvived=function() return T.nights end} end
 local randomState = 73
 function ZombRand(low, high)
     if not high then high,low=low,0 end

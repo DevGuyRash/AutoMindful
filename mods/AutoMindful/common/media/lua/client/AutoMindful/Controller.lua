@@ -13,6 +13,7 @@ local Controller = {}
 AutoMindful.Controller = Controller
 local states = {}
 local modes = {both = true, meditation = true, yoga = true}
+local yogaRecoveryStart, yogaRecoveryTarget = 0.85, 0.95
 
 local function stateFor(player)
     if not states[player] then
@@ -190,8 +191,12 @@ local function available(player)
     return true
 end
 
-local function yogaGate(player)
+local function yogaGate(player, state)
     local blocked, message = ZenWellnessContextMenu.Options.Yoga.canPerform(player, "", nil)
+    local endurance = stat(player, "ENDURANCE")
+    if endurance < yogaRecoveryStart then state.resting = true
+    elseif endurance >= yogaRecoveryTarget then state.resting = nil end
+    if not blocked and state.resting then return false, getText("Tooltip_Action_Exhausted") end
     return not blocked, message
 end
 
@@ -213,6 +218,12 @@ local function stand(player, state)
         ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player))
     end)
     return false
+end
+
+local function restForYoga(player, state)
+    if sit(player, state) then
+        setPhase(state, "resting", string.format("Resting for yoga until stamina reaches %.0f%%.", yogaRecoveryTarget * 100))
+    end
 end
 
 local function resetSupply(state)
@@ -384,14 +395,6 @@ local function care(player, state)
         else Controller.stop(player, "The game refused sleep. Resolve the sleep restriction, then start again.") end
         return true
     end
-    if stat(player, "ENDURANCE") < 0.85 then state.resting = true end
-    if state.resting then
-        if stat(player, "ENDURANCE") >= 0.95 then state.resting = nil
-        else
-            if sit(player, state) then setPhase(state, "resting", "Resting on the ground until endurance recovers.") end
-            return true
-        end
-    end
     return false
 end
 
@@ -406,12 +409,16 @@ local function advance(player, state)
         return
     end
     if care(player, state) then return end
-    local canYoga, yogaMessage = yogaGate(player)
+    local canYoga, yogaMessage = yogaGate(player, state)
     local boredom, pain = stat(player, "BOREDOM"), stat(player, "PAIN")
     if needsMeditation and boredom >= 20 then
         if supply(player, state, "literature") then return end
         if boredom > 30 then
             if state.mode == "both" and canYoga then train(player, state, "yoga") return end
+            if state.mode == "both" and yogaMessage == getText("Tooltip_Action_Exhausted") then
+                restForYoga(player, state)
+                return
+            end
             if state.mode == "both" and yogaMessage == getText("ContextMenu_Embarrassed") then
                 if sit(player, state) then setPhase(state, "recovering", "Waiting for embarrassment to fade so yoga can relieve boredom.") end
                 return
@@ -427,6 +434,8 @@ local function advance(player, state)
         train(player, state, "yoga")
     elseif needsMeditation then
         train(player, state, "meditation")
+    elseif yogaMessage == getText("Tooltip_Action_Exhausted") then
+        restForYoga(player, state)
     elseif yogaMessage == getText("ContextMenu_Embarrassed") then
         if sit(player, state) then setPhase(state, "recovering", "Waiting for Lifestyle embarrassment to fade before the next yoga session.") end
     else
@@ -591,7 +600,7 @@ function Controller.update(player)
             local eating = stat(player, "HUNGER") >= 0.2 and comfortSupplyAvailable(player, state, "food")
             local drinking = stat(player, "THIRST") >= 0.2 and comfortSupplyAvailable(player, state, "water")
             if meditation >= 10 or boredom > 30 or reading or eating or drinking
-                    or urgent or stat(player, "ENDURANCE") < 0.2 or needSleep(player) then
+                    or urgent or needSleep(player) then
                 clearOwned(player, state)
                 setPhase(state, "care", "Taking a care break before resuming training.")
             end

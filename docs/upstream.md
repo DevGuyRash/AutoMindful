@@ -8,7 +8,7 @@ AutoMindful targets Project Zomboid Build 42 and Lifestyle: Hobbies with the hid
 
 The older `MeditateContextMenu.lua`, `YogaContextMenu.lua`, and `YogaSkill.lua` are deprecated. They do not define the active yoga progression. The short client timed-action files are also deprecated. The actual implementations live in `shared/TimedActions/LSMeditateAction.lua` and `shared/TimedActions/LSYogaAction.lua`.
 
-AutoMindful calls the active menu entry points rather than reproducing their level tables or constructing replacement training actions. It uses the same upstream bag removal and heavy-item handling as manual training. Bags remain in your inventory after unequipping. Restore equipment yourself after the routine.
+AutoMindful calls the active menu entry points rather than reproducing their level tables or constructing replacement training actions. It uses the same upstream bag removal and heavy-item handling as manual training. Bags remain in your inventory after unequipping. Restore equipment yourself after the routine. Meditation has no native endurance gate, so AutoMindful does not wait for stamina recovery before starting it or interrupt it solely for low stamina.
 
 ## Meditation
 
@@ -26,7 +26,7 @@ The yoga menu checks `SandboxVars.Yoga.RequiresMat`, `Exhaustion`, and `Embarras
 
 Each completed pose awards XP and normally reduces boredom by 5, pain, stress, and stiffness. A random pose failure can end the session with embarrassment and no XP for that pose. Normal completion can award bonus XP and Zen. The next session works through the native action again at the new level. Stopping early can remove earned Yoga XP and some Zen. AutoMindful normally lets yoga finish, even when a selected skill reaches level 10 mid-session. An urgent survival need or explicit cancellation can still interrupt it and incur the normal penalty.
 
-Yoga's embarrassment fades through the existing `client/LSEffects/LSPerMinute.lua` updates. AutoMindful waits for that recovery if it blocks yoga, and meditates while yoga is blocked when the selected mode and boredom allow it. It sits on the ground to recover endurance before the next session. It does not reset embarrassment, make poses succeed, skip cooldowns, change multipliers, or reduce XP thresholds.
+Yoga's embarrassment fades through the existing `client/LSEffects/LSPerMinute.lua` updates. AutoMindful waits for that recovery if it blocks yoga, and meditates while yoga is blocked when the selected mode and boredom allow it. Its stamina recovery policy applies only to yoga: below 85% it waits for 95% before another yoga session. In Both mode, permitted meditation can run during that recovery instead of idling. If boredom also blocks meditation and no literature is usable, Both mode can wait for yoga recovery. It does not reset embarrassment, make poses succeed, skip cooldowns, change multipliers, or reduce XP thresholds.
 
 ## Survival and supplies
 

@@ -43,6 +43,14 @@ The source-selection pass exposed an independent native behavior: Zomboid's auto
 
 This native snapshot preceded the final controller bookkeeping adjustment that marks both triggered care needs before the first supply action. Portable and installed Kahlua integration checks cover that adjustment in both directions: milk followed by plain water for residual thirst, and milk followed by plain food for residual hunger. The current complete verification run has 14 passing checks with a stable source fingerprint. The XP, UI, selection, and portion code match the native follow-up snapshot.
 
+## Low-stamina meditation regression
+
+The user's running eight-module candidate entered the generic resting phase when meditation was requested at roughly 10% stamina. Source review confirmed that AutoMindful waited for 95% endurance before any training and interrupted running meditation below 20%, even though Lifestyle's meditation gate and action do not impose an endurance requirement.
+
+The corrected controller reserves that recovery policy for yoga. A disposable native client started meditation through the actual button at seeded endurance `0.10`. Lowering endurance to `0.05` while it was running left `LSMeditateAction` queued and produced actual Meditation XP of `2.5 / 75`. Stamina rose naturally between samples; the product adds no stamina-restoration effect. Both mode also ran meditation while yoga was unavailable at low endurance. With boredom above 30 and no eligible reading, Both waited for yoga recovery and then stood and started yoga once endurance was raised above the recovery target. Yoga-only remained resting near 90% and resumed above 95%, without substituting meditation.
+
+Three controller integration regressions cover low-stamina start and continuation in Meditation and Both, yoga recovery hysteresis, and recovery when boredom and endurance temporarily block both activities. The previous controller fails the new start regression. All 14 portable and installed Kahlua checks pass for the corrected source. Native artifacts are under `low-stamina-native/`; the full check report is `low-stamina-checks/report.json`.
+
 ## Native multiplayer checks
 
 An owned loopback server advertised Lifestyle, AutoMindful, and the client-only test fixture. The survivor had ordinary `access=user`; Lua checksum enforcement was disabled in this test environment.

@@ -63,6 +63,8 @@ Meditation needs sitting on the ground and cannot start above Lifestyle's boredo
 
 **Meditation** trains only meditation, and **Yoga** trains only yoga. A single-skill loop stops with its blocking reason if care cannot make that skill available. **Train both** permits alternating skills, including yoga to relieve boredom that blocks meditation.
 
+Low stamina does not block or interrupt meditation. In Train both, meditation can continue while stamina recovers for yoga. Yoga keeps its recovery break, with a visible stamina target. Fatigue that requires sleep remains a separate care condition.
+
 ## Configure access
 
 Open **Options > Mods > AutoMindful** to assign **Open AutoMindful window** to a key. It starts unbound to avoid taking another control. The shortcut is suppressed while typing or chatting.

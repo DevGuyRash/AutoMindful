@@ -328,6 +328,39 @@ test("single targets stop at 10 and leave the other skill unchanged",function()
         assert(mode == "yoga" and s.yoga == 10 and s.meditation == 0 or mode == "meditation" and s.meditation == 10 and s.yoga == 0)
     end
 end)
+test("low stamina allows meditation and does not interrupt its running action",function()
+    for _,mode in ipairs({"meditation","both"}) do
+        local p=T.playerNew(); p.values.ENDURANCE=.1
+        assert(C.start(p,mode,false)); T.tick(p,false); T.tick(p,false)
+        local action=ISTimedActionQueue.getTimedActionQueue(p).queue[1]
+        assert(action and action.Type=="Meditation" and C.status(p).phase=="meditation")
+        p.values.ENDURANCE=.05
+        for i=1,5 do T.tick(p,false) end
+        assert(C.status(p).active and ISTimedActionQueue.getTimedActionQueue(p).queue[1]==action and not action.stopped)
+        assert(not hasHistory(p,"Yoga"),"Yoga must not take over while stamina is recovering")
+        C.stop(p)
+    end
+end)
+test("yoga retains its stamina recovery target without blocking meditation",function()
+    local p=T.playerNew(); p.values.ENDURANCE=.1
+    assert(C.start(p,"yoga",false)); T.tick(p,false); T.tick(p,false)
+    assert(C.status(p).active and C.status(p).phase=="resting" and C.status(p).message:find("95%%"))
+    assert(not hasHistory(p,"Yoga") and not hasHistory(p,"Meditation"))
+    p.values.ENDURANCE=.9; T.tick(p,false)
+    assert(C.status(p).phase=="resting" and not hasHistory(p,"Yoga"))
+    p.values.ENDURANCE=.96; T.tick(p); T.tick(p,false)
+    assert(C.status(p).active and hasHistory(p,"Yoga") and not hasHistory(p,"Meditation"))
+    C.stop(p)
+end)
+test("both mode can recover for yoga when boredom and stamina block both activities",function()
+    local p=T.playerNew(); p.values.ENDURANCE=.1; p.values.BOREDOM=40
+    assert(C.start(p,"both",false)); T.tick(p,false); T.tick(p,false)
+    assert(C.status(p).active and C.status(p).phase=="resting")
+    assert(not hasHistory(p,"Yoga") and not hasHistory(p,"Meditation"))
+    p.values.ENDURANCE=.96; T.tick(p); T.tick(p,false)
+    assert(C.status(p).active and hasHistory(p,"Yoga"))
+    C.stop(p)
+end)
 test("missing drink stock is not a start gate at ordinary thirst",function()
     local p=T.playerNew(); p.values.THIRST=0.3; assert(C.start(p,"both",false))
     T.tick(p); T.tick(p,false)

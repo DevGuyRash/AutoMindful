@@ -218,6 +218,31 @@ Events.OnPlayerUpdate.Add(function(player)
                     .. " position=" .. player:getX() .. "," .. player:getY())
             elseif command == "open" then AutoMindful.UI.open(player)
             elseif command == "xpstate" then progressSnapshot(player)
+            elseif command == "staminastate" then
+                local actions = {}
+                for _, action in ipairs(ISTimedActionQueue.getTimedActionQueue(player).queue) do
+                    actions[#actions + 1] = tostring(action.Type)
+                end
+                print("[AutoMindfulFixture] STAMINA phase=" .. status.phase .. " mode=" .. tostring(status.mode)
+                    .. " active=" .. tostring(status.active) .. " endurance=" .. player:getStats():get(CharacterStat.ENDURANCE)
+                    .. " fatigue=" .. player:getStats():get(CharacterStat.FATIGUE)
+                    .. " boredom=" .. player:getStats():get(CharacterStat.BOREDOM)
+                    .. " queue=" .. table.concat(actions, ","))
+                progressSnapshot(player)
+            elseif command == "endurance" then
+                local amount = tonumber(line:match("^%S+%s+([%d%.]+)"))
+                if amount then player:getStats():set(CharacterStat.ENDURANCE, amount) end
+            elseif command == "lowstamina" then
+                clearLiterature(player)
+                player:getStats():set(CharacterStat.HUNGER, 0)
+                player:getStats():set(CharacterStat.THIRST, 0)
+                player:getStats():set(CharacterStat.BOREDOM, 0)
+                player:getStats():set(CharacterStat.FATIGUE, 0)
+                player:getStats():set(CharacterStat.ENDURANCE, 0.1)
+                player:getStats():set(CharacterStat.PANIC, 0)
+                player:getModData().LSMoodles.Embarrassed.Value = 0
+                player:getModData().LSMoodles.Embarrassed.Level = 0
+                SandboxVars.Yoga.RequiresMat = false
             elseif command == "xpadd" then
                 local amount = tonumber(line:match("^%S+%s+([%d%.%-]+)"))
                 if amount then player:getXp():AddXPNoMultiplier(Perks.Meditation, amount) end

@@ -2,9 +2,9 @@
 
 AutoMindful's release workflow builds and checks versioned GitHub assets. Workshop uploads are explicit foreground commands or manual runs of the shared [Steam Workshop publisher](https://github.com/DevGuyRash/steam-workshop-publisher). The former desktop service and dedicated GitHub runner have been removed. No background local publisher is required.
 
-Follow the publisher's [generic setup guide](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/setup.md) to configure local SteamCMD, GitHub authentication, or another Project Zomboid mod. That guide owns the reusable procedure. `AGENTS.md` links this file as AutoMindful's publishing entrypoint.
+Follow the publisher's [agent quickstart](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/agent-quickstart.md) for local uploads, its [desktop guide](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/desktop.md) for current-session requirements, and its [generic setup guide](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/setup.md) for release or cloud setup. Those guides own the reusable procedure. `AGENTS.md` links this file as AutoMindful's publishing entrypoint.
 
-Local candidates can be built and tested without creating a release tag, publishing a GitHub release, or uploading to Workshop. Complete local acceptance before those publication steps. The native desktop-client command below can reuse an existing signed-in Steam client; both the shared local `publish` command and the cloud uploader use a separate SteamCMD login, which can replace another Steam session on the same account.
+Local candidates can be built and tested without creating a release tag, publishing a GitHub release, or uploading to Workshop. Complete local acceptance before those publication steps. The shared publisher now reuses the signed-in desktop Steam client for local uploads. Pass `--backend desktop` explicitly so an inherited environment setting cannot select another backend. Cloud publishing and an explicitly selected SteamCMD backend still use a separate login, which can replace another Steam session on the same account.
 
 ## Build a release
 
@@ -20,15 +20,18 @@ The build uses release assets and does not require Actions artifact storage. A r
 From the shared publisher checkout, validate the latest built release, then request the upload locally or on GitHub.
 
 ```sh
-just validate DevGuyRash/AutoMindful v0.1.1
-just publish DevGuyRash/AutoMindful v0.1.1
+python3 local.py DevGuyRash/AutoMindful v0.1.2
+python3 desktop.py probe --app-id 108600
+python3 local.py DevGuyRash/AutoMindful v0.1.2 --publish --backend desktop
 ```
 
-The local publish command uses a dedicated SteamCMD login established by `just login`. It runs in the foreground. To use GitHub instead, configure the shared publisher once using `just setup-github --source DevGuyRash/AutoMindful`. It uses your existing local GitHub login and requests only the missing Steam sign-in for this public source. Then run these commands.
+Local release commands reuse the existing GitHub CLI login, and the upload uses the current desktop Steam session. No Steam password or Steam Guard prompt is needed. If the desktop probe fails, resolve the condition in Steam; do not silently switch to SteamCMD. The command runs in the foreground and installs no service. For a packaged local folder, the publisher also supports validation and upload through `folder.py` as described in its agent quickstart.
+
+To use GitHub instead, configure the shared publisher once using `just setup-github --source DevGuyRash/AutoMindful`. That separate cloud path uses SteamCMD authentication and cannot reuse this machine's desktop session. Then run these commands.
 
 ```sh
-just github DevGuyRash/AutoMindful v0.1.1
-just github-publish DevGuyRash/AutoMindful v0.1.1
+just github DevGuyRash/AutoMindful v0.1.2
+just github-publish DevGuyRash/AutoMindful v0.1.2
 ```
 
 The first command requests cloud validation. The second requests an upload. You can make the same choices under **Actions > Publish Workshop item > Run workflow** in the publisher repository. Follow the dispatched run to completion. With cloud authentication configured, this desktop can be off. Standard hosted jobs in the public publisher repository do not consume your private Actions minutes. AutoMindful is public, so its standard GitHub-hosted release build also avoids private Actions minutes. No extra GitHub token is needed to download its public releases.
@@ -39,13 +42,13 @@ AutoMindful's own [workshop-publisher.json](../workshop-publisher.json) maps mod
 
 The listing requires official [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858). AutoMindful's packaged executable files remain under `media/lua/client`. Normal Build 42 multiplayer loading still requires the server to advertise the mod.
 
-## Use the installed desktop Steam session directly
+## Legacy game-based desktop uploader
 
-The original native uploader remains available as an explicit local fallback. It needs the installed game, JDK 25, and Steam signed into the owning account. It does not install or start a service.
+Prefer the shared publisher above; its desktop backend needs no installed game or JDK. The original native uploader remains available as an explicit fallback. It needs the installed game, JDK 25, and Steam signed into the owning account. It does not install or start a service.
 
 ```sh
-python3 tools/workshop.py stage --archive /path/to/AutoMindful-0.1.1.zip --manifest /path/to/manifest.json --tag v0.1.1 --notes-file /path/to/release-notes.txt --out /path/to/new/workshop-stage
+python3 tools/workshop.py stage --archive /path/to/AutoMindful-0.1.2.zip --manifest /path/to/manifest.json --tag v0.1.2 --notes-file /path/to/release-notes.txt --out /path/to/new/workshop-stage
 python3 tools/publish_desktop.py --game /path/to/ProjectZomboid/projectzomboid --stage /path/to/new/workshop-stage --item-id 3837554362
 ```
 
-Staging checks package bytes against the tagged checkout and manifest before the native uploader calls Steam. The shared SteamCMD publisher instead validates the source repository's published release assets without executing its code. Both paths update the same item. Keep the native path available while cloud authentication is unconfigured.
+Staging checks package bytes against the tagged checkout and manifest before the native uploader calls Steam. The shared publisher validates the source repository's published release assets without executing its code and can upload through desktop Steam or explicitly selected SteamCMD. Every path updates the same existing item.

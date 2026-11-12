@@ -82,7 +82,7 @@ python3 tools/verify.py
 
 The archive contains only AutoMindful and its license under `Contents/mods/AutoMindful`. The authoritative version is `mods/AutoMindful/42/mod.info`. Game and Workshop libraries remain in their installed locations.
 
-See [verification](docs/verification.md) for the native and portable checks, [candidate verification](docs/verification-0.1.2.md) for the observed gameplay scope and [upstream notes](docs/upstream.md) for Lifestyle's action lifecycle.
+See [verification](docs/verification.md) for the native and portable checks, [0.1.2 verification](docs/verification-0.1.2.md) for the observed gameplay scope and [upstream notes](docs/upstream.md) for Lifestyle's action lifecycle.
 
 ## Publish
 

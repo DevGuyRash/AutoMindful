@@ -1,6 +1,6 @@
-# 0.1.2 candidate verification
+# 0.1.2 verification
 
-This report covers the unpublished local-test candidate. Publication is held for the user's local acceptance. Committing and pushing the candidate does not create a release tag, GitHub release, or Workshop upload.
+This report records the local and native verification for version 0.1.2. The candidate was kept unpublished during local testing; the user subsequently requested publication through the updated desktop Steam publisher. Release and Workshop publication follow [the publishing procedure](workshop.md).
 
 The runtime contains nine client Lua modules, native Build 42 Mod Options, and the required `LifestyleHobbies` dependency. It adds no server code and does not award XP, change native skill thresholds, or copy upstream training actions.
 

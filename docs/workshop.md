@@ -52,3 +52,9 @@ python3 tools/publish_desktop.py --game /path/to/ProjectZomboid/projectzomboid -
 ```
 
 Staging checks package bytes against the tagged checkout and manifest before the native uploader calls Steam. The shared publisher validates the source repository's published release assets without executing its code and can upload through desktop Steam or explicitly selected SteamCMD. Every path updates the same existing item.
+
+## Replace the Workshop logo
+
+The selected logo master is [workshop/logo.png](../workshop/logo.png), and its generated prompt record is [workshop/logo-prompt.md](../workshop/logo-prompt.md). The listing uses [workshop/preview.png](../workshop/preview.png), a 256 × 256 PNG validated by `tools/workshop.py`.
+
+The shared publisher preserves the existing listing preview during ordinary content uploads. For an intentional logo replacement, stage the current released content with the new preview, then use the game-based desktop uploader above. Its update path sets content, preview, and change notes while preserving the existing item, title, description, visibility, tags, and required items. This uses the signed-in desktop Steam session and does not start SteamCMD or a separate login. Copy the validated preview to the local Workshop staging folder as well.

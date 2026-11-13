@@ -45,6 +45,110 @@ local function clearLiterature(player)
     end
 end
 
+local fluidCase
+
+local function fixtureFluidState(player, label)
+    if not fluidCase then return end
+    local status = Controller.status(player)
+    local actions = {}
+    for _, action in ipairs(ISTimedActionQueue.getTimedActionQueue(player).queue) do actions[#actions + 1] = action.Type end
+    local function itemState(item)
+        if not item then return "none" end
+        local contents = fluid(item)
+        local parent = item:getContainer()
+        local bag = parent and parent:getContainingItem()
+        local world = item:getWorldItem()
+        return "id=" .. item:getID() .. ",amount=" .. tostring(contents and contents:getAmount())
+            .. ",tainted=" .. tostring(contents and contents:isTainted())
+            .. ",bag=" .. tostring(bag and bag:getID()) .. ",world=" .. tostring(world ~= nil)
+    end
+    print("[AutoMindfulFixture] FLUIDCASE label=" .. label .. " mode=" .. fluidCase.mode
+        .. " phase=" .. status.phase .. " active=" .. tostring(status.active) .. " returns=" .. status.pendingReturns
+        .. " hunger=" .. player:getStats():get(CharacterStat.HUNGER) .. " thirst=" .. player:getStats():get(CharacterStat.THIRST)
+        .. " source={" .. itemState(fluidCase.source) .. "} vessel={" .. itemState(fluidCase.vessel) .. "}"
+        .. " sourceOrigin=" .. tostring(fluidCase.sourceBag and fluidCase.sourceBag:getID())
+        .. " vesselOrigin=" .. tostring(fluidCase.vesselBag and fluidCase.vesselBag:getID())
+        .. " worldUnchanged=" .. tostring(fluidCase.initialWorld and fluidCase.source:getWorldItem() == fluidCase.initialWorld)
+        .. " queue=" .. table.concat(actions, ",") .. " notice=" .. tostring(status.returnNotice))
+end
+
+local function removeFixtureItem(item)
+    if not item then return end
+    local world = item:getWorldItem()
+    if world then world:removeFromWorld(); world:removeFromSquare()
+    elseif item:getContainer() then item:getContainer():Remove(item) end
+end
+
+local function setupFluidCase(player, mode)
+    if Controller.status(player).pendingReturns > 0 then
+        print("[AutoMindfulFixture] FLUIDCASE_PRECONDITION pending returns")
+        return
+    end
+    Controller.stop(player, "Preparing a controlled fluid fixture.")
+    if fluidCase then
+        for _, name in ipairs({"source", "vessel", "sourceBag", "vesselBag"}) do removeFixtureItem(fluidCase[name]) end
+        for _, item in ipairs(fluidCase.extraVessels or {}) do removeFixtureItem(item) end
+    end
+    clearProvisions(player)
+    clearLiterature(player)
+    local inventory = player:getInventory()
+    for index = inventory:getItems():size() - 1, 0, -1 do
+        local item = inventory:getItems():get(index)
+        if fluid(item) then player:removeWornItem(item); inventory:Remove(item) end
+    end
+    local square = player:getSquare()
+    local case = {mode = mode, extraVessels = {}}
+    fluidCase = case
+    if mode == "borrowed" or mode == "partial" then
+        case.sourceBag = square:AddWorldInventoryItem("Base.Bag_Schoolbag", 0.2, 0.2, 0)
+        case.sourceBag:setName("Fixture bulk source bag")
+        case.source = case.sourceBag:getInventory():AddItem("Base.Bucket")
+    elseif mode == "ground" or mode == "mixed" or mode == "tainted" or mode == "contaminate" then
+        case.source = square:AddWorldInventoryItem("Base.Bucket", 0.3, 0.3, 0)
+        case.initialWorld = case.source:getWorldItem()
+    else case.source = inventory:AddItem("Base.Bucket") end
+    local source = fluid(case.source)
+    source:Empty()
+    local milk = instanceItem("Base.Milk"):getFluidContainer():getPrimaryFluid()
+    if mode == "mixed" then
+        source:addFluid(milk, 2.5); source:addFluid(Fluid.Water, 2.5)
+    elseif mode == "tainted" then
+        source:addFluid(milk, 4.999); source:addFluid(FluidType.FromNameLower("taintedwater"), 0.001)
+    else source:addFluid(milk, 5) end
+    if mode ~= "missing" then
+        if mode == "borrowed" or mode == "partial" or mode == "contaminate" then
+            case.vesselBag = square:AddWorldInventoryItem("Base.Bag_Schoolbag", 0.7, 0.7, 0)
+            case.vesselBag:setName("Fixture empty vessel bag")
+            case.vessel = case.vesselBag:getInventory():AddItem("Base.WaterBottle")
+        else case.vessel = inventory:AddItem("Base.WaterBottle") end
+        fluid(case.vessel):Empty()
+        if mode == "nonempty" then fluid(case.vessel):addFluid(Fluid.Water, 0.3) end
+    end
+    if mode == "many" then
+        for index = 1, 4 do
+            local item = inventory:AddItem("Base.WaterBottle")
+            fluid(item):Empty(); case.extraVessels[#case.extraVessels + 1] = item
+        end
+    end
+    local hunger, thirst = 0.2, 0.2
+    if mode == "mixed" then hunger = 0.1
+    elseif mode == "nonempty" then thirst = 0
+    elseif mode == "partial" then hunger, thirst = 0.6, 0.6 end
+    player:getStats():set(CharacterStat.HUNGER, hunger)
+    player:getStats():set(CharacterStat.THIRST, thirst)
+    player:getStats():set(CharacterStat.BOREDOM, 0)
+    player:getStats():set(CharacterStat.FATIGUE, 0)
+    player:getStats():set(CharacterStat.ENDURANCE, 1)
+    player:getStats():set(CharacterStat.PANIC, 0)
+    player:getNutrition():setCalories(1000)
+    getPlayerLoot(0):refreshBackpacks()
+    fixtureFluidState(player, "seeded")
+    local report = Controller.prepare(player, true, true)
+    print("[AutoMindfulFixture] FLUIDCOUNTS food=" .. report.food .. " water=" .. report.water
+        .. " nearbyFood=" .. report.nearbyFood .. " nearbyWater=" .. report.nearbyWater
+        .. " reason=" .. tostring(report.fluidReason))
+end
+
 local function progressSnapshot(player)
     local window = AutoMindful.UI.windows[0]
     local status = Controller.status(player)
@@ -175,6 +279,7 @@ end)
 
 local nextReport, lastPhase, lastLevels = 0, nil, nil
 local lastWaterAction
+local nextFluidSample = 0
 Events.OnPlayerUpdate.Add(function(player)
     if player == getSpecificPlayer(0) then
         local queue = ISTimedActionQueue.getTimedActionQueue(player).queue
@@ -185,6 +290,16 @@ Events.OnPlayerUpdate.Add(function(player)
                 local sprite = object and object:getSprite()
                 print("[AutoMindfulFixture] WATERACTION x=" .. object:getSquare():getX() .. " y=" .. object:getSquare():getY()
                     .. " sprite=" .. tostring(sprite and sprite:getName()))
+            end
+            if fluidCase and action.Type == "ISFluidTransferAction" and getTimestampMs() >= nextFluidSample then
+                nextFluidSample = getTimestampMs() + 150
+                local target = fluid(fluidCase.vessel)
+                if fluidCase.mode == "contaminate" and not fluidCase.contaminated and target and target:getAmount() > 0.001 then
+                    target:addFluid(FluidType.FromNameLower("taintedwater"), 0.001)
+                    fluidCase.contaminated = true
+                    print("[AutoMindfulFixture] FLUIDCONTAMINATED vessel=" .. fluidCase.vessel:getID())
+                end
+                fixtureFluidState(player, "pouring")
             end
         end
     end
@@ -217,6 +332,8 @@ Events.OnPlayerUpdate.Add(function(player)
                     .. " screen=" .. getCore():getScreenWidth() .. "x" .. getCore():getScreenHeight()
                     .. " position=" .. player:getX() .. "," .. player:getY())
             elseif command == "open" then AutoMindful.UI.open(player)
+            elseif command == "fluidcase" then setupFluidCase(player, line:match("^%S+%s+(%S+)") or "owned")
+            elseif command == "fluidstate" then fixtureFluidState(player, "requested")
             elseif command == "xpstate" then progressSnapshot(player)
             elseif command == "staminastate" then
                 local actions = {}

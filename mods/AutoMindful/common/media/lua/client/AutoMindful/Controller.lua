@@ -7,6 +7,7 @@ local Supplies = require "AutoMindful/Supplies"
 local Consumables = require "AutoMindful/Consumables"
 local WaterSources = require "AutoMindful/WaterSources"
 local Progress = require "AutoMindful/Progress"
+local Fluids = require "AutoMindful/Fluids"
 
 AutoMindful = AutoMindful or {}
 local Controller = {}
@@ -76,7 +77,7 @@ function Controller.stop(player, reason)
     Supplies.finishLoan(player, state.supplyLoan)
     for _, loan in ipairs(state.loans) do loan.defer = nil end
     state.supplyItem, state.supplyKind, state.supplyLoan, state.supplySource = nil, nil, nil, nil
-    state.supplyBaseline, state.preparation, state.collectingItem = nil, nil, nil
+    state.supplyBaseline, state.preparation, state.collectingItem, state.fluidSupply = nil, nil, nil, nil
     state.endPhase, state.endMessage = "stopped", reason or "Stopped. Start again when you are ready."
     setPhase(state, state.endPhase, state.endMessage)
     if wasActive and HaloTextHelper then
@@ -227,8 +228,141 @@ local function restForYoga(player, state)
 end
 
 local function resetSupply(state)
+    if state.fluidSupply then
+        for _, loan in ipairs(state.fluidSupply.loans) do loan.defer = nil end
+    end
+    state.fluidSupply = nil
     state.supplyItem, state.supplyKind, state.supplyLoan, state.supplySource = nil, nil, nil, nil
     state.supplyBaseline, state.awaitSupplyUntil, state.preparation = nil, nil, nil
+end
+
+local function fluidSourceKey(source)
+    return source.worldSource and source.worldSource.object or source.item:getID()
+end
+
+local function abandonFluid(state, message, rejectedKey)
+    local flow = state.fluidSupply
+    if flow then state.rejected[rejectedKey or fluidSourceKey(flow.source)] = getTimestampMs() + 60000 end
+    state.fluidNotice = message
+    state.supplyMissingReason = message
+    state.pending = nil
+    resetSupply(state)
+    return false
+end
+
+local function currentFluidSource(player, source)
+    if source.worldSource then
+        local world, reason = WaterSources.inspect(player, source.worldSource.object, source.worldSource.part)
+        if not world then return nil, reason or "The bulk liquid is no longer safe or reachable." end
+        return {worldSource = world, item = world.item, owned = false, description = world.description}
+    end
+    local item = Supplies.inventoryItem(player, source.item)
+    if not item or item:getContainer() ~= player:getInventory() then return nil, "The bulk liquid could not be collected." end
+    return {item = item, owned = true, description = Consumables.inspect(player, item)}
+end
+
+local function queueFluidTransfer(player, state)
+    local flow = state.fluidSupply
+    if flow.source.worldSource and not state.collectNearby then
+        return abandonFluid(state, "Nearby collection was disabled before the liquid transfer.")
+    end
+    local source, reason = currentFluidSource(player, flow.source)
+    if not source then return abandonFluid(state, reason) end
+    local vessel = Supplies.inventoryItem(player, flow.vessel.item)
+    if not vessel or vessel:getContainer() ~= player:getInventory() then
+        return abandonFluid(state, "The drinking vessel could not be collected.", flow.vessel.item:getID())
+    end
+    local candidate, unavailable = Supplies.transferPlan(player, source, {item = vessel, owned = true}, flow.kind)
+    if not candidate then return abandonFluid(state, unavailable or "The liquid can no longer be transferred into this vessel.") end
+    local sourceFluid = source.description.fluid
+    local targetFluid = Fluids.container(vessel)
+    flow.source, flow.vessel.item = source, vessel
+    flow.before = {hunger = stat(player, "HUNGER"), thirst = stat(player, "THIRST")}
+    flow.phase = "transferring"
+    local queued = ownBatch(player, state, "transferring", "Pouring the needed liquid into a drinking vessel.", function()
+        local used, failure = Fluids.transfer(player, sourceFluid, targetFluid, candidate.transfer.amount, function()
+            if source.worldSource and not state.collectNearby then return false end
+            local target = Supplies.inventoryItem(player, vessel)
+            if not target or target:getContainer() ~= player:getInventory() or Fluids.container(target) ~= targetFluid then return false end
+            local current = currentFluidSource(player, source)
+            return current and current.description.fluid == sourceFluid
+        end)
+        if not used then reason = failure end
+    end)
+    if not queued then return abandonFluid(state, reason or "The native liquid transfer could not start.") end
+    return true
+end
+
+local function beginFluidSupply(player, state, transfer)
+    local flow = {source = transfer.source, vessel = transfer.vessel, kind = transfer.kind,
+        loans = {}, phase = "collecting"}
+    state.fluidSupply, state.fluidNotice = flow, nil
+    state.supplyItem, state.supplyLoan, state.supplySource, state.collectingItem = nil, nil, nil, nil
+    state.supplyKind, state.supplyBaseline = flow.kind, nil
+    local items = {}
+    if not flow.source.worldSource then items[#items + 1] = flow.source.item end
+    items[#items + 1] = flow.vessel.item
+    local collecting = {}
+    for _, item in ipairs(items) do
+        local loan = loanFor(player, state, item)
+        if loan then
+            loan.defer = true
+            flow.loans[#flow.loans + 1] = loan
+            if item:getID() == flow.vessel.item:getID() then flow.vesselLoan = loan end
+        end
+        if item:getContainer() ~= player:getInventory() then collecting[#collecting + 1] = item end
+    end
+    if #collecting == 0 then return queueFluidTransfer(player, state) end
+    if not ownBatch(player, state, "collecting", "Collecting the bulk liquid and empty drinking vessel as needed.", function()
+        for _, item in ipairs(collecting) do Supplies.transfer(player, item) end
+    end) then return abandonFluid(state, "Make room to collect the liquid or its drinking vessel.") end
+    return true
+end
+
+local function finishFluidPreparation(player, state, failed, now)
+    local flow = state.fluidSupply
+    if flow.phase == "collecting" then
+        if queueFluidTransfer(player, state) then return "pending" end
+        return "finished"
+    end
+    local vessel = Supplies.inventoryItem(player, flow.vessel.item)
+    if not vessel then
+        abandonFluid(state, "The filled drinking vessel is no longer in your inventory.", flow.vessel.item:getID())
+        return "finished"
+    end
+    local fluid = Fluids.container(vessel)
+    local safe, reason
+    if fluid then safe, reason = Fluids.safe(fluid) end
+    if not safe then
+        abandonFluid(state, reason or "The filled vessel is unsafe; its contents were preserved instead of consumed.", vessel:getID())
+        return "finished"
+    end
+    local need = stat(player, flow.kind == "food" and "HUNGER" or "THIRST")
+    if need <= Consumables.restoredThreshold then
+        state.failures = 0
+        state.pending = nil
+        resetSupply(state)
+        return "finished"
+    end
+    if fluid:isEmpty() then
+        local before = flow.kind == "food" and flow.before.hunger or flow.before.thirst
+        if need < before then
+            state.failures = 0
+            state.pending = nil
+            resetSupply(state)
+        elseif not failed and now < (flow.awaitUntil or now + 3000) then
+            flow.awaitUntil = flow.awaitUntil or now + 3000
+            return "pending"
+        else abandonFluid(state, "The game did not confirm usable liquid in the drinking vessel.") end
+        return state.fluidSupply and "pending" or "finished"
+    end
+    local description = Consumables.inspect(player, vessel)
+    if not description[flow.kind] or description.needsOpening or description.needsVessel then
+        abandonFluid(state, description.reason or "The filled vessel cannot restore the required need.", vessel:getID())
+        return "finished"
+    end
+    flow.phase, state.pending = "using", nil
+    return "consume", vessel, flow.vesselLoan
 end
 
 local function useSupply(player, state, kind, item, loan)
@@ -243,7 +377,16 @@ local function useSupply(player, state, kind, item, loan)
     state.supplyItem, state.supplyKind, state.supplyLoan = item, kind, loan
     if loan then loan.defer = true end
     local queued
-    if kind ~= "literature" and descriptor.needsOpening then
+    if kind ~= "literature" and descriptor.needsVessel and not descriptor.needsOpening then
+        local candidate, reason = Supplies.chooseTransfer(player, {item = item, owned = true, description = descriptor}, kind,
+            state.collectNearby, state.rejected)
+        if candidate then return beginFluidSupply(player, state, candidate.transfer) end
+        state.fluidNotice = reason or "Bring a clean empty drinking vessel for the bulk liquid."
+        state.rejected[item:getID()] = getTimestampMs() + 60000
+        if loan then loan.defer = nil end
+        resetSupply(state)
+        return false
+    elseif kind ~= "literature" and descriptor.needsOpening then
         local tools = {}
         for _, tool in ipairs(descriptor.returnItems) do
             local borrowed = loanFor(player, state, tool)
@@ -292,11 +435,15 @@ local function supply(player, state, kind, onlyWorldWater)
         if queued then return true end
         entry = Supplies.choose(player, kind, state.collectNearby, state.rejected, onlyWorldWater)
     end
+    if entry and entry.transfer then
+        if entry.transfer.source.description.needsOpening then entry = entry.transfer.source
+        else return beginFluidSupply(player, state, entry.transfer) end
+    end
     if not entry then
         if kind ~= "literature" then
             local report = Supplies.report(player, state.collectNearby)
             state.supplyMissingReason = state.supplyMissingReason
-                or (kind == "water" and report.waterSourceReason or report.openingReason)
+                or report.fluidReason or (kind == "water" and report.waterSourceReason or report.openingReason)
         end
         return false
     end
@@ -452,7 +599,12 @@ local function finishPending(player, state, now)
     for _, action in ipairs(state.pending) do
         if not action.autoMindfulFinished then failed = true end
     end
-    if state.collectingItem then
+    if state.fluidSupply and state.fluidSupply.phase ~= "using" then
+        local kind = state.fluidSupply.kind
+        local result, vessel, loan = finishFluidPreparation(player, state, failed, now)
+        if result == "consume" then return useSupply(player, state, kind, vessel, loan) end
+        return result == "pending"
+    elseif state.collectingItem then
         local collected = Supplies.inventoryItem(player, state.collectingItem)
         if not collected then
             state.rejected[state.collectingItem:getID()] = true
@@ -671,7 +823,7 @@ function Controller.status(player)
     local meditation, yoga = levels(player)
     return {active = state.active, phase = state.phase, message = state.message, meditation = meditation, yoga = yoga,
         progress = Progress.snapshot(player), mode = state.mode, collectNearby = state.collectNearby,
-        returnNotice = state.returnNotice, careNotice = state.careNotice, pendingReturns = #state.loans}
+        returnNotice = state.returnNotice or state.fluidNotice, careNotice = state.careNotice, pendingReturns = #state.loans}
 end
 
 function Controller.prepare(player, collectNearby, showNearby)

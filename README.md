@@ -47,11 +47,14 @@ You can start with no food or water. Empty supply counts are warnings, not a sta
 - Bring food, safe hydration, and useful literature for a long session. Available resources do not need to be consumed all at once.
 - Native opening recipes handle supported cans and sealed items when the required tools are available. Items without a usable native opening recipe need manual preparation.
 - Safe milk and other nourishing drinks can help where their native properties provide hunger or thirst relief. Worn hydration containers can also be used. Poisoned, tainted, alcoholic, spoiled, burnt, frozen, or dangerously uncooked sources are rejected.
+- Bulk liquid in a bucket, large container, or other source that cannot be drunk from directly can fill a clean empty drinking vessel. Keep an empty bottle or cup in inventory, or enable adjacent supplies to borrow one nearby. AutoMindful pours only the useful portion, drinks it, and returns each borrowed container to its own origin. Existing drinks are preserved.
 - Nearby sinks, baths, toilets, showers, and ground water containers can supply clean water when adjacent collection is enabled. Native plumbing, remaining water, reach, locks, safehouses, and water safety still apply. Direct drinking takes the amount needed for current thirst rather than draining the source or requiring it to be picked up.
 - Unread literature is preferred. When fiction becomes eligible for rereading under the game's cooldown, the oldest native reading date is preferred. Already-read print media and books still on cooldown are not forced into a useless reading loop.
 - Use a lit place for reading. Yoga can also relieve boredom when its normal requirements permit it.
 
-Borrowed books, unused food or drink, opening tools, and attributable leftover containers are returned to their original reachable source. Your own supplies and worn equipment stay yours. If a return is blocked or its source is no longer reachable, the item stays in inventory and the window explains it. The mod does not walk away to return an item or move unrelated inventory.
+Every component of a fluid mixture must be safe, including small amounts of harmful liquids. The source is checked before pouring and the vessel is checked again before drinking. Unsafe contents stay in their container. AutoMindful does not empty a vessel or pour leftovers back into another source.
+
+Borrowed books, unused food or drink, opening tools, and attributable leftover containers are returned to their original reachable source. Borrowed empty drinking vessels retain their origin through filling and drinking. Your own supplies and worn equipment stay yours. If a return is blocked or its source is no longer reachable, the item stays in inventory and the window explains it. The mod does not walk away to return an item or move unrelated inventory.
 
 Supply choices compare the portion that would help your current needs. A useful drink or food that restores both can win; a tiny dual-purpose item does not automatically beat an adequate source. Otherwise, equally useful water choices prefer the largest current reserve, including permitted nearby plumbing. Food choices favor an adequate convenient portion over unnecessary preparation or borrowing. Calories do not make butter or another rich food win by themselves. See [supply selection](docs/supplies.md) for the policy and examples.
 
@@ -84,7 +87,7 @@ python3 tools/verify.py
 
 The archive contains only AutoMindful and its license under `Contents/mods/AutoMindful`. The authoritative version is `mods/AutoMindful/42/mod.info`. Game and Workshop libraries remain in their installed locations.
 
-See [verification](docs/verification.md) for the native and portable checks, [0.1.2 verification](docs/verification-0.1.2.md) for the observed gameplay scope and [upstream notes](docs/upstream.md) for Lifestyle's action lifecycle.
+See [verification](docs/verification.md) for the native and portable checks, [0.1.3 verification](docs/verification-0.1.3.md) for the bulk-fluid journeys, [0.1.2 verification](docs/verification-0.1.2.md) for the earlier gameplay scope, and [upstream notes](docs/upstream.md) for Lifestyle's action lifecycle.
 
 ## Publish
 

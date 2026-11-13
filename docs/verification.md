@@ -8,7 +8,7 @@ Build the complete mod before running checks. Development commands use Python 3.
 python3 tools/verify.py
 ```
 
-The verification entry point builds the actual archive first, runs controller, supply, context/UI, consumable, world-water, and release-integrity contracts, and records results outside the repository. Portable contracts use explicit game-boundary doubles. They check scheduling, provenance, portions, refresh behavior, and recovery; they do not prove multiplayer acceptance, actual rendering, animations, or a full real-time game journey.
+The verification entry point builds the actual archive first, runs controller, supply, context/UI, consumable, world-water, fluid-transfer, and release-integrity contracts, and records results outside the repository. Portable contracts use explicit game-boundary doubles. They check scheduling, provenance, portions, refresh behavior, and recovery; they do not prove multiplayer acceptance, actual rendering, animations, or a full real-time game journey.
 
 ## Check the game's interpreter and upstream source
 
@@ -18,7 +18,7 @@ python3 tools/verify.py --game /path/to/ProjectZomboid/projectzomboid --lifestyl
 
 Use the directory containing `projectzomboid.jar` and `jre64/bin/java` for `--game`. Native checks also need a JDK compiler compatible with the game's Java 25 runtime. Game and Workshop content stay outside the repository and distribution. The report identifies tests that use the installed interpreter and upstream source, including any accelerated clocks or boundary doubles.
 
-Each Lua suite runs in a fresh installed Kahlua environment. The core suite can load Lifestyle's actual menu, action, and hidden-skill Lua. The water suite uses the game's `media` reference root and executes the installed `ISTakeWaterAction.lua`. Character, inventory, world, and network receivers remain explicit boundaries in these checks. Real client journeys are still required for rendering, server round trips, and actual resource movement.
+Each Lua suite runs in a fresh installed Kahlua environment. The core suite can load Lifestyle's actual menu, action, and hidden-skill Lua. The water and fluid-transfer suites use the game's `media` reference root and execute the installed `ISTakeWaterAction.lua` and native fluid wrappers and transfer action respectively. Character, inventory, world, fluid storage, and network receivers remain explicit boundaries in these checks. Real client journeys are still required for rendering, server round trips, and actual resource movement.
 
 ## Exercise a disposable game
 
@@ -46,6 +46,7 @@ Cover these user journeys before a release:
 - Enable nearby collection and verify actual transfers from reachable storage. Keep another room and floor inaccessible. Leave manual queued actions intact when cancelling automation.
 - Borrow books and opening tools from separate sources. Inspect the original container IDs, returned remainders, identifiable empty containers, full or inaccessible sources, and native recursive carried-bag lookup. Confirm that inventory transfers pause/resume and actual movement shows its cancellation reason.
 - Exercise minimal food portions, safe milk in worn canteens, finite ground water, and available plumbing. Check taint, locks, walls, water shutoff, and exhausted sources without bypassing native restrictions.
+- Exercise owned and borrowed bulk milk or water with a separate empty drinking vessel. Confirm measured native pouring, drinking, resumption, and each container's return origin. Cover a vessel in a carried bag, a world-owned source, no empty vessel, a prefilled vessel, incompatible filters, unsafe mixtures, contamination between pour and drink, and movement during a partial pour. Preserve partial or unsafe contents.
 - Join an owned loopback multiplayer server as an ordinary player. Install Lifestyle on the server and advertise AutoMindful through the server's normal mod list. All AutoMindful runtime Lua remains under `client`. Check training, care, and reconnect.
 - Stop all owned clients, servers, and displays. Remove disposable caches and retain only the logs, reports, packages, and screenshots needed to review the result.
 

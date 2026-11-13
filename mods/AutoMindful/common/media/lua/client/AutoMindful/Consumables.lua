@@ -1,20 +1,10 @@
 require "ISUI/ISInventoryPaneContextMenu"
 require "TimedActions/ISDrinkFluidAction"
+local Fluids = require "AutoMindful/Fluids"
 
 AutoMindful = AutoMindful or {}
 local Consumables = {careThreshold = 0.15, restoredThreshold = 0.01}
 AutoMindful.Consumables = Consumables
-
-local function fluidFor(item)
-    local world = item:getWorldItem()
-    return (world and world:getFluidContainer()) or item:getFluidContainer()
-end
-
-local function safeFood(item)
-    return not item:isRotten() and not item:isBurnt() and not item:isFrozen() and not item:isTainted()
-        and not item:isPoison() and item:getPoisonPower() <= 0 and item:getFoodSicknessChange() <= 0
-        and not item:isAlcoholic() and (not item:isbDangerousUncooked() or item:isCooked())
-end
 
 local function safeScriptFood(script)
     return not script:isCantEat() and script:getPoisonPower() <= 0 and script:getFoodSicknessChange() <= 0
@@ -75,9 +65,9 @@ function Consumables.inspect(player, item, includeNearby)
     local description = {food = false, water = false, needsOpening = false,
         outputTypes = {}, hungerRelief = 0, thirstRelief = 0, hungerEffect = 0, thirstEffect = 0, calories = 0}
     local food = instanceof(item, "Food")
-    local fluid = fluidFor(item)
+    local fluid = Fluids.container(item)
     local cantEat = food and item:getScriptItem():isCantEat()
-    if food and not safeFood(item) then
+    if food and not Fluids.safeFood(item) then
         description.reason = "This food is unsafe, frozen, or needs cooking."
         return description
     end
@@ -131,24 +121,18 @@ function Consumables.inspect(player, item, includeNearby)
     end
     if fluid and not fluid:isEmpty() then
         description.food, description.water = false, false
-        local properties = fluid:getProperties()
-        if fluid:isPoisonous() or fluid:isTainted() or properties:getPoison() > 0
-                or properties:getFoodSicknessChange() > 0 or properties:getAlcohol() > 0 then
-            description.reason = "This drink is tainted, poisonous, alcoholic, or causes food sickness."
+        local fluidDescription, reason = Fluids.inspect(fluid)
+        if not fluidDescription then
+            description.reason = reason
             return description
         end
         if not fluid:canPlayerEmpty() and not description.openingRecipe then
             description.reason = "This container cannot currently be opened for drinking."
             return description
         end
-        if fluid:getCapacity() > 3 and not item:isWorn() then
-            description.reason = "Use a drinkable bottle, canteen, or worn hydration container."
-            return description
-        end
-        description.fluid = fluid
-        effects(description, -properties:getHungerChange(), -properties:getThirstChange())
-        description.remainingLiters = fluid:getAmount()
-        description.calories = math.max(0, properties:getCalories())
+        for key, value in pairs(fluidDescription) do description[key] = value end
+        description.needsVessel = not Fluids.drinkable(item, fluid, description.openingRecipe ~= nil)
+        if description.needsVessel then description.reason = "This supply needs a clean, empty drinking vessel." end
     end
     return description
 end
@@ -199,6 +183,7 @@ end
 function Consumables.portion(player, item, kind)
     local description = Consumables.inspect(player, item)
     if description.needsOpening then return false, "Open this item before measuring its portion." end
+    if description.needsVessel then return false, "Transfer this fluid into a drinking vessel before using it." end
     if not description[kind] then return false, description.reason or "This item cannot restore that need." end
     local plan = Consumables.plan(player, description, kind)
     if not plan then return false, "That need is already restored." end
@@ -214,7 +199,7 @@ end
 function Consumables.consume(player, item, kind)
     local portion, reason = Consumables.portion(player, item, kind)
     if not portion then return false, reason end
-    local fluid = fluidFor(item)
+    local fluid = Fluids.container(item)
     if fluid and not fluid:isEmpty() then
         ISInventoryPaneContextMenu.onDrinkFluid(item, portion, player)
     else

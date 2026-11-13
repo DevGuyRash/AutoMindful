@@ -1,10 +1,12 @@
 package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. (package.path or "")
+local Fixtures = loadTest and loadTest("fluid_fixtures.lua") or assert(loadfile("tests/fluid_fixtures.lua"))()
 
-local names = {"CharacterStat", "ResourceType", "ArrayList", "HandcraftLogic", "getScriptManager",
+local names = {"CharacterStat", "FluidCategory", "ResourceType", "ArrayList", "HandcraftLogic", "getScriptManager",
     "moduleDotType", "instanceof", "ISInventoryPaneContextMenu", "ISEntityUI", "ISCraftingUI"}
 local saved = {}
 for _, name in ipairs(names) do saved[name] = _G[name] end
-local modules = {"ISUI/ISInventoryPaneContextMenu", "TimedActions/ISDrinkFluidAction"}
+local modules = {"ISUI/ISInventoryPaneContextMenu", "TimedActions/ISDrinkFluidAction",
+    "Fluids/ISFluidContainer", "Fluids/ISFluidUtil", "Fluids/ISFluidTransferAction"}
 local preloads = {}
 for _, name in ipairs(modules) do
     preloads[name] = package.preload[name]
@@ -25,6 +27,7 @@ local function array(values)
 end
 
 CharacterStat = {HUNGER = "hunger", THIRST = "thirst"}
+FluidCategory = Fixtures.categories
 ResourceType = {Item = "item"}
 ArrayList = {new = function() return array() end}
 function instanceof(item, kind) return item.kind == kind end
@@ -71,7 +74,10 @@ local function fluid(settings)
     function result:canPlayerEmpty() return self.locked ~= true end
     function result:getCapacity() return self.capacity or 1 end
     function result:getAmount() return self.amount or 1 end
-    return result
+    return Fixtures.attach(result, nil, function()
+        return {{fluid=Fixtures.component({poisonous=result.poisonous, poison=result.poison,
+            alcohol=result.alcohol, sickness=result.sickness}), percentage=1}}
+    end)
 end
 
 local function item(settings)
@@ -104,6 +110,7 @@ local function item(settings)
     function result:getBaseHunger() return self.base or self.hunger or 0 end
     function result:getHungChange() return self.remaining or self.hunger or 0 end
     function result:getReplaceOnUseFullType() return self.replacement end
+    if result.fluid then result.fluid.owner = result end
     return result
 end
 
@@ -222,6 +229,31 @@ check("safe milk restores either need without drinking the whole item", function
     near(C.portion(player, milk, "food"), 0.8)
 end)
 
+check("bulk nourishing fluid remains a usable supply that requires a vessel", function()
+    local bucket = item({fluid = fluid({capacity = 5, amount = 5, hunger = -2.5, thirst = -2.5}), container = inventory})
+    local description = C.inspect(player, bucket)
+    assert(description.food and description.water and description.needsVessel)
+    near(description.remainingLiters, 5)
+    player.values.hunger, player.values.thirst = 0.2, 0.2
+    assert(not C.consume(player, bucket, "water") and #events == 0)
+end)
+
+check("each mixture component is checked even when its aggregate hides sickness", function()
+    for _, unsafe in ipairs({{sickness=1}, {categories={[FluidCategory.Beverage]=true,[FluidCategory.Hazardous]=true}},
+            {categories={}}, {poisonous=true}, {alcohol=0.01}}) do
+        local mixed = fluid({hunger=-0.2, thirst=-0.5})
+        function mixed:createFluidSample()
+            self.lastSample = Fixtures.sample({{fluid=Fixtures.component(),percentage=0.9999},
+                {fluid=Fixtures.component(unsafe),percentage=0.0001}})
+            return self.lastSample
+        end
+        local supply = item({fluid=mixed, container=inventory})
+        local description = C.inspect(player, supply)
+        assert(not description.food and not description.water and mixed.lastSample.released)
+    end
+    assert(#events == 0)
+end)
+
 check("selection predicts signed need changes and the same portion that is consumed", function()
     local dry = item({kind = "Food", hunger = -0.24, thirst = 0.2, container = inventory})
     player.values.hunger, player.values.thirst = 0.12, 0.2
@@ -240,7 +272,8 @@ check("worn hydration containers are usable and hydration food uses native eatin
     local worn = item({kind = "Clothing", worn = true, fluid = fluid({capacity = 5, thirst = -1}), container = inventory})
     assert(C.inspect(player, worn).water)
     worn.worn = false
-    assert(not C.inspect(player, worn).water)
+    assert(C.inspect(player, worn).water and C.inspect(player, worn).needsVessel)
+    assert(not C.portion(player, worn, "water"))
     local fruit = item({kind = "Food", hunger = -0.2, base = -0.2, thirst = -0.4, container = inventory})
     player.values.thirst = 0.1
     near(C.consume(player, fruit, "water"), 0.25)

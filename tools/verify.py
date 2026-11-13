@@ -56,9 +56,9 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     checks = [check(evidence, "portable-contracts", command)]
     for name, script in (("ui-contracts", "ui.lua"), ("progress-contracts", "progress.lua"),
                          ("consumable-contracts", "consumables.lua"), ("supply-policy-contracts", "supply_policy.lua"),
-                         ("water-source-contracts", "water_sources.lua")):
+                         ("water-source-contracts", "water_sources.lua"), ("fluid-transfer-contracts", "fluid_transfers.lua")):
         suite = [lua, "tests/" + script]
-        if game and script == "water_sources.lua":
+        if game and script in ("water_sources.lua", "fluid_transfers.lua"):
             suite.append(str(game.expanduser().resolve() / "media"))
         elif reference_root and script == "progress.lua":
             suite.append(str(reference_root))
@@ -81,8 +81,9 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                 for name, script in (("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"),
                                      ("native-progress-contracts", "progress.lua"), ("native-supply-policy-contracts", "supply_policy.lua"),
                                      ("native-consumable-contracts", "consumables.lua"),
-                                     ("native-water-source-contracts", "water_sources.lua")):
-                    suite_reference = game / "media" if script == "water_sources.lua" else reference_root
+                                     ("native-water-source-contracts", "water_sources.lua"),
+                                     ("native-fluid-transfer-contracts", "fluid_transfers.lua")):
+                    suite_reference = game / "media" if script in ("water_sources.lua", "fluid_transfers.lua") else reference_root
                     command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),
                                "KahluaCheck", str(ROOT), str(suite_reference) if suite_reference else "-", script]
                     checks.append(check(evidence, name, command, cwd=game, env=env))

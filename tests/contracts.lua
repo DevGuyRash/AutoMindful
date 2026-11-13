@@ -1,10 +1,12 @@
 local runtime = "mods/AutoMindful/common/media/lua/client/"
 package.path = runtime .. "?.lua;" .. package.path
 package.loaded["AutoMindful/WaterSources"] = {scan=function() return {} end, choose=function() return nil end}
-for _, name in ipairs({"TimedActions/ISTimedActionQueue", "TimedActions/ISReadABook", "TimedActions/ISDrinkFluidAction", "TimedActions/ISWaitWhileGettingUp", "ISUI/ISWorldObjectContextMenu", "ISUI/ISInventoryPaneContextMenu", "TimedActions/ISInventoryTransferUtil", "TimedActions/ISBaseTimedAction", "TimedActions/ISDropWorldItemAction"}) do
+for _, name in ipairs({"TimedActions/ISTimedActionQueue", "TimedActions/ISReadABook", "TimedActions/ISDrinkFluidAction", "TimedActions/ISWaitWhileGettingUp", "ISUI/ISWorldObjectContextMenu", "ISUI/ISInventoryPaneContextMenu", "TimedActions/ISInventoryTransferUtil", "TimedActions/ISBaseTimedAction", "TimedActions/ISDropWorldItemAction", "Fluids/ISFluidContainer", "Fluids/ISFluidUtil", "Fluids/ISFluidTransferAction"}) do
     package.preload[name] = function() return true end
 end
 local T = {now = 0, nights = 50, client = false, sleepNeeded = true, sleepAllowed = true}
+local FluidFixtures = loadTest and loadTest("fluid_fixtures.lua") or assert(loadfile("tests/fluid_fixtures.lua"))()
+FluidCategory = FluidFixtures.categories
 AutoMindfulTest = T
 CharacterStat = {HUNGER="HUNGER", THIRST="THIRST", BOREDOM="BOREDOM", ENDURANCE="ENDURANCE", FATIGUE="FATIGUE", PAIN="PAIN", PANIC="PANIC"}
 CharacterTrait = {ILLITERATE="illiterate", DISCIPLINED="disciplined", COUCHPOTATO="couchpotato"}
@@ -22,7 +24,12 @@ HaloTextHelper = {addBadText=function(player,text) player.halos[#player.halos+1]
 function isClient() return T.client end
 function getServerOptions() return {getBoolean=function(_, key) return key == "SleepNeeded" and T.sleepNeeded or key == "SleepAllowed" and T.sleepAllowed end} end
 function getText(key) return key end
-function instanceof(item, kind) return item.kind == kind end
+function instanceof(item, kind)
+    if not item then return false end
+    if kind=="InventoryItem" then return item.kind=="InventoryItem" or item.kind=="Water" or item.kind=="Food" or item.kind=="Literature" or item.kind=="InventoryContainer" end
+    if kind=="IsoObject" then return item.kind=="IsoWorldInventoryObject" end
+    return item.kind == kind
+end
 function getPlayerInventory() return T.player and T.player.inventoryPage end
 function getPlayerLoot() return T.player and T.player.lootPage end
 function getPlayerContextMenu() return T.player and {isVisible=function() return T.player.contextOpen or false end} end
@@ -95,7 +102,8 @@ function T.item(kind, properties)
 end
 function T.water(properties)
     local p = properties or {}
-    local f = {amount=1}
+    local f = {amount=1, hungerRate=p.hunger or 0, thirstRate=p.thirst or -.5, calorieRate=p.calories or 0,
+        components={{fluid=FluidFixtures.component({poisonous=p.poison,alcohol=p.alcohol and 1 or 0,sickness=p.sickness}),percentage=1}}}
     function f:isEmpty() return self.amount <= 0 end
     function f:canPlayerEmpty() return not p.locked end
     function f:getCapacity() return p.capacity or 1 end
@@ -104,14 +112,17 @@ function T.water(properties)
     function f:isPoisonous() return p.poison or false end
     function f:isTainted() return p.tainted or false end
     function f:getProperties() return {
-        getHungerChange=function() return (p.hunger or 0)*f.amount end,
-        getThirstChange=function() return (p.thirst or -0.5)*f.amount end,
-        getCalories=function() return (p.calories or 0)*f.amount end,
+        getHungerChange=function() return f.hungerRate*f.amount end,
+        getThirstChange=function() return f.thirstRate*f.amount end,
+        getCalories=function() return f.calorieRate*f.amount end,
         getPoison=function() return p.poison and 1 or 0 end,
         getFoodSicknessChange=function() return p.sickness or 0 end,
         getAlcohol=function() return p.alcohol and 1 or 0 end,
     } end
-    return T.item("Water", {fluid=f,worn=p.worn})
+    local item=T.item("Water", {fluid=f,worn=p.worn})
+    f.owner=item
+    FluidFixtures.attach(f,nil,function(current) return current.components end)
+    return item
 end
 function T.remove(container,item)
     for index, candidate in ipairs(container.items) do if candidate==item then table.remove(container.items,index); item.container=nil; return end end
@@ -213,6 +224,24 @@ function T.action(player, kind, effect)
     function a:isValid() return true end
     return a
 end
+FluidContainer = {CanTransfer=function(source,target)
+    return source~=target and not source:isEmpty() and target:getFreeCapacity()>0 and not target:isInputLocked() and not target.reject
+end}
+ISFluidContainer = {new=function(_,fluid)
+    return {getFluidObject=function() return fluid end,getFluidContainer=function() return fluid end,getOwner=function() return fluid:getOwner() end}
+end}
+ISFluidTransferAction = {new=function(_,player,source,sourceFluidObject,target,targetFluidObject,amount)
+    local action=T.action(player,"ISFluidTransferAction",function()
+        local from,to=source:getFluidContainer(),target:getFluidContainer()
+        local moved=math.min(amount,from:getAmount(),to:getFreeCapacity())
+        to.hungerRate,to.thirstRate,to.calorieRate=from.hungerRate,from.thirstRate,from.calorieRate
+        to.components=from.components
+        from.amount,to.amount=from.amount-moved,to.amount+moved
+    end)
+    action.sourceFluidObject,action.targetFluidObject=sourceFluidObject,targetFluidObject
+    function action:isValid() return FluidContainer.CanTransfer(sourceFluidObject,targetFluidObject) end
+    return action
+end}
 ISReadABook = {new=function(_, p, item) return T.action(p,"read",function()
     if not p.refuseCare then
         p.values.BOREDOM=math.max(0,p.values.BOREDOM+item:getBoredomChange())
@@ -297,7 +326,9 @@ function T.tick(p, finish, gameHours)
     p.hours = p.hours+(gameHours or 0.01)
     C.update(p)
     local action = ISTimedActionQueue.getTimedActionQueue(p).queue[1]
-    if finish ~= false and action then action:perform() end
+    if finish ~= false and action then
+        if action:isValid() then action:perform() else action:stop() end
+    end
 end
 function T.run(p, limit)
     for i=1,limit or 400 do
@@ -418,7 +449,9 @@ test("milk care finishes residual thirst from plain water before resuming",funct
     local scan,drink=sources.scan,sources.drink
     local p=T.playerNew(); p.values.HUNGER=.15; p.values.THIRST=.2
     local milk=T.add(p.inventory,T.water({hunger=-.5,thirst=-.5}))
-    local water={object={},remainingLiters=20}; local drinks=0
+    local water={object={},remainingLiters=20,directDrink=true,
+        description={remainingLiters=20,hungerEffect=0,thirstEffect=10,hungerRelief=0,thirstRelief=10,food=false,water=true,calories=0}}
+    local drinks=0
     sources.scan=function() return {water} end
     sources.drink=function(player)
         ISTimedActionQueue.add(T.action(player,"world-drink",function()
@@ -804,6 +837,103 @@ test("opening borrowed food returns the new empty can and borrowed opener to the
     assert(C.status(interrupted).pendingReturns==0 and toolSource:contains(sharedOpener))
     C.stop(interrupted)
     ArrayList,HandcraftLogic,getScriptManager,ISEntityUI,ResourceType,ISCraftingUI=saved.ArrayList,saved.HandcraftLogic,saved.getScriptManager,saved.ISEntityUI,saved.ResourceType,saved.ISCraftingUI
+end)
+test("bulk milk and an empty vessel return to their separate nearby origins after care",function()
+    local p=T.playerNew(); p.values.HUNGER=.2; p.values.THIRST=.2
+    local pantry,shelf=T.container(1,0),T.container(0,1)
+    local bulk=T.add(pantry,T.water({capacity=5,hunger=-.5,thirst=-.5})); bulk.fluid.amount=5
+    local vessel=T.add(shelf,T.water()); vessel.fluid.amount=0
+    p.nearby={pantry,shelf}
+    assert(C.start(p,"meditation",true))
+    for i=1,12 do T.tick(p) end
+    assert(p.values.HUNGER<.000001 and p.values.THIRST<.000001)
+    assert(math.abs(bulk.fluid.amount-4.6)<.000001 and vessel.fluid.amount==0,"Pour and consume only the needed .4 liters")
+    assert(pantry:contains(bulk) and shelf:contains(vessel) and C.status(p).pendingReturns==0)
+    assert(hasHistory(p,"ISFluidTransferAction") and hasHistory(p,"drink") and hasHistory(p,"Meditation"))
+    C.stop(p)
+end)
+test("a carried-bag empty vessel returns to the same bag with nearby collection disabled",function()
+    local p=T.playerNew(); p.values.THIRST=.2
+    local bag=T.container(); bag.root=p.inventory
+    T.add(p.inventory,T.item("InventoryContainer",{inventory=bag}))
+    local bulk=T.add(p.inventory,T.water({capacity=5})); bulk.fluid.amount=5
+    local vessel=T.add(bag,T.water()); vessel.fluid.amount=0
+    assert(C.start(p,"meditation",false))
+    for i=1,12 do T.tick(p) end
+    assert(p.values.THIRST<.000001 and math.abs(bulk.fluid.amount-4.6)<.000001)
+    assert(bag:contains(vessel) and p.inventory:contains(bulk) and C.status(p).pendingReturns==0)
+    C.stop(p)
+end)
+test("bulk milk does not replace an existing drink when no empty vessel is available",function()
+    local p=T.playerNew(); p.values.HUNGER=.2
+    local bulk=T.add(p.inventory,T.water({capacity=5,hunger=-.5})); bulk.fluid.amount=5
+    local personal=T.add(p.inventory,T.water()); personal.fluid.amount=.5
+    assert(C.start(p,"meditation",false))
+    for i=1,5 do T.tick(p) end
+    assert(bulk.fluid.amount==5 and personal.fluid.amount==.5)
+    assert(not hasHistory(p,"ISFluidTransferAction") and not hasHistory(p,"drink"))
+    assert(hasHistory(p,"Meditation"),"A missing vessel should not prevent noncritical training")
+    C.stop(p)
+end)
+test("source contamination before pouring preserves both borrowed containers and all fluid",function()
+    local p=T.playerNew(); p.values.HUNGER=.2
+    local pantry,shelf=T.container(1,0),T.container(0,1)
+    local bulk=T.add(pantry,T.water({capacity=5,hunger=-.5})); bulk.fluid.amount=5
+    local vessel=T.add(shelf,T.water()); vessel.fluid.amount=0
+    p.nearby={pantry,shelf}
+    assert(C.start(p,"meditation",true)); T.tick(p); T.tick(p); T.tick(p,false)
+    assert(C.status(p).phase=="transferring")
+    bulk.fluid.components={{fluid=FluidFixtures.component({sickness=5}),percentage=.001}}
+    for i=1,8 do T.tick(p) end
+    assert(bulk.fluid.amount==5 and vessel.fluid.amount==0 and not hasHistory(p,"drink"))
+    assert(pantry:contains(bulk) and shelf:contains(vessel) and C.status(p).pendingReturns==0)
+    C.stop(p)
+end)
+test("contamination after pouring returns the filled vessel without drinking or dumping it",function()
+    local p=T.playerNew(); p.values.HUNGER=.2
+    local pantry,shelf=T.container(1,0),T.container(0,1)
+    local bulk=T.add(pantry,T.water({capacity=5,hunger=-.5})); bulk.fluid.amount=5
+    local vessel=T.add(shelf,T.water()); vessel.fluid.amount=0
+    p.nearby={pantry,shelf}
+    assert(C.start(p,"meditation",true)); T.tick(p); T.tick(p); T.tick(p)
+    assert(vessel.fluid.amount>0)
+    vessel.fluid.components={{fluid=FluidFixtures.component({poisonous=true}),percentage=.001}}
+    for i=1,8 do T.tick(p) end
+    assert(not hasHistory(p,"drink") and math.abs(vessel.fluid.amount-.4)<.000001)
+    assert(math.abs(bulk.fluid.amount-4.6)<.000001 and pantry:contains(bulk) and shelf:contains(vessel))
+    assert(C.status(p).pendingReturns==0)
+    C.stop(p)
+end)
+test("movement during a partial pour returns both loans without consuming the partial contents",function()
+    local p=T.playerNew(); p.values.HUNGER=.2
+    local pantry,shelf=T.container(1,0),T.container(0,1)
+    local bulk=T.add(pantry,T.water({capacity=5,hunger=-.5})); bulk.fluid.amount=5
+    local vessel=T.add(shelf,T.water()); vessel.fluid.amount=0
+    p.nearby={pantry,shelf}
+    assert(C.start(p,"meditation",true)); T.tick(p); T.tick(p); T.tick(p,false)
+    assert(C.status(p).phase=="transferring")
+    bulk.fluid.amount=4.9; vessel.fluid.amount=.1
+    vessel.fluid.hungerRate=bulk.fluid.hungerRate; vessel.fluid.components=bulk.fluid.components
+    p.moving=true; T.tick(p,false)
+    assert(not C.status(p).active and p.halos[#p.halos]:find("moved",1,true))
+    p.moving=false
+    for i=1,8 do T.tick(p) end
+    assert(pantry:contains(bulk) and shelf:contains(vessel) and C.status(p).pendingReturns==0)
+    assert(math.abs(bulk.fluid.amount+vessel.fluid.amount-5)<.000001 and not hasHistory(p,"drink"))
+end)
+test("native auto drinking between pour and controller confirmation counts as successful care",function()
+    local p=T.playerNew(); p.values.THIRST=.2
+    local shelf=T.container(1,0)
+    local bulk=T.add(p.inventory,T.water({capacity=5})); bulk.fluid.amount=5
+    local vessel=T.add(shelf,T.water()); vessel.fluid.amount=0
+    p.nearby={shelf}
+    assert(C.start(p,"meditation",true)); T.tick(p); T.tick(p)
+    assert(vessel.fluid.amount>0)
+    vessel.fluid.amount=0; p.values.THIRST=0
+    for i=1,7 do T.tick(p) end
+    assert(shelf:contains(vessel) and C.status(p).pendingReturns==0 and hasHistory(p,"Meditation"))
+    assert(not hasHistory(p,"drink"),"Do not drink twice after native auto drinking satisfied thirst")
+    C.stop(p)
 end)
 print("CONTRACTS PASS "..passed.." cases; game boundaries are explicit doubles, not gameplay evidence")
 if not loadTest then function loadTest(name) return assert(loadfile("tests/"..name))() end end

@@ -1,7 +1,9 @@
 package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+local Fixtures = loadTest and loadTest("fluid_fixtures.lua") or assert(loadfile("tests/fluid_fixtures.lua"))()
 for _, name in ipairs({"ISUI/ISInventoryPaneContextMenu", "TimedActions/ISTakeWaterAction",
         "TimedActions/ISWaitWhileGettingUp", "TimedActions/ISWearClothing", "TimedActions/ISBaseTimedAction",
-        "TimedActions/ISInventoryTransferUtil", "TimedActions/ISDropWorldItemAction"}) do package.loaded[name] = true end
+        "TimedActions/ISInventoryTransferUtil", "TimedActions/ISDropWorldItemAction",
+        "Fluids/ISFluidContainer", "Fluids/ISFluidUtil", "Fluids/ISFluidTransferAction"}) do package.loaded[name] = true end
 
 local function list(values)
     values.size = function(self) return #self end
@@ -15,6 +17,7 @@ function getTimestampMs() return clock end
 function isClient() return client end
 function getCell() return {getGridSquare = function(_, x,y,z) return cells[x .. ":" .. y .. ":" .. z] end} end
 Fluid = {Water = "water"}
+FluidCategory = Fixtures.categories
 CharacterStat = {THIRST = "thirst"}
 FluidContainer = {DisposeContainer = function(container) container.disposed = true end}
 SafeHouse = {isSafehouseAllowInteract = function(square) return not square.noInteract end,
@@ -82,7 +85,7 @@ end
 
 local function source(where, ground)
     local result = {square=where, amount=2, kind=ground and "IsoWorldInventoryObject" or "IsoObject"}
-    if ground then result.item = {isSealed=function() return result.sealed == true end} end
+    if ground then result.item = {isSealed=function() return result.sealed == true end,isWorn=function() return false end} end
     function result:getSquare() return self.square end
     function result:getMasterObject() return self.master or self end
     function result:hasWater() return self.amount > 0 and not self.otherFluid end
@@ -92,15 +95,25 @@ local function source(where, ground)
     function result:getItem() return self.item end
     function result:getPrimaryFluid() return self.otherFluid and "other" or Fluid.Water end
     function result:isLockedToCharacter() return self.locked end
+    local container = Fixtures.attach({isEmpty=function() return result.amount <= 0 end,
+            isPureFluid=function(_, expected) return expected == Fluid.Water and not result.otherFluid end,
+            isPoisonous=function() return result.poison == true end,
+            isTainted=function() return result.tainted == true end,
+            canPlayerEmpty=function() return not result.cannotEmpty end,
+            getAmount=function() return result.amount end,
+            getCapacity=function() return result.capacity or 5 end,
+            getProperties=function() return {getPoison=function() return result.poison and 1 or 0 end,
+                getFoodSicknessChange=function() return result.sickness and 1 or 0 end,
+                getAlcohol=function() return result.alcohol and 1 or 0 end,
+                getHungerChange=function() return result.milk and -0.5*result.amount or 0 end,
+                getThirstChange=function() return -0.5*result.amount end,
+                getCalories=function() return 0 end} end}, result, function()
+        local categories = result.otherFluid and not result.milk and {} or {[FluidCategory.Beverage]=true}
+        return {{fluid=Fixtures.component({categories=categories}),percentage=1}}
+    end)
     function result:getFluidContainer()
         if self.piped then return nil end
-        return {isEmpty=function() return self.amount <= 0 end,
-            isPureFluid=function(_, expected) return expected == Fluid.Water and not self.otherFluid end,
-            isPoisonous=function() return self.poison == true end,
-            isTainted=function() return self.tainted == true end,
-            getProperties=function() return {getPoison=function() return self.poison and 1 or 0 end,
-                getFoodSicknessChange=function() return self.sickness and 1 or 0 end,
-                getAlcohol=function() return self.alcohol and 1 or 0 end} end}
+        return container
     end
     function result:moveFluidToTemporaryContainer(amount)
         amount = math.min(amount, self.amount)
@@ -138,6 +151,25 @@ test("ground water stays in place without a portable size restriction", function
     assert(found.object == barrel and found.item == barrel.item)
     assert(Sources.drink(p, found))
     assert(#queue == 1 and queue[1].item == nil and queue[1].waterObject == barrel)
+end)
+
+test("safe world milk is offered for transfer rather than direct water drinking", function()
+    local p = player()
+    local bucket = source(p.square, true)
+    bucket.milk, bucket.otherFluid, bucket.amount = true, true, 5
+    local found = Sources.scan(p)
+    assert(#found == 1 and found[1].object == bucket and not found[1].directDrink)
+    assert(found[1].description.food and found[1].description.water and found[1].description.needsVessel)
+    assert(not Sources.choose(p, {}) and not Sources.drink(p, found[1]) and #queue == 0)
+    bucket.cannotEmpty = true
+    assert(#Sources.scan(p) == 0)
+end)
+
+test("portable milk is left to ordinary item collection and drinking", function()
+    local p = player()
+    local bottle = source(p.square, true)
+    bottle.milk, bottle.otherFluid, bottle.capacity = true, true, 1
+    assert(#Sources.scan(p) == 0)
 end)
 
 test("selection prefers current remaining water rather than discovery order or capacity", function()

@@ -1,6 +1,6 @@
 # 0.1.3 verification
 
-Version 0.1.3 adds safe bulk-fluid supplies, measured native transfers into empty drinking vessels, and separate return records for the source and vessel. It remains a local test candidate. No release tag or Workshop upload is part of this update.
+Version 0.1.3 adds safe bulk-fluid supplies, measured native transfers into empty drinking vessels, and separate return records for the source and vessel. After these checks, [v0.1.3 was released on GitHub](https://github.com/DevGuyRash/AutoMindful/releases/tag/v0.1.3) and uploaded to the [existing Workshop item](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362) on 2026-11-13. The upload reused the signed-in desktop Steam session without SteamCMD or a separate login.
 
 The package contains ten client Lua files and no server implementation. It uses the installed game's fluid wrappers, transfer action, drinking action, and inventory actions. The [supply policy](supplies.md) describes source selection and mixture safety.
 
@@ -42,6 +42,8 @@ A fresh ordinary-client session used the exact final runtime package and an empt
 ## Evidence and limits
 
 Evidence is retained outside Git under `${XDG_STATE_HOME:-$HOME/.local/state}/app-verification/automindful/fluid-transfers/`. The complete check report is `final-checks-r2/report.json`; the CI-equivalent report is `final-portable/report.json`. Native single-player evidence is under `sp-native-r2/`; multiplayer paths are under `mp-client-r2/` and `mp-client-r3/`.
+
+`workshop-publication.json` records the confirmed desktop upload and Steam's public item metadata. The released archive SHA-256 is `ee63f7edb5cef6001a3912cd8eb8150ba40d6b348d9ec8bf4a33972ca7b9fee5`, matching the native multiplayer candidate and both local installations. Steam confirmed the existing item remained public, with its update time advanced and content size changed to 120004 bytes.
 
 All owned native clients, servers, displays, and disposable caches were removed after verification. Selected reports, logs, screenshots, package hashes, and the installation receipt remain outside Git. The user's running game, saves, settings, and Steam sign-in were not changed.
 

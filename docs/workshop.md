@@ -15,6 +15,8 @@ Local candidates can be built and tested without creating a release tag, publish
 
 The build uses release assets and does not require Actions artifact storage. A release builds its assets without automatically changing Steam Workshop. Manual build runs default to validation. Enable their upload option only to attach checked assets to the latest stable GitHub release. Drafts, prereleases, mismatched versions, and source outside `main` cannot publish release assets through this workflow.
 
+Repeated local builds stage the ZIP and manifest before replacing existing artifacts. Handled write failures preserve the previous pair; if restoration itself fails, the error identifies retained recovery backups. Keep those backups until recovery is complete. This is not an atomic two-file publication across host crashes or concurrent builders; do not run builds against the same output directory simultaneously.
+
 ## Request a Workshop upload
 
 From the shared publisher checkout, validate the latest built release, then request the upload locally or on GitHub.

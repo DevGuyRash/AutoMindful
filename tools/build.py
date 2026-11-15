@@ -3,10 +3,12 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,19 +62,56 @@ def build(output: Path, tag: str | None = None) -> Path:
             raise RuntimeError(f"Runtime script outside client directory: {script}")
         subprocess.run([compiler, "-p", str(script)], check=True, timeout=30)
     output.mkdir(parents=True, exist_ok=True)
-    archive = output / f"AutoMindful-{current_version}.zip"
-    manifest = {}
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
-        for name, data in files.items():
-            entry = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
-            entry.compress_type = zipfile.ZIP_DEFLATED
-            entry.external_attr = 0o100644 << 16
-            package.writestr(entry, data)
-            manifest[name] = hashlib.sha256(data).hexdigest()
-    (output / "manifest.json").write_text(json.dumps({
-        "id": "AutoMindful", "version": current_version, "files": manifest,
-        "archiveSha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
-    }, indent=2) + "\n", encoding="utf-8")
+    staging = Path(tempfile.mkdtemp(prefix=".automindful-build-", dir=output))
+    cleanup = True
+    try:
+        archive = staging / f"AutoMindful-{current_version}.zip"
+        manifest = {}
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
+            for name, data in files.items():
+                entry = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+                entry.compress_type = zipfile.ZIP_DEFLATED
+                entry.external_attr = 0o100644 << 16
+                package.writestr(entry, data)
+                manifest[name] = hashlib.sha256(data).hexdigest()
+        (staging / "manifest.json").write_text(json.dumps({
+            "id": "AutoMindful", "version": current_version, "files": manifest,
+            "archiveSha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        }, indent=2) + "\n", encoding="utf-8")
+        artifacts = [archive, staging / "manifest.json"]
+        backups = {}
+        for artifact in artifacts:
+            destination = output / artifact.name
+            if destination.is_symlink() or (destination.exists() and not destination.is_file()):
+                raise ValueError(f"Release artifact is not a regular file: {destination}")
+            if destination.exists():
+                backup = staging / (artifact.name + ".previous")
+                shutil.copy2(destination, backup)
+                backups[destination] = backup
+        replaced = []
+        try:
+            for artifact in artifacts:
+                destination = output / artifact.name
+                os.replace(artifact, destination)
+                replaced.append(destination)
+        except BaseException:
+            # Recover handled commit failures. Two files cannot be atomically
+            # replaced together: concurrent writers and host crashes are outside
+            # this bounded recovery contract.
+            try:
+                for destination in reversed(replaced):
+                    if destination in backups:
+                        os.replace(backups[destination], destination)
+                    else:
+                        destination.unlink()
+            except OSError as recovery_error:
+                cleanup = False
+                raise RuntimeError(f"Artifact recovery failed; preserve backups in {staging}") from recovery_error
+            raise
+    finally:
+        if cleanup:
+            shutil.rmtree(staging)
+    archive = output / archive.name
     print(f"Built {archive} ({len(scripts)} client Lua files)", flush=True)
     return archive
 

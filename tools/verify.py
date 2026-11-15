@@ -64,6 +64,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
             suite.append(str(reference_root))
         checks.append(check(evidence, name, suite))
     checks.append(check(evidence, "release-contracts", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_release.py"]))
+    checks.append(check(evidence, "build-recovery", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_build_recovery.py"]))
     native_scope = "not requested"
     if game:
         game = game.expanduser().resolve()

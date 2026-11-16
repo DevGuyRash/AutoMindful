@@ -1,9 +1,10 @@
--- Discovery only. Native walking and the ordinary adjacent supply checks remain
--- responsible for access, collection, and use after reaching a candidate.
+-- Bounded, read-only discovery. Missing multiplayer contents are unknown, not
+-- empty. Only native adjacent interaction may request or generate those contents.
 local Consumables = require "AutoMindful/Consumables"
 local Supplies = require "AutoMindful/Supplies"
 local Fluids = require "AutoMindful/Fluids"
 local Nearby = {}
+local snapshots = {}
 
 local function key(square)
     return tostring(square:getX()) .. ":" .. tostring(square:getY()) .. ":" .. tostring(square:getZ())
@@ -14,12 +15,10 @@ local function permitted(player, square, loot)
         and (not loot or SafeHouse.isSafehouseAllowLoot(square, player)))
 end
 
-local function eligibleItem(player, item, kind)
-    if kind == "literature" then return Supplies.eligibleLiterature(player, item) end
-    local description = Consumables.inspect(player, item, false)
-    -- Opening tools and vessels may be different at the destination. Do not
-    -- assume inaccessible tools or consume a remote item while discovering it.
-    return description[kind] == true
+local function normalizedRadius(radius)
+    radius = tonumber(radius) or 10
+    if radius ~= radius then radius = 10 end
+    return math.max(1, math.min(50, math.floor(radius)))
 end
 
 local function usableWater(object)
@@ -31,77 +30,137 @@ local function usableWater(object)
     return object:getPrimaryFluid() == Fluid.Water
 end
 
-local function hasSupply(player, square, kind, onlyWorldWater)
-    local loot = permitted(player, square, true)
-    local function visit(objects, ground)
+function Nearby.invalidate(player)
+    snapshots[player] = nil
+end
+
+function Nearby.scan(player, originSquare, radius, force)
+    local result = {food = {}, water = {}, literature = {}, waterSources = {},
+        unknownTargets = {}, containerCount = 0, unloadedSquares = 0, cooldownLiterature = 0, potentialBulk = 0}
+    local here = player:getSquare()
+    if not here or not originSquare or here:getZ() ~= originSquare:getZ() then return result end
+    radius = normalizedRadius(radius)
+    local now, originKey = getTimestampMs(), key(originSquare)
+    result.radius, result.scannedAt = radius, now
+    local cached = snapshots[player]
+    if not force and cached and cached.originKey == originKey and cached.radius == radius
+            and cached.client == isClient() and now >= cached.time and now - cached.time < 1000 then
+        return cached.result
+    end
+    local seenContainers, seenItems, seenWater = {}, {}, {}
+    local function visitItem(item, square, container)
+        if not item or seenItems[item] then return end
+        seenItems[item] = true
+        local entry = {square = square, key = key(square), item = item, container = container, owned = false}
+        local description = Consumables.inspect(player, item, false)
+        entry.description = description
+        if description.needsVessel and (description.food or description.water) then
+            result.potentialBulk = result.potentialBulk + 1
+        end
+        if description.food then result.food[#result.food + 1] = entry end
+        if description.water then result.water[#result.water + 1] = entry end
+        local reading, last = Supplies.literatureInfo(player, item)
+        if reading == "cooldown" then result.cooldownLiterature = result.cooldownLiterature + 1
+        elseif reading then
+            entry.lastRead = last
+            result.literature[#result.literature + 1] = entry
+        end
+    end
+    local function visitContainer(container, square)
+        if not container or seenContainers[container] then return end
+        seenContainers[container] = true
+        result.containerCount = result.containerCount + 1
+        local items = container:getItems()
+        -- isExplored can become true before the MP server sends its contents.
+        -- An empty replicated list never establishes confirmed emptiness here.
+        if not container:isExplored() or (isClient() and items:size() == 0) then
+            result.unknownTargets[#result.unknownTargets + 1] = {
+                square = square, key = key(square), container = container, unknown = true}
+        end
+        for index = 0, items:size() - 1 do visitItem(items:get(index), square, container) end
+    end
+    local function visitObjects(objects, square, ground)
+        local loot = permitted(player, square, true)
         for index = 0, objects:size() - 1 do
             local object = objects:get(index)
             local locked = instanceof(object, "IsoThumpable") and object:isLockedToCharacter(player)
             if not locked then
-                if kind == "water" and (not ground or loot) and usableWater(object) then
-                    local item = ground and object:getItem() or nil
-                    if not item or not item:isSealed() then return true end
+                local item = ground and object:getItem() or nil
+                local master = object.getMasterObject and object:getMasterObject() or object
+                if (not ground or loot) and not seenWater[master] and usableWater(object)
+                        and (not item or not item:isSealed()) then
+                    seenWater[master] = true
+                    result.waterSources[#result.waterSources + 1] = {
+                        square = square, key = key(square), object = object, source = object, item = item}
                 end
-                if loot and not onlyWorldWater then
+                if loot then
                     if ground then
-                        local item = object:getItem()
-                        if item and eligibleItem(player, item, kind) then return true end
+                        visitItem(item, square, nil)
+                        -- Match native ground-bag access, without recursively
+                        -- inventing access to every bag inside another bag.
+                        if item and instanceof(item, "InventoryContainer") then
+                            visitContainer(item:getInventory(), square)
+                        end
                     else
-                        for containerIndex = 0, object:getContainerCount() - 1 do
-                            local container = object:getContainerByIndex(containerIndex)
-                            local items = container and container:getItems()
-                            if items then
-                                for itemIndex = 0, items:size() - 1 do
-                                    if eligibleItem(player, items:get(itemIndex), kind) then return true end
-                                end
-                            end
+                        for ci = 0, object:getContainerCount() - 1 do
+                            visitContainer(object:getContainerByIndex(ci), square)
                         end
                     end
                 end
             end
         end
-        return false
     end
-    return visit(square:getObjects(), false) or visit(square:getWorldObjects(), true)
+    local ox, oy, z = originSquare:getX(), originSquare:getY(), originSquare:getZ()
+    local cell = getCell()
+    for x = ox - radius, ox + radius do
+        for y = oy - radius, oy + radius do
+            local dx, dy = x - ox, y - oy
+            if dx * dx + dy * dy <= radius * radius then
+                local square = cell:getGridSquare(x, y, z)
+                if not square then result.unloadedSquares = result.unloadedSquares + 1
+                elseif permitted(player, square, false) then
+                    visitObjects(square:getObjects(), square, false)
+                    visitObjects(square:getWorldObjects(), square, true)
+                end
+            end
+        end
+    end
+    snapshots[player] = {originKey = originKey, radius = radius, client = isClient(), time = now, result = result}
+    return result
 end
 
 function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWorldWater)
     if kind ~= "food" and kind ~= "water" and kind ~= "literature" then return nil end
     local here = player:getSquare()
     if not here or not originSquare or here:getZ() ~= originSquare:getZ() then return nil end
-    radius = tonumber(radius) or 10
-    if radius ~= radius then radius = 10 end
-    radius = math.max(1, math.min(50, math.floor(radius)))
+    local snapshot = Nearby.scan(player, originSquare, radius)
     rejectedTargets = rejectedTargets or {}
-    local candidates = {}
-    local ox, oy, z = originSquare:getX(), originSquare:getY(), originSquare:getZ()
-    for x = ox - radius, ox + radius do
-        for y = oy - radius, oy + radius do
-            local dx, dy = x - ox, y - oy
-            if dx * dx + dy * dy <= radius * radius
-                    and (math.abs(x - here:getX()) > 1 or math.abs(y - here:getY()) > 1) then
-                local square = getCell():getGridSquare(x, y, z)
-                if square and permitted(player, square, false) then
-                    local id = key(square)
-                    local rejected = rejectedTargets[id]
-                    if type(rejected) == "number" and getTimestampMs() >= rejected then
-                        rejectedTargets[id], rejected = nil, nil
-                    end
-                    if not rejected then
-                        candidates[#candidates + 1] = {square = square, key = id,
-                            distance = (x - here:getX()) ^ 2 + (y - here:getY()) ^ 2}
-                    end
+    local function choose(entries, allowAdjacent, best)
+        for _, entry in ipairs(entries) do
+            local square = entry.square
+            local dx, dy = square:getX() - here:getX(), square:getY() - here:getY()
+            local targetKey = (entry.unknown and "unknown:" or kind .. ":") .. entry.key
+            local rejection = rejectedTargets[targetKey]
+            if type(rejection) == "number" and getTimestampMs() >= rejection then
+                rejectedTargets[targetKey], rejection = nil, nil
+            end
+            if not rejection and (allowAdjacent or math.abs(dx) > 1 or math.abs(dy) > 1) then
+                local distance = dx * dx + dy * dy
+                if not best or distance < best.distance or (distance == best.distance and targetKey < best.key) then
+                    -- Do not mutate the shared snapshot while choosing targets.
+                    best = {square = square, key = targetKey, distance = distance,
+                        unknown = entry.unknown, container = entry.container,
+                        item = entry.item, object = entry.object}
                 end
             end
         end
+        return best
     end
-    table.sort(candidates, function(a, b)
-        if a.distance ~= b.distance then return a.distance < b.distance end
-        return a.key < b.key
-    end)
-    for _, candidate in ipairs(candidates) do
-        if hasSupply(player, candidate.square, kind, onlyWorldWater) then return candidate end
-    end
+    local best = not onlyWorldWater and choose(snapshot[kind], false) or nil
+    if kind == "water" then best = choose(snapshot.waterSources, false, best) end
+    if best then return best end
+    -- World-only thirst cannot be addressed by opening an unknown item container.
+    if not onlyWorldWater then return choose(snapshot.unknownTargets, true) end
 end
 
 return Nearby

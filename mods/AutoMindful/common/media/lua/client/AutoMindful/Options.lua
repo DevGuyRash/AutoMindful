@@ -16,7 +16,7 @@ local key = settings:getOption("openWindow") or settings:addKeyBind("openWindow"
 
 local search = settings:getOption("searchNearby") or settings:addTickBox("searchNearby",
     "Walk to nearby food, water and entertainment", false,
-    "Opt in to care trips on the same floor, then return to the training spot. Native paths and access rules apply. Danger, manual movement or Stop cancels instead of forcing a return.")
+    "Opt in to care trips and scouting actual uninspected containers on the same floor, then return to the training spot. Native paths and access rules apply. Danger, manual movement or Stop cancels instead of forcing a return.")
 local radius = settings:getOption("searchRadius") or settings:addSlider("searchRadius",
     "Nearby search radius (tiles)", 2, 30, 1, 10,
     "Search distance from the original training spot for each care trip. Default: 10 tiles. The route itself may be longer.")

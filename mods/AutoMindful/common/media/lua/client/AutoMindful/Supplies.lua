@@ -34,6 +34,12 @@ local function readingState(player, item)
 end
 
 -- Shared by adjacent scanning and read-only wider-area discovery.
+function Supplies.literatureInfo(player, item)
+    local state = readingState(player, item)
+    local _, last = readingHistory(player, item)
+    return state, last
+end
+
 function Supplies.eligibleLiterature(player, item)
     local state = readingState(player, item)
     return state == "unread" or state == "reread"
@@ -50,6 +56,10 @@ local function containers(player)
         refreshes[player] = {square = square, time = now}
     end
     return ISInventoryPaneContextMenu.getContainers(player)
+end
+
+function Supplies.refreshNearby(player)
+    return containers(player)
 end
 
 local function reachable(player, square)
@@ -422,12 +432,49 @@ function Supplies.returnAction(player, loan)
     return action
 end
 
-function Supplies.report(player, includeNearby, collectNearby)
+function Supplies.report(player, includeNearby, collectNearby, area, collectArea)
     if collectNearby == nil then collectNearby = includeNearby end
     local scan = Supplies.scan(player, includeNearby, collectNearby)
+    local adjacent = {food=0, water=0, literature=0}
+    local adjacentWater = {}
+    for _, kind in ipairs({"food", "water", "literature"}) do
+        for _, entry in ipairs(scan[kind]) do
+            if not entry.owned then adjacent[kind] = adjacent[kind] + 1 end
+            if kind == "water" and entry.item then adjacentWater[entry.item] = true end
+        end
+    end
+    for _, source in ipairs(scan.waterSources) do
+        if not source.item or not adjacentWater[source.item] then adjacent.water = adjacent.water + 1 end
+    end
+    if area then
+        for _, kind in ipairs({"food", "water", "literature"}) do
+            local entries = {}
+            for _, entry in ipairs(scan[kind]) do if entry.owned then entries[#entries + 1] = entry end end
+            for _, entry in ipairs(area[kind]) do entries[#entries + 1] = entry end
+            scan[kind] = entries
+        end
+        scan.waterSources = area.waterSources
+        scan.worldFluidSourceCount = #area.waterSources
+        scan.nearbyCooldownLiterature = area.cooldownLiterature or 0
+    end
     local report = {food = 0, water = 0, literature = 0, nearbyFood = 0, nearbyWater = 0,
         nearbyLiterature = 0, unreadLiterature = 0, rereadLiterature = 0,
         nearbyUnreadLiterature = 0, nearbyRereadLiterature = 0, warnings = {}}
+    if area then
+        report.radius, report.containerCount = area.radius, area.containerCount
+        report.unknownContainers, report.unloadedSquares = #area.unknownTargets, area.unloadedSquares
+        if (area.potentialBulk or 0) > 0 then
+            report.warnings[#report.warnings + 1] = tostring(area.potentialBulk)
+                .. " known bulk liquid source(s) need a compatible empty vessel. Counts are potential supplies; care rechecks prerequisites at the source."
+        end
+        if report.unknownContainers > 0 then
+            report.warnings[#report.warnings + 1] = tostring(report.unknownContainers)
+                .. " container(s) have uninspected or unconfirmed contents. Counts show known supplies, not a guarantee of access."
+        end
+        if report.unloadedSquares > 0 then
+            report.warnings[#report.warnings + 1] = "Part of the search area is not loaded; those supplies are unknown."
+        end
+    end
     report.cooldownLiterature, report.nearbyCooldownLiterature = scan.cooldownLiterature, scan.nearbyCooldownLiterature
     report.openingReason = scan.openingReason
     report.fluidReason = scan.fluidReason
@@ -450,9 +497,14 @@ function Supplies.report(player, includeNearby, collectNearby)
     for _, source in ipairs(scan.waterSources) do
         if not source.item or not portableWater[source.item] then report.nearbyWater = report.nearbyWater + 1 end
     end
-    local usableFood = report.food + (collectNearby and report.nearbyFood or 0)
-    local usableWater = report.water + (collectNearby and report.nearbyWater or 0)
-    local usableLiterature = report.literature + (collectNearby and report.nearbyLiterature or 0)
+    local allowed = area and not collectArea and adjacent
+        or {food=report.nearbyFood, water=report.nearbyWater, literature=report.nearbyLiterature}
+    local usableFood = report.food + (collectNearby and allowed.food or 0)
+    local usableWater = report.water + (collectNearby and allowed.water or 0)
+    local usableLiterature = report.literature + (collectNearby and allowed.literature or 0)
+    if area and not collectArea then
+        report.warnings[#report.warnings + 1] = "Care trips are off. Distant known stock is shown but will not be used."
+    end
     if includeNearby and not collectNearby then report.warnings[#report.warnings + 1] = "Nearby stock is visible, but collection is off. Enable it or move supplies into your inventory." end
     local foodWarning
     if usableFood == 0 then
@@ -472,7 +524,8 @@ function Supplies.report(player, includeNearby, collectNearby)
     if SandboxVars.Yoga and SandboxVars.Yoga.RequiresMat then report.warnings[#report.warnings + 1] = "Yoga requires a deployed, complete yoga mat under your current square." end
     local lines = {string.format("In your inventory: %d food, %d hydrating drinks, %d useful literature.", report.food, report.water, report.literature)}
     if includeNearby then
-        lines[#lines + 1] = string.format("Within adjacent loot range: %d food, %d drinks, %d literature.", report.nearbyFood, report.nearbyWater, report.nearbyLiterature)
+        local scope = area and ("Known within " .. tostring(area.radius) .. " tiles") or "Within adjacent loot range"
+        lines[#lines + 1] = string.format("%s: %d food, %d drinks, %d literature.", scope, report.nearbyFood, report.nearbyWater, report.nearbyLiterature)
         lines[#lines + 1] = "Borrowed supplies and their empty containers are returned to their original reachable source."
     end
     for _, warning in ipairs(report.warnings) do lines[#lines + 1] = warning end

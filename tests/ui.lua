@@ -107,6 +107,7 @@ function PZAPI.ModOptions:create(id)
         return option
     end
     function object:addTickBox(id, _, value) return add(self, id, value) end
+    function object:addSlider(id, _, minimum, maximum, step, value) return add(self, id, value) end
     function object:addKeyBind(id, _, value) return add(self, id, value) end
     self.settings[id] = object
     return object
@@ -190,10 +191,11 @@ local UI = require "AutoMindful/UI"
 local Options = require "AutoMindful/Options"
 local Context = require "AutoMindful/ContextMenu"
 local settings = PZAPI.ModOptions:getOptions("AutoMindful")
+assert(not Options.searchNearby() and Options.searchRadius() == 10, "Roaming is opt-in with a 10-tile radius")
 assert(not Options.generalMenu() and Options.windowKey() == 0, "Idle menus and hotkeys default to opt-in")
 package.loaded["AutoMindful/Options"] = nil
 require "AutoMindful/Options"
-assert(settings.count == 2, "Reload reuses the same native options")
+assert(settings.count == 4, "Reload reuses the same native options")
 
 local context, world = ISContextMenu:new(), {"clicked square"}
 local first, second, third = ZenWellnessContextMenu.doBuildMenu(0, context, world)

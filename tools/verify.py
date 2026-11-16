@@ -56,7 +56,8 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     checks = [check(evidence, "portable-contracts", command)]
     for name, script in (("ui-contracts", "ui.lua"), ("progress-contracts", "progress.lua"),
                          ("consumable-contracts", "consumables.lua"), ("supply-policy-contracts", "supply_policy.lua"),
-                         ("water-source-contracts", "water_sources.lua"), ("fluid-transfer-contracts", "fluid_transfers.lua")):
+                         ("water-source-contracts", "water_sources.lua"), ("fluid-transfer-contracts", "fluid_transfers.lua"),
+                         ("nearby-contracts", "nearby.lua")):
         suite = [lua, "tests/" + script]
         if game and script in ("water_sources.lua", "fluid_transfers.lua"):
             suite.append(str(game.expanduser().resolve() / "media"))
@@ -83,7 +84,8 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-progress-contracts", "progress.lua"), ("native-supply-policy-contracts", "supply_policy.lua"),
                                      ("native-consumable-contracts", "consumables.lua"),
                                      ("native-water-source-contracts", "water_sources.lua"),
-                                     ("native-fluid-transfer-contracts", "fluid_transfers.lua")):
+                                     ("native-fluid-transfer-contracts", "fluid_transfers.lua"),
+                                     ("native-nearby-contracts", "nearby.lua")):
                     suite_reference = game / "media" if script in ("water_sources.lua", "fluid_transfers.lua") else reference_root
                     command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),
                                "KahluaCheck", str(ROOT), str(suite_reference) if suite_reference else "-", script]

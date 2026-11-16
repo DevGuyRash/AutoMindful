@@ -4,6 +4,7 @@ package.loaded["AutoMindful/WaterSources"] = {scan=function() return {} end, cho
 for _, name in ipairs({"TimedActions/ISTimedActionQueue", "TimedActions/ISReadABook", "TimedActions/ISDrinkFluidAction", "TimedActions/ISWaitWhileGettingUp", "ISUI/ISWorldObjectContextMenu", "ISUI/ISInventoryPaneContextMenu", "TimedActions/ISInventoryTransferUtil", "TimedActions/ISBaseTimedAction", "TimedActions/ISDropWorldItemAction", "Fluids/ISFluidContainer", "Fluids/ISFluidUtil", "Fluids/ISFluidTransferAction"}) do
     package.preload[name] = function() return true end
 end
+package.preload["Vehicles/TimedActions/ISPathFindAction"] = function() return true end
 package.preload["TimedActions/WalkToTimedAction"] = function() return true end
 local roaming = {enabled=false, radius=10}
 package.loaded["AutoMindful/Options"] = {searchNearby=function() return roaming.enabled end,
@@ -1076,6 +1077,121 @@ test("critical needs do not enter repeated unknown-container scouting", function
     assert(not C.status(p).active and C.status(p).message:find("Starving"))
     assert(not hasHistory(p,"ISWalkToTimedAction"), "Critical care must not gamble on unknown containers")
     roaming.enabled=false; nearbyTarget=nil
+end)
+
+
+local function vehicleSource(p, id)
+    local source=T.container(12,0); local area=T.square(6,0)
+    local vehicle={speed=0,accessible=true}
+    local part={id=id or "TruckBedOpen"}
+    function vehicle:getCurrentAbsoluteSpeedKmHour() return self.speed end
+    function vehicle:getSquare() return source.square end
+    function vehicle:getSquareForArea() return self.movedArea or area end
+    function vehicle:canAccessContainer() return self.accessible and p:getSquare()==area end
+    function vehicle:getPartById() return nil end
+    function part:getItemContainer() return source end
+    function part:getVehicle() return vehicle end
+    function part:getArea() return "TruckBed" end
+    function part:getId() return self.id end
+    function part:getIndex() return 0 end
+    function part:isInventoryItemUninstalled() return false end
+    function part:getContainerCapacity() return 50 end
+    function source:getVehiclePart() return part end
+    p.lootPage.refreshBackpacks=function() p.nearby=vehicle:canAccessContainer() and {source} or {} end
+    return source,part,vehicle,area
+end
+ISPathFindAction={pathToVehicleArea=function(_, p, vehicle, areaName)
+    assert(areaName=="TruckBed")
+    return T.action(p,"ISPathFindAction",function()
+        if not p.pathBlocked then p.square=vehicle:getSquareForArea(areaName) end
+    end)
+end}
+
+test("vehicle care uses exact native interaction area and returns loan before home",function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    local origin=p:getSquare(); local source,part,vehicle,area=vehicleSource(p)
+    local book=T.add(source,T.item("Literature"))
+    nearbyTarget={square=area,key="vehicle-book",part=part}
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    p.moving=true; T.tick(p,false)
+    assert(C.status(p).active,"Owned native vehicle-area path is not manual movement")
+    p.moving=false
+    for i=1,20 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(hasHistory(p,"ISPathFindAction") and hasHistory(p,"read") and source:contains(book))
+    assert(p:getSquare()==origin and hasHistory(p,"Meditation"))
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("vehicle native access denial never transfers even after area arrival",function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    local origin=p:getSquare(); local source,part,vehicle,area=vehicleSource(p)
+    local book=T.add(source,T.item("Literature")); vehicle.accessible=false
+    nearbyTarget={square=area,key="denied-vehicle",part=part,unknown=true}
+    assert(C.start(p,"meditation",false))
+    for i=1,15 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(not hasHistory(p,"read") and source:contains(book) and p:getSquare()==origin)
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("moving vehicle cancels owned pursuit without forcing a return",function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    local source,part,vehicle,area=vehicleSource(p)
+    nearbyTarget={square=area,key="moving-vehicle",part=part}
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    vehicle.speed=3; T.tick(p,false)
+    assert(not C.status(p).active and #ISTimedActionQueue.getTimedActionQueue(p).queue==0)
+    assert(C.status(p).message:find("moved or became inaccessible"))
+    roaming.enabled=false; nearbyTarget=nil
+end)
+test("stationary but repositioned vehicle cannot pull a trip beyond its scanned target",function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    local source,part,vehicle,area=vehicleSource(p)
+    nearbyTarget={square=area,key="relocated-vehicle",part=part}
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    vehicle.movedArea=T.square(50,0); T.tick(p,false)
+    assert(not C.status(p).active and #ISTimedActionQueue.getTimedActionQueue(p).queue==0)
+    roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("storage transfers recheck vehicle access and corpse safety while queued",function()
+    local S=require "AutoMindful/Supplies"; local p=T.playerNew(); local source,part,vehicle,area=vehicleSource(p)
+    p.square=area; local book=T.add(source,T.item("Literature"))
+    assert(S.transfer(p,book)); local q=ISTimedActionQueue.getTimedActionQueue(p).queue
+    assert(q[1]:isValid()); vehicle.accessible=false; assert(not q[1]:isValid())
+    ISTimedActionQueue.clear(p)
+    local corpse=T.container(6,0)
+    local body={kind="IsoDeadBody",reanimate=-1}
+    function body:isAnimal() return false end
+    function body:isFakeDead() return false end
+    function body:getReanimateTime() return self.reanimate end
+    function body:getSquare() return corpse.square end
+    function corpse:getParent() return body end
+    local corpseBook=T.add(corpse,T.item("Literature"))
+    assert(S.transfer(p,corpseBook)); q=ISTimedActionQueue.getTimedActionQueue(p).queue
+    assert(q[1]:isValid()); body.reanimate=0; assert(not q[1]:isValid())
+    ISTimedActionQueue.clear(p)
+end)
+
+test("corpse care reads direct storage and returns its loan before going home",function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=25
+    local origin=p:getSquare(); local corpse=T.container(6,0); p.available={corpse}
+    local body={kind="IsoDeadBody"}
+    function body:isAnimal() return false end
+    function body:isFakeDead() return false end
+    function body:getReanimateTime() return -1 end
+    function body:getSquare() return corpse.square end
+    function corpse:getParent() return body end
+    local book=T.add(corpse,T.item("Literature"))
+    nearbyTarget={square=corpse.square,key="corpse",container=corpse}
+    assert(C.start(p,"meditation",false))
+    for i=1,20 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(hasHistory(p,"read") and corpse:contains(book) and p:getSquare()==origin)
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil
 end)
 
 print("CONTRACTS PASS "..passed.." cases; game boundaries are explicit doubles, not gameplay evidence")

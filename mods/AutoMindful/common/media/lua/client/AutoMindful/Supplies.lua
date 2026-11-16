@@ -4,6 +4,7 @@ require "TimedActions/ISDropWorldItemAction"
 local Consumables = require "AutoMindful/Consumables"
 local WaterSources = require "AutoMindful/WaterSources"
 local Fluids = require "AutoMindful/Fluids"
+local Storage = require "AutoMindful/Storage"
 
 AutoMindful = AutoMindful or {}
 local Supplies = {}
@@ -158,7 +159,7 @@ function Supplies.scan(player, includeNearby, useNearbyTools)
                 local container = nearby:get(index)
                 local owned = container:getOutermostContainer() == inventory
                 local floor = container:getType() == "floor"
-                if owned or floor or reachable(player, containerSquare(container)) then
+                if owned or floor or Storage.containerReachable(player, container, reachable(player, containerSquare(container))) then
                     visit(container, owned, owned, floor)
                 end
             end
@@ -326,11 +327,24 @@ function Supplies.markRead(player, item)
     saved.AutoMindfulReadHistory["item:" .. tostring(item:getID())] = getGameTime():getNightsSurvived()
 end
 
+local function guardStorageAction(player, action, container)
+    if not (Storage.partFor(container) or Storage.corpseFor(container)) then return true end
+    local function accessible()
+        return Storage.containerReachable(player, container, reachable(player, containerSquare(container)))
+    end
+    if not accessible() then return false end
+    local nativeValid = action.isValid
+    action.isValid = function(self)
+        return accessible() and (not nativeValid or nativeValid(self))
+    end
+    return true
+end
+
 function Supplies.transfer(player, item)
     if item:getContainer() == player:getInventory() then return true end
     if not player:getInventory():hasRoomFor(player, item) then return false end
     local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, item:getContainer(), player:getInventory())
-    if action.ignoreAction then return false end
+    if action.ignoreAction or not guardStorageAction(player, action, item:getContainer()) then return false end
     ISTimedActionQueue.add(action)
     return true
 end
@@ -418,7 +432,7 @@ function Supplies.returnAction(player, loan)
     local owned = origin:getOutermostContainer() == inventory
     if not owned then
         local nearby = containers(player)
-        if not nearby or not nearby:contains(origin) or not reachable(player, containerSquare(origin)) then
+        if not nearby or not nearby:contains(origin) or not Storage.containerReachable(player, origin, reachable(player, containerSquare(origin))) then
             return nil, "Borrowed supplies stay with you because their original container is no longer reachable."
         end
     end
@@ -426,7 +440,7 @@ function Supplies.returnAction(player, loan)
         return nil, "Borrowed supplies stay with you because their original container is full."
     end
     local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, item:getContainer(), origin)
-    if action.ignoreAction or not action:isValid() then
+    if action.ignoreAction or not guardStorageAction(player, action, origin) or not action:isValid() then
         return nil, "Borrowed supplies stay with you because the original container cannot currently accept them."
     end
     return action

@@ -92,7 +92,7 @@ function Ledger:prerender()
     local c = palette.muted
     local y = line + 20
     self:drawTextRight("Inventory", inventoryX, y, c.r, c.g, c.b, c.a, UIFont.Small)
-    self:drawTextRight("Nearby", nearbyX, y, c.r, c.g, c.b, c.a, UIFont.Small)
+    self:drawTextRight(report.radius and (tostring(report.radius) .. " tiles") or "Nearby", nearbyX, y, c.r, c.g, c.b, c.a, UIFont.Small)
     for index, row in ipairs(supplyRows) do
         y = line + 24 + index * (line + 6)
         local owned, nearby = report[row.field] or 0, report[row.nearby] or 0
@@ -100,13 +100,14 @@ function Ledger:prerender()
         self:drawText(row.label, 12, y, c.r, c.g, c.b, c.a, UIFont.Small)
         c = owned > 0 and row.color or palette.missing
         self:drawTextRight(tostring(owned), inventoryX, y, c.r, c.g, c.b, c.a, UIFont.Small)
-        c = nearby > 0 and (self.window.nearby:isSelected(1) and row.color or palette.yoga) or palette.muted
+        c = nearby > 0 and ((self.window.nearby:isSelected(1) or report.walkingEnabled) and row.color or palette.yoga) or palette.muted
         self:drawTextRight(tostring(nearby), nearbyX, y, c.r, c.g, c.b, c.a, UIFont.Small)
     end
     c = palette.muted
-    self:drawText(self.window.nearby:isSelected(1) and "Collection: enabled" or "Collection: off; nearby stock is shown",
+    self:drawText(report.walkingEnabled and "Care trips: enabled" or self.window.nearby:isSelected(1)
+        and "Adjacent only; care trips off" or "Collection off; known stock shown",
         12, self.height - line * 2 - 10, c.r, c.g, c.b, c.a, UIFont.Small)
-    self:drawText("Usable items, not days or servings", 12, self.height - line - 7, c.r, c.g, c.b, c.a, UIFont.Small)
+    self:drawText("Known items, not days or servings", 12, self.height - line - 7, c.r, c.g, c.b, c.a, UIFont.Small)
     ISLabel.updateTooltip(self)
 end
 
@@ -152,6 +153,7 @@ function UI:checkSupplies()
     self.startError = nil
     self.checkedAt = getTimestampMs()
     self.nextRefresh = 0
+    self.forceSupplyRefresh = true
     self:refresh()
 end
 
@@ -181,7 +183,8 @@ end
 
 function UI:refresh()
     local status = Controller.status(self.player)
-    self.report = Controller.prepare(self.player, self.nearby:isSelected(1), true)
+    self.report = Controller.prepare(self.player, self.nearby:isSelected(1), true, self.forceSupplyRefresh)
+    self.forceSupplyRefresh = nil
     self.status = status
     for _, button in ipairs(self.starts) do button:setEnable(not status.active) end
     self.stopButton:setEnable(status.active)
@@ -215,8 +218,8 @@ function UI:refresh()
     if (status.pendingReturns or 0) > 0 then
         tips[#tips + 1] = colored(palette.yoga, tostring(status.pendingReturns) .. " borrowed item(s) awaiting return.")
     end
-    if not self.nearby:isSelected(1) and ((self.report.nearbyFood or 0) + (self.report.nearbyWater or 0) + (self.report.nearbyLiterature or 0)) > 0 then
-        tips[#tips + 1] = colored(palette.yoga, "Enable adjacent supplies to use the nearby stock.")
+    if not self.nearby:isSelected(1) and not self.report.walkingEnabled and ((self.report.nearbyFood or 0) + (self.report.nearbyWater or 0) + (self.report.nearbyLiterature or 0)) > 0 then
+        tips[#tips + 1] = colored(palette.yoga, "Enable care trips to use distant stock, or adjacent supplies for reachable stock only.")
     end
     for _, warning in ipairs(self.report.warnings or {}) do
         tips[#tips + 1] = colored(palette.yoga, "- " .. warning)
@@ -228,7 +231,7 @@ function UI:refresh()
     setText(self.guidance, table.concat(tips, " <LINE> "))
     local unread, rereads = self.report.unreadLiterature, self.report.rereadLiterature
     local literatureHelp = unread and string.format("Literature in inventory: %d unread, %d eligible rereads. ", unread, rereads or 0) or ""
-    self.ledger.tooltip = "Counts refresh while you move or change inventory. Hydration includes safe drinks and hydrating food; one item can count in both food and hydration. " .. literatureHelp
+    self.ledger.tooltip = "Known contents within the configured radius refresh while you move or change inventory. Uninspected/unconfirmed containers are reported separately; Check supplies never walks or remotely generates loot. Hydration includes safe drinks and hydrating food; one item can count in both food and hydration. " .. literatureHelp
         .. "Training can start with no supplies. Missing stock becomes a stop only when the survivor's condition actually requires it. Unread literature is preferred, then eligible rereads. Recently read material can be unavailable until the game's cooldown ends. Nearby supplies are used only when collection is enabled."
     self:layout()
 end
@@ -300,7 +303,7 @@ function UI:createChildren()
     y = y + row + 4
     self.check = ISButton:new(pad, y, width / 2 - 3, row, "Check supplies", self, UI.checkSupplies)
     self.check:initialise()
-    self.check.tooltip = "Refresh the live supply report now. This does not interrupt training or collect items immediately."
+    self.check.tooltip = "Refresh known container contents within the configured radius now. Unknown contents stay unknown; this does not move the survivor or collect items."
     self:addChild(self.check)
     self.stopButton = ISButton:new(pad + width / 2 + 3, y, width / 2 - 3, row, "Stop training", self, UI.onStop)
     self.stopButton:initialise()

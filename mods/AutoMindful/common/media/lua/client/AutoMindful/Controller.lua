@@ -9,6 +9,8 @@ local WaterSources = require "AutoMindful/WaterSources"
 local Progress = require "AutoMindful/Progress"
 local Fluids = require "AutoMindful/Fluids"
 local Nearby = require "AutoMindful/Nearby"
+local Storage = require "AutoMindful/Storage"
+require "Vehicles/TimedActions/ISPathFindAction"
 local Options = require "AutoMindful/Options"
 require "TimedActions/WalkToTimedAction"
 
@@ -169,7 +171,7 @@ local function unsafeReason(player, state)
     if player:isPlayerMoving() then
         local current = state and queueFor(player)[1]
         if not (state and state.excursion and current and current.autoMindfulOwner == state
-                and current.Type == "ISWalkToTimedAction") then
+                and (current.Type == "ISWalkToTimedAction" or current.Type == "ISPathFindAction")) then
             return "Cancelled because you moved."
         end
     end
@@ -428,6 +430,13 @@ local function sameSquare(a, b)
     return a and b and a:getX() == b:getX() and a:getY() == b:getY() and a:getZ() == b:getZ()
 end
 
+local function vehicleTargetAvailable(player, target)
+    if not target.part then return true end
+    local vehicle, area = Storage.vehiclePart(target.part)
+    return vehicle and sameSquare(area, target.square) and Storage.permitted(player, area)
+        and Storage.permitted(player, vehicle:getSquare())
+end
+
 local function nearbyTarget(player, state, kind, onlyWorldWater)
     if state.excursion or not Options.searchNearby() then return nil end
     state.travelRejected = state.travelRejected or {}
@@ -448,11 +457,17 @@ end
 local function beginExcursion(player, state, kind, onlyWorldWater)
     local target = nearbyTarget(player, state, kind, onlyWorldWater)
     if not target then return false end
+    if not vehicleTargetAvailable(player, target) then
+        state.travelRejected[target.key] = true
+        state.travelScan = nil
+        return false
+    end
     state.excursion = {origin = player:getSquare(), target = target, kind = kind,
         onlyWorldWater = onlyWorldWater, stage = "outbound"}
     state.travelScan = nil
     local here = player:getSquare()
-    if target.unknown and here and here:canReachTo(target.square) then
+    if target.unknown and ((target.part and Storage.vehicleAccessible(player, target.part))
+            or (not target.part and here and here:canReachTo(target.square))) then
         state.excursion.stage, state.excursion.inspectUntil = "inspect", getTimestampMs() + 3000
         setPhase(state, "scouting", "Inspecting a nearby container through the normal loot interface.")
         return true
@@ -460,7 +475,15 @@ local function beginExcursion(player, state, kind, onlyWorldWater)
     local route
     local queued = ownBatch(player, state, "travelling", "Walking to a supply container; returning here after care.", function()
         if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
-        route = luautils.walkAdj(player, target.square, true)
+        if target.part then
+            local vehicle = Storage.vehiclePart(target.part)
+            if vehicle then
+                ISTimedActionQueue.add(ISPathFindAction:pathToVehicleArea(player, vehicle, target.part:getArea()))
+                route = true
+            end
+        else
+            route = luautils.walkAdj(player, target.square, true)
+        end
     end)
     if not route then clearOwned(player, state); queued = false end
     if not queued then
@@ -773,6 +796,11 @@ function Controller.update(player)
     if state.lastUpdate and now - state.lastUpdate < 250 then return end
     state.lastUpdate = now
     local queue = queueFor(player)
+    if state.excursion and state.excursion.stage == "outbound" and state.excursion.target.part
+            and not vehicleTargetAvailable(player, state.excursion.target) then
+        Controller.stop(player, "The vehicle supply source moved or became inaccessible. Stopped without forcing movement.")
+        return
+    end
     local foreign, takeover
     for _, action in ipairs(queue) do
         if action.autoMindfulOwner ~= state then
@@ -883,6 +911,9 @@ function Controller.update(player)
             local arrived = here and here:getZ() == target:getZ()
                 and math.abs(here:getX()-target:getX()) <= 1 and math.abs(here:getY()-target:getY()) <= 1
                 and (sameSquare(here, target) or here:canReachTo(target))
+            if trip.target.part then
+                arrived = vehicleTargetAvailable(player, trip.target) and Storage.vehicleAccessible(player, trip.target.part)
+            end
             if arrived and Options.searchNearby() then
                 trip.stage, trip.inspectUntil = "inspect", now + 3000
             else
@@ -894,7 +925,7 @@ function Controller.update(player)
     end
     local trip = state.excursion
     if trip and trip.stage == "inspect" then
-        if Options.searchNearby() then
+        if Options.searchNearby() and (not trip.target.part or (vehicleTargetAvailable(player, trip.target) and Storage.vehicleAccessible(player, trip.target.part))) then
             Supplies.refreshNearby(player)
             if supply(player, state, trip.kind, trip.onlyWorldWater) then
                 trip.stage = "care"

@@ -31,10 +31,10 @@ During a running session, **AutoMindful (running)** lets you reopen the window e
 | --- | --- |
 | Activity | Current training, care break, pause, or stop reason. |
 | Progress | Skill levels, XP toward the next level, and a brief green gain or red loss indicator. |
-| Supplies | Usable food, hydration, and literature in inventory and reachable nearby containers. |
+| Supplies | Known food, hydration, and literature in inventory and containers within the configured radius. |
 | Preparation and returns | Requirements, warnings, and borrowed items waiting to go back. |
 
-Counts refresh while the window is open, including after walking, inventory changes, and toggling collection. **Check supplies** refreshes immediately and confirms that the check happened. It does not collect or consume items. Counts represent usable items, not servings or days. A nourishing drink can count toward both food and hydration.
+Known counts refresh while the window is open from a shared radius snapshot, including after walking, inventory changes, and toggling collection. The nearby column shows the configured tile radius. **Check supplies** forces a fresh snapshot and confirms the check happened. It does not walk, collect, consume, or remotely generate container contents. Counts represent usable items, not servings or days. A nourishing drink can count toward both food and hydration.
 
 Drag the window's bottom or right resize handle to make more room. Its size and position are remembered. The Activity area expands for its status text; the main content scrolls when the available window space is too small. XP bars show progress within the current level. Exact XP changes appear briefly when the underlying skill exposes enough information; otherwise a level change is shown.
 
@@ -46,7 +46,11 @@ You can start with no food or water. Empty supply counts are warnings, not a sta
 
 In **Options > Mods > AutoMindful**, enable **Walk to nearby food, water and entertainment**. The new option is off by default. **Nearby search radius (tiles)** defaults to **10** and is adjustable from 2 to 30. It also permits adjacent supplies, so a sink beside your training spot remains usable without enabling a second setting. It adds a care trip only when carried or adjacent supplies cannot satisfy the need.
 
-AutoMindful searches loaded squares on the same floor within a circular radius of the training spot, walks using native pathfinding, then rechecks normal adjacent access and safety before collecting or using supplies. Entertainment means eligible boredom-reducing literature. It returns borrowed items while still at the source, then walks back to the original training square before resuming. Supply counts in the window still describe inventory and adjacent loot range, not the entire search radius.
+AutoMindful searches loaded squares on the same floor within a circular radius of the training spot, walks using native pathfinding, then rechecks normal adjacent access and safety before collecting or using supplies. Entertainment means eligible boredom-reducing literature. It returns borrowed items while still at the source, then walks back to the original training square before resuming. The live window and **Check supplies** use the same configured radius and source classification as care. Counts show known item contents, not guaranteed reachability. Uninspected or unconfirmed containers and unloaded parts of the area are reported separately, never presented as empty.
+
+When no known supply can satisfy a need, the enabled care-trip option can scout an actual uninspected/unconfirmed container. It does not walk every tile. At the destination, the ordinary adjacent loot interface discovers the contents; AutoMindful waits up to three seconds for a useful response, then returns and skips an unproductive source for the rest of that training session. New contents discovered later can still turn an unknown container into a known useful source. Critical hunger or thirst only permits trips to known supplies, not exploratory visits. In multiplayer the explored flag can precede the server response, so an empty replicated list remains unconfirmed. Opening the report never performs this scouting. Known-stock preview remains available even with care trips off.
+
+Discovery checks regular world containers, loose ground items and ground bags on the same floor. It does not promise remote access to vehicle storage, corpses or every nested bag. The maximum setting is 30 tiles; one shared snapshot is cached for a second to avoid repeating the whole scan for every need and UI refresh.
 
 Use a safe, clear route. Walls, locks, safehouses, darkness, missing opening tools and native pathfinding can prevent a trip; no supplies are transferred remotely. The radius limits destinations, not the path length. Manual movement, Stop, danger, cancelled paths or a blocked return stop automation rather than forcing the survivor home. A stopped trip may leave you away from the training spot; borrowed items remain protected by the normal return rules. This is not an unattended-survival guarantee.
 

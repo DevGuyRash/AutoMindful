@@ -8,8 +8,12 @@ package.preload["TimedActions/WalkToTimedAction"] = function() return true end
 local roaming = {enabled=false, radius=10}
 package.loaded["AutoMindful/Options"] = {searchNearby=function() return roaming.enabled end,
     searchRadius=function() return roaming.radius end}
-local nearbyTarget
-package.loaded["AutoMindful/Nearby"] = {find=function() return nearbyTarget end}
+local nearbyTarget, nearbyArea
+package.loaded["AutoMindful/Nearby"] = {find=function(_, _, _, _, rejected)
+    if nearbyTarget and rejected and rejected[nearbyTarget.key] then return nil end
+    return nearbyTarget
+end,
+    scan=function() return nearbyArea end, invalidate=function() end}
 local T = {now = 0, nights = 50, client = false, sleepNeeded = true, sleepAllowed = true}
 local FluidFixtures = loadTest and loadTest("fluid_fixtures.lua") or assert(loadfile("tests/fluid_fixtures.lua"))()
 FluidCategory = FluidFixtures.categories
@@ -998,6 +1002,79 @@ test("blocked homeward path stops instead of training away from origin", functio
     end
     assert(not C.status(p).active and C.status(p).message:find("Could not return"))
     assert(not hasHistory(p,"Meditation"))
+    roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("radius preview shows known distant stock and unknown containers without walking", function()
+    local p=T.playerNew(); local shelf=T.container(7,0)
+    local food=T.add(shelf,T.item("Food")); local book=T.add(shelf,T.item("Literature"))
+    nearbyArea={radius=10, food={{item=food,owned=false}},water={},literature={{item=book,owned=false}},
+        waterSources={},unknownTargets={{square=shelf.square}},containerCount=2,unloadedSquares=0}
+    local report=C.prepare(p,false,true,true)
+    assert(report.nearbyFood==1 and report.nearbyLiterature==1 and report.unknownContainers==1)
+    assert(report.radius==10 and report.walkingEnabled==false)
+    assert(#ISTimedActionQueue.getTimedActionQueue(p).queue==0 and shelf:contains(food))
+    roaming.enabled=true
+    report=C.prepare(p,false,true)
+    assert(report.walkingEnabled and not report.message:find("collection is off"))
+    roaming.enabled=false; nearbyArea=nil
+end)
+
+test("unknown container scouting waits for native adjacent contents then uses and returns", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=25
+    local origin=p:getSquare(); local shelf=T.container(6,0); p.available={shelf}
+    nearbyTarget={square=shelf.square,key="unknown:6:0:0",unknown=true,container=shelf}
+    local refresh=p.lootPage.refreshBackpacks; local appeared=false; local started=T.now
+    p.lootPage.refreshBackpacks=function()
+        refresh()
+        if not appeared and p:getSquare():canReachTo(shelf.square) and T.now >= started+3000 then
+            T.add(shelf,T.item("Literature")); appeared=true
+        end
+    end
+    assert(C.start(p,"meditation",false))
+    for i=1,20 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(appeared and hasHistory(p,"read") and hasHistory(p,"Meditation"))
+    assert(p:getSquare()==origin and #shelf.items==1, "Borrowed book and survivor return to their own origins")
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("unknown adjacent container inspection does not walk and times out with cooldown", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=25
+    local shelf=T.container(1,0); p.available={shelf}
+    nearbyTarget={square=shelf.square,key="unknown:1:0:0",unknown=true,container=shelf}
+    assert(C.start(p,"meditation",false))
+    T.tick(p,false); assert(C.status(p).phase=="scouting")
+    assert(#ISTimedActionQueue.getTimedActionQueue(p).queue==0)
+    for i=1,6 do T.tick(p) end
+    assert(not hasHistory(p,"ISWalkToTimedAction") and not hasHistory(p,"read"))
+    assert(hasHistory(p,"Meditation"), "Unavailable optional care must not create endless scouting")
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("disabling walking during container inspection returns home without consuming", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=25
+    local origin=p:getSquare(); local shelf=T.container(6,0); p.available={shelf}
+    nearbyTarget={square=shelf.square,key="unknown:6:0:0",unknown=true,container=shelf}
+    assert(C.start(p,"meditation",false)); T.tick(p); T.tick(p,false)
+    assert(C.status(p).phase=="scouting")
+    roaming.enabled=false
+    for i=1,5 do T.tick(p) end
+    assert(p:getSquare()==origin and not hasHistory(p,"read"))
+    C.stop(p); nearbyTarget=nil
+end)
+
+test("critical needs do not enter repeated unknown-container scouting", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.HUNGER=.8; p.hungerMoodle=4
+    local shelf=T.container(6,0)
+    nearbyTarget={square=shelf.square,key="unknown:6:0:0",unknown=true,container=shelf}
+    assert(C.start(p,"meditation",false))
+    for i=1,100 do T.tick(p) end
+    assert(not C.status(p).active and C.status(p).message:find("Starving"))
+    assert(not hasHistory(p,"ISWalkToTimedAction"), "Critical care must not gamble on unknown containers")
     roaming.enabled=false; nearbyTarget=nil
 end)
 

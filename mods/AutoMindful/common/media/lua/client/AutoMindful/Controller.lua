@@ -432,12 +432,16 @@ local function nearbyTarget(player, state, kind, onlyWorldWater)
     if state.excursion or not Options.searchNearby() then return nil end
     state.travelRejected = state.travelRejected or {}
     local now, square, radius = getTimestampMs(), player:getSquare(), Options.searchRadius()
+    local critical = kind ~= "literature" and player:getMoodles():getMoodleLevel(
+        kind == "water" and MoodleType.THIRST or MoodleType.HUNGRY) >= 4
     state.travelScan = state.travelScan or {}
     local cached = state.travelScan[kind]
-    if cached and cached.square == square and cached.radius == radius and cached.onlyWorldWater == onlyWorldWater
+    if cached and cached.square == square and cached.radius == radius and cached.onlyWorldWater == onlyWorldWater and cached.critical == critical
             and now - cached.time < 1000 then return cached.target end
     local target = Nearby.find(player, kind, square, radius, state.travelRejected, onlyWorldWater)
-    state.travelScan[kind] = {square=square, radius=radius, onlyWorldWater=onlyWorldWater, time=now, target=target}
+    if critical and target and target.unknown then target = nil end
+    state.travelScan[kind] = {square=square, radius=radius, onlyWorldWater=onlyWorldWater,
+        critical=critical, time=now, target=target}
     return target
 end
 
@@ -447,12 +451,20 @@ local function beginExcursion(player, state, kind, onlyWorldWater)
     state.excursion = {origin = player:getSquare(), target = target, kind = kind,
         onlyWorldWater = onlyWorldWater, stage = "outbound"}
     state.travelScan = nil
-    local queued = ownBatch(player, state, "travelling", "Walking to nearby supplies; returning here after care.", function()
+    local here = player:getSquare()
+    if target.unknown and here and here:canReachTo(target.square) then
+        state.excursion.stage, state.excursion.inspectUntil = "inspect", getTimestampMs() + 3000
+        setPhase(state, "scouting", "Inspecting a nearby container through the normal loot interface.")
+        return true
+    end
+    local route
+    local queued = ownBatch(player, state, "travelling", "Walking to a supply container; returning here after care.", function()
         if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
-        luautils.walkAdj(player, target.square, true)
+        route = luautils.walkAdj(player, target.square, true)
     end)
+    if not route then clearOwned(player, state); queued = false end
     if not queued then
-        state.travelRejected[target.key] = getTimestampMs() + 60000
+        state.travelRejected[target.key] = true
         state.pending = nil; state.excursion = nil
     end
     return queued
@@ -867,15 +879,38 @@ function Controller.update(player)
             end
             state.excursion = nil
         else
-            trip.stage = "care"
             local here, target = player:getSquare(), trip.target.square
             local arrived = here and here:getZ() == target:getZ()
                 and math.abs(here:getX()-target:getX()) <= 1 and math.abs(here:getY()-target:getY()) <= 1
                 and (sameSquare(here, target) or here:canReachTo(target))
-            if arrived and Options.searchNearby() and supply(player, state, trip.kind, trip.onlyWorldWater) then return end
-            state.travelRejected[trip.target.key] = now + 60000
-            state.travelScan = nil
+            if arrived and Options.searchNearby() then
+                trip.stage, trip.inspectUntil = "inspect", now + 3000
+            else
+                trip.stage = "care"
+                state.travelRejected[trip.target.key] = true
+                state.travelScan = nil
+            end
         end
+    end
+    local trip = state.excursion
+    if trip and trip.stage == "inspect" then
+        if Options.searchNearby() then
+            Supplies.refreshNearby(player)
+            if supply(player, state, trip.kind, trip.onlyWorldWater) then
+                trip.stage = "care"
+                Nearby.invalidate(player)
+                return
+            end
+            if now < trip.inspectUntil then
+                setPhase(state, "scouting", "Waiting for this container's contents; unknown is not empty.")
+                return
+            end
+        end
+        state.travelRejected[trip.target.key] = true
+        state.travelScan = nil
+        state.careNotice = "This container did not confirm a usable supply. Returning before trying another source."
+        trip.stage = "care"
+        Nearby.invalidate(player)
     end
     if state.pending and finishPending(player, state, now) then return end
     if returnBorrowed(player, state) then return end
@@ -918,9 +953,17 @@ function Controller.status(player)
         returnNotice = state.returnNotice or state.fluidNotice, careNotice = state.careNotice, pendingReturns = #state.loans}
 end
 
-function Controller.prepare(player, collectNearby, showNearby)
+function Controller.prepare(player, collectNearby, showNearby, force)
     if not player then return {message = "No local survivor."} end
-    return Supplies.report(player, showNearby == true or collectNearby == true, collectNearby == true)
+    local state = states[player]
+    local origin = state and state.excursion and state.excursion.origin or player:getSquare()
+    if showNearby then Supplies.refreshNearby(player) end
+    local area = showNearby and Nearby.scan(player, origin, Options.searchRadius(), force) or nil
+    local walking = Options.searchNearby()
+    local report = Supplies.report(player, showNearby == true or collectNearby == true,
+        collectNearby == true or walking, area, walking)
+    report.walkingEnabled = walking
+    return report
 end
 
 local function onPlayerUpdate(player)

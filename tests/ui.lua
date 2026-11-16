@@ -118,9 +118,9 @@ local Controller = {state={active=false,phase="idle",message="Choose a mode.",me
         yoga={level=0,current=40,required=100,fraction=0.4}}},
     inventory={food=3,water=2,literature=1,nearbyFood=5,nearbyWater=4,nearbyLiterature=2,warnings={}}, stops=0, scans=0, starts=0}
 function Controller.status() return Controller.state end
-function Controller.prepare(_, collect, preview)
+function Controller.prepare(_, collect, preview, force)
     Controller.scans = Controller.scans + 1
-    Controller.lastScope = {collect=collect,preview=preview}
+    Controller.lastScope = {collect=collect,preview=preview,force=force}
     local copy = {}
     for key, value in pairs(Controller.inventory) do copy[key] = value end
     return copy
@@ -331,6 +331,7 @@ assert(Controller.lastNearby == true and Controller.state.active and Controller.
 assert(Controller.lastScope.collect == true and Controller.lastScope.preview == true)
 Controller.inventory.food = 0
 window:checkSupplies()
+assert(Controller.lastScope.force == true, "Check supplies forces a fresh radius snapshot")
 assert(window.report.food == 0 and Controller.state.active and Controller.stops == 0, "Checking supplies refreshes read-only during training")
 Controller.state.careNotice = "Continuing while hunger is safe."
 Controller.state.active = false

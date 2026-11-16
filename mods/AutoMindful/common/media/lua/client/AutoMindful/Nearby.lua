@@ -3,6 +3,7 @@
 local Consumables = require "AutoMindful/Consumables"
 local Supplies = require "AutoMindful/Supplies"
 local Fluids = require "AutoMindful/Fluids"
+local Storage = require "AutoMindful/Storage"
 local Nearby = {}
 local snapshots = {}
 
@@ -47,11 +48,12 @@ function Nearby.scan(player, originSquare, radius, force)
             and cached.client == isClient() and now >= cached.time and now - cached.time < 1000 then
         return cached.result
     end
-    local seenContainers, seenItems, seenWater = {}, {}, {}
-    local function visitItem(item, square, container)
+    local seenContainers, seenItems, seenWater, seenVehicles = {}, {}, {}, {}
+    local function visitItem(item, square, container, part)
         if not item or seenItems[item] then return end
         seenItems[item] = true
-        local entry = {square = square, key = key(square), item = item, container = container, owned = false}
+        local entry = {square = square, key = key(square), item = item, container = container, owned = false, part = part}
+        if part then entry.key = entry.key .. ":vehicle:" .. tostring(part:getVehicle():getId()) .. ":" .. tostring(part:getIndex()) end
         local description = Consumables.inspect(player, item, false)
         entry.description = description
         if description.needsVessel and (description.food or description.water) then
@@ -66,7 +68,7 @@ function Nearby.scan(player, originSquare, radius, force)
             result.literature[#result.literature + 1] = entry
         end
     end
-    local function visitContainer(container, square)
+    local function visitContainer(container, square, part)
         if not container or seenContainers[container] then return end
         seenContainers[container] = true
         result.containerCount = result.containerCount + 1
@@ -75,9 +77,10 @@ function Nearby.scan(player, originSquare, radius, force)
         -- An empty replicated list never establishes confirmed emptiness here.
         if not container:isExplored() or (isClient() and items:size() == 0) then
             result.unknownTargets[#result.unknownTargets + 1] = {
-                square = square, key = key(square), container = container, unknown = true}
+                square = square, key = key(square) .. (part and ":vehicle:" .. tostring(part:getVehicle():getId()) .. ":" .. tostring(part:getIndex()) or ""),
+                container = container, unknown = true, part = part}
         end
-        for index = 0, items:size() - 1 do visitItem(items:get(index), square, container) end
+        for index = 0, items:size() - 1 do visitItem(items:get(index), square, container, part) end
     end
     local function visitObjects(objects, square, ground)
         local loot = permitted(player, square, true)
@@ -121,6 +124,28 @@ function Nearby.scan(player, originSquare, radius, force)
                 elseif permitted(player, square, false) then
                     visitObjects(square:getObjects(), square, false)
                     visitObjects(square:getWorldObjects(), square, true)
+                    if permitted(player, square, true) and square.getStaticMovingObjects then
+                        local bodies = square:getStaticMovingObjects()
+                        for index = 0, bodies:size() - 1 do
+                            local body = bodies:get(index)
+                            if Storage.safeCorpse(body) then visitContainer(body:getContainer(), square) end
+                        end
+                    end
+                    local vehicle = square.getVehicleContainer and square:getVehicleContainer()
+                    if vehicle and not seenVehicles[vehicle] then
+                        seenVehicles[vehicle] = true
+                        for index = 0, vehicle:getPartCount() - 1 do
+                            local part = vehicle:getPartByIndex(index)
+                            local eligible, area = Storage.vehiclePart(part)
+                            if eligible and area:getZ() == z and Storage.permitted(player, area)
+                                    and Storage.permitted(player, vehicle:getSquare()) then
+                                local ax, ay = area:getX() - ox, area:getY() - oy
+                                if ax * ax + ay * ay <= radius * radius then
+                                    visitContainer(part:getItemContainer(), area, part)
+                                end
+                            end
+                        end
+                    end
                 end
             end
         end
@@ -144,13 +169,14 @@ function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWo
             if type(rejection) == "number" and getTimestampMs() >= rejection then
                 rejectedTargets[targetKey], rejection = nil, nil
             end
-            if not rejection and (allowAdjacent or math.abs(dx) > 1 or math.abs(dy) > 1) then
+            if not rejection and (allowAdjacent or (entry.part and not Storage.vehicleAccessible(player, entry.part))
+                    or math.abs(dx) > 1 or math.abs(dy) > 1) then
                 local distance = dx * dx + dy * dy
                 if not best or distance < best.distance or (distance == best.distance and targetKey < best.key) then
                     -- Do not mutate the shared snapshot while choosing targets.
                     best = {square = square, key = targetKey, distance = distance,
                         unknown = entry.unknown, container = entry.container,
-                        item = entry.item, object = entry.object}
+                        item = entry.item, object = entry.object, part = entry.part}
                 end
             end
         end

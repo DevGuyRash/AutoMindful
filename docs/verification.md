@@ -55,3 +55,9 @@ Cover these user journeys before a release:
 ## Evidence limits
 
 The tested game is Linux x86-64 Project Zomboid `42.22.2 3d39148846`, bundled Azul Java `25.0.5+8-LTS`, with official Lifestyle: Hobbies `0.4.0.3`, Workshop item `3403870858`. See the [0.1.0 release report](release-0.1.0.md) for completed checks and their limits. A model reaching level 10, an accelerated native run, and a normal-speed multiplayer run establish different facts. No finite run establishes every mod combination or server configuration.
+
+## Vehicle and corpse radius storage
+
+The radius suite includes direct corpse contents, duplicate-body/vehicle suppression, animal/fake-dead/reanimation exclusions, safehouse restrictions, native exterior door requirements, stationary storage, area-based radius bounds, unknown multiplayer contents, and unsupported-layout rejection. Controller contracts cover native vehicle-area walking, manual movement discrimination, late native-access denial, loan return before home, moving/repositioned vehicle cancellation, and queued transfer revalidation. These use explicit world/pathfinding doubles; they are not live multiplayer/pathfinding acceptance.
+
+Implementation was checked against the installed Build 42 `ISInventoryPage.refreshBackpacks`, `Vehicles.lua` container access predicates and `ISPathFindAction`. Native container access remains authoritative at arrival. Script container `luaTest` metadata is not exposed to Lua, so distant structural discovery conservatively recognizes standard storage part IDs rather than inventing access to arbitrary modded parts. No door opening, unlocking, entry, network request or loot-generation call is made by radius discovery. Unknown contents are populated only through the existing native adjacent loot refresh.

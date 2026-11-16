@@ -163,4 +163,76 @@ assert(different~=first, "origin change invalidates cache")
 assert(Nearby.scan(player,origin,2).radius==2, "radius change invalidates cache")
 local p2={getSquare=function() return origin end}
 assert(Nearby.scan(p2,origin,2)~=Nearby.scan(player,origin,2), "cache isolated by player")
+-- Native storage boundaries are explicit; no door or body action is provided.
+reset()
+local bodySquare=square(5,0)
+local body={kind="IsoDeadBody", inventory=container({item({book=true})}), reanimate=-1}
+function body:isAnimal() return self.animal end
+function body:isFakeDead() return self.fake end
+function body:getReanimateTime() return self.reanimate end
+function body:getContainer() return self.inventory end
+function bodySquare:getStaticMovingObjects() return list({body,body}) end
+assert(#Nearby.scan(player,origin,10).literature==1, "corpse container counted once")
+for _, flag in ipairs({"animal","fake"}) do
+    body[flag]=true; refresh(); assert(#Nearby.scan(player,origin,10).literature==0); body[flag]=false
+end
+body.reanimate=0; refresh(); assert(#Nearby.scan(player,origin,10).literature==0, "scheduled reanimation excluded")
+body.reanimate=-1; bodySquare.noLoot=true; client=true; refresh()
+assert(#Nearby.scan(player,origin,10).literature==0, "corpse safehouse protection")
+reset()
+local area=square(8,0); local center=square(6,0)
+local vehicle={parts={},speed=0,doors={},id=12}
+function vehicle:getId() return self.id end
+function vehicle:getSquare() return center end
+function vehicle:getCurrentAbsoluteSpeedKmHour() return self.speed end
+function vehicle:getPartCount() return #self.parts end
+function vehicle:getPartByIndex(i) return self.parts[i+1] end
+function vehicle:getPartById(id) return self.doors[id] end
+function vehicle:getPassengerDoor() return self.doors.passenger end
+function vehicle:getSquareForArea() return area end
+function vehicle:canAccessContainer() return self.access==true end
+function center:getVehicleContainer() return vehicle end
+function area:getVehicleContainer() return vehicle end
+local part={id="TruckBed",inventory=container({item({book=true,water=true})})}
+function part:getVehicle() return vehicle end
+function part:getId() return self.id end
+function part:getArea() return "TruckBed" end
+function part:getIndex() return 0 end
+function part:getItemContainer() return self.inventory end
+function part:isInventoryItemUninstalled() return self.uninstalled end
+function part:getContainerCapacity() return self.zeroCapacity and 0 or 50 end
+function part:getContainerSeatNumber() return 0 end
+function part:getInventoryItem() return not self.uninstalled end
+vehicle.parts={part}
+local scan=Nearby.scan(player,origin,10)
+assert(#scan.literature==1 and scan.containerCount==1, "vehicle deduplicated across occupied squares")
+assert(find("literature").part==part and find("literature").square==area)
+assert(not find("literature",7), "radius is based on storage interaction area, not car center")
+local door={open=false}
+function door:getDoor() return self end
+function door:getInventoryItem() return not self.missing end
+function door:isOpen() return self.open end
+vehicle.doors.TrunkDoor=door; refresh(); assert(not find("literature"), "closed trunk excluded; no opening/unlocking")
+door.open=true; refresh(); assert(find("literature"))
+vehicle.speed=1; refresh(); assert(not find("literature"), "moving vehicles excluded")
+vehicle.speed=0; part.id="UnverifiedModStorage"; refresh(); assert(not find("literature"), "unknown layouts fail closed")
+part.id="TruckBedOpen"; door.open=false; refresh(); assert(find("literature"), "open bed needs no door")
+part.id="TrailerTrunk"; refresh(); assert(find("literature"))
+part.id="GloveBox"; vehicle.doors.DoorFrontRight=door; refresh(); assert(not find("literature"))
+door.missing=true; refresh(); assert(not find("literature"), "native glovebox still requires door open")
+door.open=true; refresh(); assert(find("literature"))
+part.id="SeatFrontRight"; vehicle.doors.passenger=door; door.open=false; door.missing=false
+refresh(); assert(not find("literature"))
+door.missing=true; refresh(); assert(find("literature"), "missing passenger door allows exterior seat access")
+part.uninstalled=true; refresh(); assert(not find("literature"), "uninstalled seats excluded")
+part.uninstalled=false; vehicle.doors.passenger=nil; vehicle.doors.DoorFrontLeft=door
+refresh(); assert(not find("literature"), "no exterior path into rear two-door seats")
+part.id="TruckBedOpen"; part.zeroCapacity=true; part.uninstalled=true; refresh(); assert(not find("literature"))
+part.zeroCapacity=false; part.uninstalled=false; client=true; area.noLoot=true; refresh()
+assert(not find("literature"), "vehicle area safehouse protected")
+area.noLoot=false; center.noLoot=true; refresh(); assert(not find("literature"), "vehicle center safehouse protected")
+center.noLoot=false; part.inventory.items={}; refresh()
+assert(find("food").unknown and find("food").part==part, "unknown MP vehicle contents are scoutable")
+assert(find("food").key=="unknown:8:0:0:vehicle:12:0")
+assert(not find("food",10,{["unknown:8:0:0:vehicle:12:0"]=true}))
 print("Nearby discovery and snapshot contracts passed; no native network/pathfinding exercised")

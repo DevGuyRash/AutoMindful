@@ -42,6 +42,14 @@ You can start with no food or water. Empty supply counts are warnings, not a sta
 
 **Use adjacent supplies** starts off disabled. Enable it to let the loop borrow nearby provisions and appropriate opening tools as needed. You can change this setting during training. Previewing nearby stock does not enable collection.
 
+### Walk to supplies and return
+
+In **Options > Mods > AutoMindful**, enable **Walk to nearby food, water and entertainment**. The new option is off by default. **Nearby search radius (tiles)** defaults to **10** and is adjustable from 2 to 30. It also permits adjacent supplies, so a sink beside your training spot remains usable without enabling a second setting. It adds a care trip only when carried or adjacent supplies cannot satisfy the need.
+
+AutoMindful searches loaded squares on the same floor within a circular radius of the training spot, walks using native pathfinding, then rechecks normal adjacent access and safety before collecting or using supplies. Entertainment means eligible boredom-reducing literature. It returns borrowed items while still at the source, then walks back to the original training square before resuming. Supply counts in the window still describe inventory and adjacent loot range, not the entire search radius.
+
+Use a safe, clear route. Walls, locks, safehouses, darkness, missing opening tools and native pathfinding can prevent a trip; no supplies are transferred remotely. The radius limits destinations, not the path length. Manual movement, Stop, danger, cancelled paths or a blocked return stop automation rather than forcing the survivor home. A stopped trip may leave you away from the training spot; borrowed items remain protected by the normal return rules. This is not an unattended-survival guarantee.
+
 ## Prepare supplies
 
 - Bring food, safe hydration, and useful literature for a long session. Available resources do not need to be consumed all at once.
@@ -54,7 +62,7 @@ You can start with no food or water. Empty supply counts are warnings, not a sta
 
 Every component of a fluid mixture must be safe, including small amounts of harmful liquids. The source is checked before pouring and the vessel is checked again before drinking. Unsafe contents stay in their container. AutoMindful does not empty a vessel or pour leftovers back into another source.
 
-Borrowed books, unused food or drink, opening tools, and attributable leftover containers are returned to their original reachable source. Borrowed empty drinking vessels retain their origin through filling and drinking. Your own supplies and worn equipment stay yours. If a return is blocked or its source is no longer reachable, the item stays in inventory and the window explains it. The mod does not walk away to return an item or move unrelated inventory.
+Borrowed books, unused food or drink, opening tools, and attributable leftover containers are returned to their original reachable source. Borrowed empty drinking vessels retain their origin through filling and drinking. Your own supplies and worn equipment stay yours. If a return is blocked or its source is no longer reachable, the item stays in inventory and the window explains it. Outside an opted-in care trip, the mod does not walk away to return an item. It never moves unrelated inventory.
 
 Supply choices compare the portion that would help your current needs. A useful drink or food that restores both can win; a tiny dual-purpose item does not automatically beat an adequate source. Otherwise, equally useful water choices prefer the largest current reserve, including permitted nearby plumbing. Food choices favor an adequate convenient portion over unnecessary preparation or borrowing. Calories do not make butter or another rich food win by themselves. See [supply selection](docs/supplies.md) for the policy and examples.
 

@@ -33,6 +33,12 @@ local function readingState(player, item)
     return last ~= nil and "reread" or "unread"
 end
 
+-- Shared by adjacent scanning and read-only wider-area discovery.
+function Supplies.eligibleLiterature(player, item)
+    local state = readingState(player, item)
+    return state == "unread" or state == "reread"
+end
+
 local function containers(player)
     local index = player:getPlayerNum()
     local loot = getPlayerLoot(index)

@@ -4,6 +4,12 @@ package.loaded["AutoMindful/WaterSources"] = {scan=function() return {} end, cho
 for _, name in ipairs({"TimedActions/ISTimedActionQueue", "TimedActions/ISReadABook", "TimedActions/ISDrinkFluidAction", "TimedActions/ISWaitWhileGettingUp", "ISUI/ISWorldObjectContextMenu", "ISUI/ISInventoryPaneContextMenu", "TimedActions/ISInventoryTransferUtil", "TimedActions/ISBaseTimedAction", "TimedActions/ISDropWorldItemAction", "Fluids/ISFluidContainer", "Fluids/ISFluidUtil", "Fluids/ISFluidTransferAction"}) do
     package.preload[name] = function() return true end
 end
+package.preload["TimedActions/WalkToTimedAction"] = function() return true end
+local roaming = {enabled=false, radius=10}
+package.loaded["AutoMindful/Options"] = {searchNearby=function() return roaming.enabled end,
+    searchRadius=function() return roaming.radius end}
+local nearbyTarget
+package.loaded["AutoMindful/Nearby"] = {find=function() return nearbyTarget end}
 local T = {now = 0, nights = 50, client = false, sleepNeeded = true, sleepAllowed = true}
 local FluidFixtures = loadTest and loadTest("fluid_fixtures.lua") or assert(loadfile("tests/fluid_fixtures.lua"))()
 FluidCategory = FluidFixtures.categories
@@ -935,6 +941,66 @@ test("native auto drinking between pour and controller confirmation counts as su
     assert(not hasHistory(p,"drink"),"Do not drink twice after native auto drinking satisfied thirst")
     C.stop(p)
 end)
+-- Native pathfinding remains a boundary here; these tests exercise controller ownership and lifecycle.
+ISWalkToTimedAction = {new=function(_, p, square)
+    return T.action(p, "ISWalkToTimedAction", function()
+        if not p.pathBlocked then p.square = square end
+    end)
+end}
+luautils = luautils or {}
+function luautils.walkAdj(p, square, keepActions)
+    assert(keepActions, "Do not clear standing or user actions when walking")
+    if p.routeUnavailable then return false end
+    ISTimedActionQueue.add(ISWalkToTimedAction:new(p, T.square(square:getX()-1, square:getY(), square:getZ())))
+    return true
+end
+
+test("nearby care walks, borrows, reads, returns the book and returns home before training", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40; p.sitting=true
+    local origin=p:getSquare(); local shelf=T.container(6,0)
+    local book=T.add(shelf,T.item("Literature")); p.available={shelf}
+    nearbyTarget={square=shelf.square,key="6:0:0"}
+    assert(C.start(p,"meditation",false))
+    for i=1,20 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(p:getSquare()==origin, "Training must resume at the original square")
+    assert(shelf:contains(book), "Borrowed literature goes back before the return trip")
+    assert(hasHistory(p,"read") and hasHistory(p,"Meditation"))
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("owned walking is allowed but manual cancellation never forces a return", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    nearbyTarget={square=T.square(6,0),key="6:0:0"}
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    p.moving=true; T.tick(p,false)
+    assert(C.status(p).active, "Owned walk is not mistaken for user movement")
+    C.stop(p,"Manual stop"); p.moving=false; T.tick(p)
+    assert(#ISTimedActionQueue.getTimedActionQueue(p).queue==0 and not C.status(p).active)
+    roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("blocked homeward path stops instead of training away from origin", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    local shelf=T.container(6,0); T.add(shelf,T.item("Literature")); p.available={shelf}
+    nearbyTarget={square=shelf.square,key="6:0:0"}
+    assert(C.start(p,"meditation",false))
+    for i=1,15 do
+        T.tick(p,false)
+        local q=ISTimedActionQueue.getTimedActionQueue(p).queue
+        if q[1] then
+            if q[1].Type=="ISWalkToTimedAction" and hasHistory(p,"read") then p.pathBlocked=true end
+            q[1]:perform()
+        end
+        if not C.status(p).active then break end
+    end
+    assert(not C.status(p).active and C.status(p).message:find("Could not return"))
+    assert(not hasHistory(p,"Meditation"))
+    roaming.enabled=false; nearbyTarget=nil
+end)
+
 print("CONTRACTS PASS "..passed.." cases; game boundaries are explicit doubles, not gameplay evidence")
 if not loadTest then function loadTest(name) return assert(loadfile("tests/"..name))() end end
 if not readReference and arg and arg[1] then

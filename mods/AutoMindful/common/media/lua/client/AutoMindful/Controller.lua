@@ -8,6 +8,9 @@ local Consumables = require "AutoMindful/Consumables"
 local WaterSources = require "AutoMindful/WaterSources"
 local Progress = require "AutoMindful/Progress"
 local Fluids = require "AutoMindful/Fluids"
+local Nearby = require "AutoMindful/Nearby"
+local Options = require "AutoMindful/Options"
+require "TimedActions/WalkToTimedAction"
 
 AutoMindful = AutoMindful or {}
 local Controller = {}
@@ -73,6 +76,7 @@ function Controller.stop(player, reason)
     local state = stateFor(player)
     local wasActive = state.active
     state.active = false
+    state.excursion = nil
     clearOwned(player, state)
     Supplies.finishLoan(player, state.supplyLoan)
     for _, loan in ipairs(state.loans) do loan.defer = nil end
@@ -162,7 +166,13 @@ local function unsafeReason(player, state)
     if player:isDead() then return "Stopped because the survivor died." end
     if player:isOnFire() then return "Stopped because the survivor is on fire." end
     if player:getVehicle() then return "Stopped because you entered a vehicle." end
-    if player:isPlayerMoving() then return "Cancelled because you moved." end
+    if player:isPlayerMoving() then
+        local current = state and queueFor(player)[1]
+        if not (state and state.excursion and current and current.autoMindfulOwner == state
+                and current.Type == "ISWalkToTimedAction") then
+            return "Cancelled because you moved."
+        end
+    end
     local menu = getPlayerContextMenu and getPlayerContextMenu(player:getPlayerNum())
     local inspecting = menu and menu:isVisible()
     if state then state.contextVisible = inspecting == true end
@@ -263,7 +273,7 @@ end
 
 local function queueFluidTransfer(player, state)
     local flow = state.fluidSupply
-    if flow.source.worldSource and not state.collectNearby then
+    if flow.source.worldSource and not (state.collectNearby or Options.searchNearby() or state.excursion ~= nil) then
         return abandonFluid(state, "Nearby collection was disabled before the liquid transfer.")
     end
     local source, reason = currentFluidSource(player, flow.source)
@@ -281,7 +291,7 @@ local function queueFluidTransfer(player, state)
     flow.phase = "transferring"
     local queued = ownBatch(player, state, "transferring", "Pouring the needed liquid into a drinking vessel.", function()
         local used, failure = Fluids.transfer(player, sourceFluid, targetFluid, candidate.transfer.amount, function()
-            if source.worldSource and not state.collectNearby then return false end
+            if source.worldSource and not (state.collectNearby or Options.searchNearby() or state.excursion ~= nil) then return false end
             local target = Supplies.inventoryItem(player, vessel)
             if not target or target:getContainer() ~= player:getInventory() or Fluids.container(target) ~= targetFluid then return false end
             local current = currentFluidSource(player, source)
@@ -366,7 +376,7 @@ local function finishFluidPreparation(player, state, failed, now)
 end
 
 local function useSupply(player, state, kind, item, loan)
-    local descriptor = Consumables.inspect(player, item, state.collectNearby)
+    local descriptor = Consumables.inspect(player, item, state.collectNearby or Options.searchNearby() or state.excursion ~= nil)
     if kind ~= "literature" and not descriptor[kind] then
         state.rejected[item:getID()] = getTimestampMs() + 60000
         state.supplyMissingReason = descriptor.reason or "This supply is no longer usable."
@@ -379,7 +389,7 @@ local function useSupply(player, state, kind, item, loan)
     local queued
     if kind ~= "literature" and descriptor.needsVessel and not descriptor.needsOpening then
         local candidate, reason = Supplies.chooseTransfer(player, {item = item, owned = true, description = descriptor}, kind,
-            state.collectNearby, state.rejected)
+            state.collectNearby or Options.searchNearby() or state.excursion ~= nil, state.rejected)
         if candidate then return beginFluidSupply(player, state, candidate.transfer) end
         state.fluidNotice = reason or "Bring a clean empty drinking vessel for the bulk liquid."
         state.rejected[item:getID()] = getTimestampMs() + 60000
@@ -414,10 +424,59 @@ local function useSupply(player, state, kind, item, loan)
     return true
 end
 
+local function sameSquare(a, b)
+    return a and b and a:getX() == b:getX() and a:getY() == b:getY() and a:getZ() == b:getZ()
+end
+
+local function nearbyTarget(player, state, kind, onlyWorldWater)
+    if state.excursion or not Options.searchNearby() then return nil end
+    state.travelRejected = state.travelRejected or {}
+    local now, square, radius = getTimestampMs(), player:getSquare(), Options.searchRadius()
+    state.travelScan = state.travelScan or {}
+    local cached = state.travelScan[kind]
+    if cached and cached.square == square and cached.radius == radius and cached.onlyWorldWater == onlyWorldWater
+            and now - cached.time < 1000 then return cached.target end
+    local target = Nearby.find(player, kind, square, radius, state.travelRejected, onlyWorldWater)
+    state.travelScan[kind] = {square=square, radius=radius, onlyWorldWater=onlyWorldWater, time=now, target=target}
+    return target
+end
+
+local function beginExcursion(player, state, kind, onlyWorldWater)
+    local target = nearbyTarget(player, state, kind, onlyWorldWater)
+    if not target then return false end
+    state.excursion = {origin = player:getSquare(), target = target, kind = kind,
+        onlyWorldWater = onlyWorldWater, stage = "outbound"}
+    state.travelScan = nil
+    local queued = ownBatch(player, state, "travelling", "Walking to nearby supplies; returning here after care.", function()
+        if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
+        luautils.walkAdj(player, target.square, true)
+    end)
+    if not queued then
+        state.travelRejected[target.key] = getTimestampMs() + 60000
+        state.pending = nil; state.excursion = nil
+    end
+    return queued
+end
+
+local function returnToOrigin(player, state)
+    local trip = state.excursion
+    if not trip then return false end
+    if sameSquare(player:getSquare(), trip.origin) then
+        state.excursion = nil
+        return false
+    end
+    trip.stage = "homebound"
+    return ownBatch(player, state, "travelling", "Returning to the original training spot.", function()
+        if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
+        ISTimedActionQueue.add(ISWalkToTimedAction:new(player, trip.origin))
+    end)
+end
+
 local function supply(player, state, kind, onlyWorldWater)
-    if kind == "literature" and player:tooDarkToRead() then return false end
+    if kind == "literature" and player:tooDarkToRead() then return beginExcursion(player, state, kind, onlyWorldWater) end
     state.supplyMissingReason = nil
-    local entry = Supplies.choose(player, kind, state.collectNearby, state.rejected, onlyWorldWater)
+    local collect = state.collectNearby or Options.searchNearby() or state.excursion ~= nil
+    local entry = Supplies.choose(player, kind, collect, state.rejected, onlyWorldWater)
     while entry and entry.source do
         local source = entry.source
         state.supplyItem, state.supplyLoan, state.collectingItem = nil, nil, nil
@@ -433,15 +492,16 @@ local function supply(player, state, kind, onlyWorldWater)
             state.pending = nil
         end
         if queued then return true end
-        entry = Supplies.choose(player, kind, state.collectNearby, state.rejected, onlyWorldWater)
+        entry = Supplies.choose(player, kind, collect, state.rejected, onlyWorldWater)
     end
     if entry and entry.transfer then
         if entry.transfer.source.description.needsOpening then entry = entry.transfer.source
         else return beginFluidSupply(player, state, entry.transfer) end
     end
     if not entry then
+        if beginExcursion(player, state, kind, onlyWorldWater) then return true end
         if kind ~= "literature" then
-            local report = Supplies.report(player, state.collectNearby)
+            local report = Supplies.report(player, state.collectNearby or Options.searchNearby())
             state.supplyMissingReason = state.supplyMissingReason
                 or report.fluidReason or (kind == "water" and report.waterSourceReason or report.openingReason)
         end
@@ -482,11 +542,12 @@ end
 
 local function comfortSupplyAvailable(player, state, kind)
     if kind == "literature" then
-        if player:tooDarkToRead() then return false end
+        if player:tooDarkToRead() then return nearbyTarget(player, state, kind, false) ~= nil end
     end
     local full = kind ~= "literature" and player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN) >= 3
     if full and kind == "food" then return false end
-    return Supplies.choose(player, kind, state.collectNearby, state.rejected, full) ~= nil
+    return Supplies.choose(player, kind, state.collectNearby or Options.searchNearby(), state.rejected, full) ~= nil
+        or nearbyTarget(player, state, kind, full) ~= nil
 end
 
 local function care(player, state)
@@ -744,6 +805,10 @@ function Controller.update(player)
         end
     end
     if #queue > 0 then
+        if state.excursion and state.phase == "travelling" and now - state.actionStarted > 30000 then
+            Controller.stop(player, "The supply route was blocked or took too long. Stopped without forcing movement.")
+            return
+        end
         local urgent = criticalNeed(player, "water") or criticalNeed(player, "food")
         if state.phase == "meditation" then
             local meditation = levels(player)
@@ -786,8 +851,35 @@ function Controller.update(player)
             resetSupply(state)
         end
     end
+    if state.excursion and state.pending and state.phase == "travelling" then
+        local trip = state.excursion
+        for _, action in ipairs(state.pending) do
+            if action.autoMindfulStopped then
+                Controller.stop(player, "The supply walk was cancelled or blocked. Stopped without forcing a return.")
+                return
+            end
+        end
+        state.pending = nil
+        if trip.stage == "homebound" then
+            if not sameSquare(player:getSquare(), trip.origin) then
+                Controller.stop(player, "Could not return to the original training spot. Clear the route and start again.")
+                return
+            end
+            state.excursion = nil
+        else
+            trip.stage = "care"
+            local here, target = player:getSquare(), trip.target.square
+            local arrived = here and here:getZ() == target:getZ()
+                and math.abs(here:getX()-target:getX()) <= 1 and math.abs(here:getY()-target:getY()) <= 1
+                and (sameSquare(here, target) or here:canReachTo(target))
+            if arrived and Options.searchNearby() and supply(player, state, trip.kind, trip.onlyWorldWater) then return end
+            state.travelRejected[trip.target.key] = now + 60000
+            state.travelScan = nil
+        end
+    end
     if state.pending and finishPending(player, state, now) then return end
     if returnBorrowed(player, state) then return end
+    if state.active and returnToOrigin(player, state) then return end
     if not state.active then
         if state.endPhase then setPhase(state, state.endPhase, state.endMessage) end
         return

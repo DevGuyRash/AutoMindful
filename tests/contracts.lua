@@ -462,6 +462,7 @@ test("milk care finishes residual thirst from plain water before resuming",funct
     local milk=T.add(p.inventory,T.water({hunger=-.5,thirst=-.5}))
     local water={object={},remainingLiters=20,directDrink=true,
         description={remainingLiters=20,hungerEffect=0,thirstEffect=10,hungerRelief=0,thirstRelief=10,food=false,water=true,calories=0}}
+    function water.object:getFluidAmount() return water.remainingLiters end
     local drinks=0
     sources.scan=function() return {water} end
     sources.drink=function(player)
@@ -491,6 +492,47 @@ test("paired care remembers hunger even when milk restores thirst first",functio
     assert(math.abs(milk.fluid.amount-.7)<.000001,"The adequate plain food should preserve the remaining milk")
     C.stop(p)
 end)
+test("care finishes sub-one-percent residual hunger without consuming an extra item",function()
+    local p=T.playerNew(); p.values.HUNGER=.155
+    local first=T.add(p.inventory,T.item("Food",{hunger=-.15,baseHunger=-.15}))
+    local last=T.add(p.inventory,T.item("Food",{hunger=-.02,baseHunger=-.04}))
+    local spare=T.add(p.inventory,T.item("Food",{hunger=-.001,baseHunger=-.001}))
+    assert(C.start(p,"meditation",false))
+    for i=1,12 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(math.abs(p.values.HUNGER)<.000001 and hasHistory(p,"Meditation"))
+    assert(not p.inventory:contains(first) and p.inventory:contains(last))
+    assert(math.abs(last:getHungerChange()+.015)<.000001, "Final bite uses only .005 remaining hunger")
+    assert(p.inventory:contains(spare) and spare:getHungerChange()==-.001)
+    C.stop(p)
+end)
+test("care finishes sub-one-percent residual thirst without another bottle",function()
+    local p=T.playerNew(); p.values.THIRST=.155
+    local first=T.add(p.inventory,T.water({thirst=-.15}))
+    local last=T.add(p.inventory,T.water({thirst=-.02}))
+    local spare=T.add(p.inventory,T.water({thirst=-.001}))
+    assert(C.start(p,"meditation",false))
+    for i=1,12 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(math.abs(p.values.THIRST)<.000001 and hasHistory(p,"Meditation"))
+    assert(first.fluid.amount<.000001 and math.abs(last.fluid.amount-.75)<.000001)
+    assert(spare.fluid.amount==1, "No extra bottle after thirst reaches zero")
+    C.stop(p)
+end)
+
+test("confirmed final portion does not chase new metabolism with extra sips",function()
+    local p=T.playerNew(); p.values.THIRST=.155
+    local bottle=T.add(p.inventory,T.water({thirst=-.5}))
+    assert(C.start(p,"meditation",false))
+    for i=1,8 do
+        T.tick(p)
+        p.values.THIRST=p.values.THIRST+.0001
+        if hasHistory(p,"Meditation") then break end
+    end
+    local drinks=0; for _, action in ipairs(p.history) do if action=="drink" then drinks=drinks+1 end end
+    assert(drinks==1 and hasHistory(p,"Meditation"), "Confirmed covering sip completes care despite small new metabolism")
+    assert(math.abs(bottle.fluid.amount-.69)<.000001)
+    C.stop(p)
+end)
+
 test("water uses native fluid portions and waits for the native fullness gate",function()
     local p=T.playerNew(); p.values.THIRST=0.2; p.foodMoodle=3
     T.add(p.inventory,T.water()); assert(C.start(p,"yoga",false)); T.tick(p)

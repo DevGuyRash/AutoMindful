@@ -213,6 +213,52 @@ check("water portions depend on current fluid rather than bottle capacity", func
     near(events[1].portion, 0.1)
 end)
 
+check("tiny residuals use exact portions while full needs queue nothing", function()
+    local meal = item({kind="Food",hunger=-.12,base=-.24,remaining=-.12,container=inventory})
+    local bottle = item({fluid=fluid({thirst=-.5}),container=inventory})
+    player.values.hunger,player.values.thirst=.005,.005
+    near(C.consume(player,meal,"food"),.005/.24)
+    near(C.consume(player,bottle,"water"),.01)
+    assert(#events==2)
+    player.values.hunger,player.values.thirst=0,0
+    assert(not C.consume(player,meal,"food") and not C.consume(player,bottle,"water"))
+    player.values.hunger,player.values.thirst=-.05,1e-8
+    assert(not C.consume(player,meal,"food") and not C.consume(player,bottle,"water"))
+    assert(#events==2, "Full/float-residue stats never queue another consumption")
+end)
+
+check("native food tail rounding never turns a small request into a whole item", function()
+    player.values.hunger=.001
+    local tiny=item({kind="Food",hunger=-.008,base=-.008,container=inventory})
+    assert(not C.consume(player,tiny,"food") and #events==0)
+    local meal=item({kind="Food",hunger=-.012,base=-.024,remaining=-.012,container=inventory})
+    player.values.hunger=.005
+    local portion=C.consume(player,meal,"food")
+    assert(portion>0 and portion<.005/.024)
+    assert(.012-.024*portion>=.01, "Leave a native-safe remainder instead of rounding up")
+    player.values.hunger=.02
+    near(C.consume(player,tiny,"food"),1)
+    local thirstFood=item({kind="Food",hunger=0,base=0,thirst=-.008,container=inventory})
+    player.values.thirst=.001
+    assert(not C.consume(player,thirstFood,"water"), "Hunger-free food has the same native thirst tail floor")
+end)
+
+check("metabolic completion requires a covering plan and confirmed quantity", function()
+    local bottle=item({fluid=fluid({thirst=-.5,amount=1}),container=inventory})
+    player.values.thirst=.2
+    local _,goal=C.consume(player,bottle,"water")
+    player.values.thirst=.005
+    assert(not C.goalSatisfied(player,bottle,"water",goal), "Stats alone cannot acknowledge the portion")
+    bottle.fluid.amount=.7
+    assert(not C.goalSatisfied(player,bottle,"water",goal), "A partial item packet cannot acknowledge the whole portion")
+    bottle.fluid.amount=.6
+    assert(C.goalSatisfied(player,bottle,"water",goal))
+    player.values.thirst=.02
+    assert(not C.goalSatisfied(player,bottle,"water",goal), "Large unexplained residuals are not metabolism")
+    player.values.thirst=.005; goal.fullyCovered=false
+    assert(not C.goalSatisfied(player,bottle,"water",goal), "Insufficient first supply must not clear care")
+end)
+
 check("safe milk restores either need without drinking the whole item", function()
     local milk = item({fluid = fluid({hunger = -0.25, thirst = -0.25, calories = 307.5}), container = inventory})
     local description = C.inspect(player, milk)

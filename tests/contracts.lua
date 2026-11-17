@@ -974,6 +974,18 @@ test("nearby care walks, borrows, reads, returns the book and returns home befor
     C.stop(p); roaming.enabled=false; nearbyTarget=nil
 end)
 
+test("blocked meditation uses owned literature before scouting unknown containers", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    local book=T.add(p.inventory,T.item("Literature"))
+    nearbyTarget={square=T.square(6,0),key="unknown:6:0:0",unknown=true}
+    assert(C.start(p,"meditation",false))
+    for i=1,20 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(hasHistory(p,"read") and hasHistory(p,"Meditation"))
+    assert(not hasHistory(p,"ISWalkToTimedAction"), "Known usable literature avoids speculative scouting")
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil
+end)
+
 test("owned walking is allowed but manual cancellation never forces a return", function()
     roaming.enabled=true
     local p=T.playerNew(); p.values.BOREDOM=40
@@ -1024,6 +1036,25 @@ end)
 test("unknown container scouting waits for native adjacent contents then uses and returns", function()
     roaming.enabled=true
     local p=T.playerNew(); p.values.BOREDOM=25
+    local origin=p:getSquare(); local shelf=T.container(6,0); p.available={shelf}
+    nearbyTarget={square=shelf.square,key="unknown:6:0:0",unknown=true,container=shelf}
+    local refresh=p.lootPage.refreshBackpacks; local appeared=false; local started=T.now
+    p.lootPage.refreshBackpacks=function()
+        refresh()
+        if not appeared and p:getSquare():canReachTo(shelf.square) and T.now >= started+3000 then
+            T.add(shelf,T.item("Literature")); appeared=true
+        end
+    end
+    assert(C.start(p,"meditation",false))
+    for i=1,20 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(appeared and hasHistory(p,"read") and hasHistory(p,"Meditation"))
+    assert(p:getSquare()==origin and #shelf.items==1, "Borrowed book and survivor return to their own origins")
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("blocked meditation scouts unknown literature before stopping", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
     local origin=p:getSquare(); local shelf=T.container(6,0); p.available={shelf}
     nearbyTarget={square=shelf.square,key="unknown:6:0:0",unknown=true,container=shelf}
     local refresh=p.lootPage.refreshBackpacks; local appeared=false; local started=T.now

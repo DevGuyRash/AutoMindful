@@ -259,6 +259,18 @@ check("metabolic completion requires a covering plan and confirmed quantity", fu
     assert(not C.goalSatisfied(player,bottle,"water",goal), "Insufficient first supply must not clear care")
 end)
 
+check("infinite water needs completion plus hydration, not a requested counter", function()
+    local world={getFluidAmount=function() return 10000 end,isWaterInfinite=function() return true end}
+    local goal={fullyCovered=true,world=world,expectedRemaining=9999.6,baselineNeed=.2}
+    player.values.thirst=.0001
+    assert(not C.goalSatisfied(player,nil,"water",goal,false), "Interrupted consumption is not completion")
+    assert(C.goalSatisfied(player,nil,"water",goal,true))
+    player.values.thirst=.2
+    assert(not C.goalSatisfied(player,nil,"water",goal,true), "Completion alone does not prove hydration")
+    player.values.thirst=.0001; goal.baselineNeed=.0001
+    assert(not C.goalSatisfied(player,nil,"water",goal,true), "Unchanged thirst is not hydration")
+end)
+
 check("safe milk restores either need without drinking the whole item", function()
     local milk = item({fluid = fluid({hunger = -0.25, thirst = -0.25, calories = 307.5}), container = inventory})
     local description = C.inspect(player, milk)

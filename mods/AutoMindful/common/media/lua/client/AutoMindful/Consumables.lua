@@ -229,12 +229,20 @@ end
 -- A completed portion may be followed by natural need growth during the action
 -- or mask restoration. Ignore that small drift only after the entire planned
 -- quantity is confirmed, never after an insufficient item or partial packet.
-function Consumables.goalSatisfied(player, item, kind, goal)
+function Consumables.goalSatisfied(player, item, kind, goal, completed)
     if not goal or not goal.fullyCovered or not goal.expectedRemaining then return false end
     local need = player:getStats():get(kind == "water" and CharacterStat.THIRST or CharacterStat.HUNGER)
     if need > Consumables.pairedNeedThreshold then return false end
     local remaining
-    if goal.world then remaining = goal.world:getFluidAmount()
+    if goal.world then
+        -- Mains/infinite fixtures advertise a constant reserve. They have no
+        -- item-quantity receipt: require native completion AND observed hydration,
+        -- never completion alone or a requested waterUnit count.
+        if goal.world:isWaterInfinite() then
+            return completed == true and goal.baselineNeed
+                and need < goal.baselineNeed - Consumables.restoredThreshold
+        end
+        remaining = goal.world:getFluidAmount()
     elseif not item or not item:getContainer() then remaining = 0
     elseif goal.fluid then
         local fluid = Fluids.container(item)

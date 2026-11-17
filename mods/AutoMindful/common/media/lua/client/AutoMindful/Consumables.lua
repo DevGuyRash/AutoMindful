@@ -3,7 +3,10 @@ require "TimedActions/ISDrinkFluidAction"
 local Fluids = require "AutoMindful/Fluids"
 
 AutoMindful = AutoMindful or {}
-local Consumables = {careThreshold = 0.15, restoredThreshold = 0.01}
+-- Zero is satisfied; negative hunger is the game's stuffed range. Only ignore
+-- floating-point residue, never an entire percentage point of unmet need.
+local Consumables = {careThreshold = 0.15, restoredThreshold = 0.000001,
+    pairedNeedThreshold = 0.01}
 AutoMindful.Consumables = Consumables
 
 local function safeScriptFood(script)
@@ -118,6 +121,11 @@ function Consumables.inspect(player, item, includeNearby)
     if food and not cantEat and not description.needsOpening and requiredItemsAvailable(player, item) then
         effects(description, -item:getHungerChange(), -item:getThirstChange())
         description.calories = math.max(0, item:getCalories())
+        -- Native Eat rounds a remainder below 0.01 up to the whole food.
+        -- Use raw remaining hunger (or thirst for hunger-free foods), not
+        -- trait-adjusted relief, to predict that native quantity boundary.
+        local rawHunger = item:getHungChange()
+        description.nativeFoodRemaining = rawHunger < 0 and -rawHunger or -item:getThirstChange()
     end
     if fluid and not fluid:isEmpty() then
         description.food, description.water = false, false
@@ -130,6 +138,7 @@ function Consumables.inspect(player, item, includeNearby)
             description.reason = "This container cannot currently be opened for drinking."
             return description
         end
+        description.nativeFoodRemaining = nil
         for key, value in pairs(fluidDescription) do description[key] = value end
         description.needsVessel = not Fluids.drinkable(item, fluid, description.openingRecipe ~= nil)
         if description.needsVessel then description.reason = "This supply needs a clean, empty drinking vessel." end
@@ -168,10 +177,16 @@ function Consumables.plan(player, description, kind)
     local hungerEffect, thirstEffect = description.hungerEffect, description.thirstEffect
     local need, otherNeed = kind == "water" and thirst or hunger, kind == "water" and hunger or thirst
     local effect, otherEffect = kind == "water" and thirstEffect or hungerEffect, kind == "water" and hungerEffect or thirstEffect
-    if need <= 0 or effect <= 0 then return nil end
+    if need <= Consumables.restoredThreshold or effect <= 0 then return nil end
     local fraction = math.min(1, need / effect)
-    if hunger > Consumables.restoredThreshold and thirst > Consumables.restoredThreshold and hungerEffect > 0 and thirstEffect > 0 then
+    if hunger > Consumables.pairedNeedThreshold and thirst > Consumables.pairedNeedThreshold and hungerEffect > 0 and thirstEffect > 0 then
         fraction = math.min(fraction, hunger / hungerEffect, thirst / thirstEffect)
+    end
+    local rawRemaining = description.nativeFoodRemaining
+    if rawRemaining and rawRemaining > 0 and fraction < 1
+            and rawRemaining * (1 - fraction) < 0.010001 then
+        fraction = math.max(0, 1 - 0.010001 / rawRemaining)
+        if effect * fraction <= Consumables.restoredThreshold then return nil end
     end
     local primary = math.min(1, effect * fraction / need)
     local secondary = otherNeed > 0 and math.min(1, math.max(0, otherEffect * fraction) / otherNeed) or 0
@@ -186,14 +201,17 @@ function Consumables.portion(player, item, kind)
     if description.needsVessel then return false, "Transfer this fluid into a drinking vessel before using it." end
     if not description[kind] then return false, description.reason or "This item cannot restore that need." end
     local plan = Consumables.plan(player, description, kind)
-    if not plan then return false, "That need is already restored." end
+    if not plan then return false, "That need is restored, or the game cannot take a small enough bite without finishing this food." end
     local remainingFraction = plan.fraction
-    if description.fluid then return remainingFraction end
+    local quantity = description.fluid and description.remainingLiters or description.nativeFoodRemaining
+    local goal = {fullyCovered=plan.primary >= 1 - 0.000000001,
+        fluid=description.fluid ~= nil, expectedRemaining=quantity and quantity*(1-remainingFraction)}
+    if description.fluid then return remainingFraction, goal end
     local baseHunger, remainingHunger = item:getBaseHunger(), item:getHungChange()
     if baseHunger ~= 0 and remainingHunger ~= 0 then
-        return math.min(1, remainingFraction * remainingHunger / baseHunger)
+        return math.min(1, remainingFraction * remainingHunger / baseHunger), goal
     end
-    return remainingFraction
+    return remainingFraction, goal
 end
 
 function Consumables.consume(player, item, kind)
@@ -205,7 +223,35 @@ function Consumables.consume(player, item, kind)
     else
         ISInventoryPaneContextMenu.eatItem(item, portion, player:getPlayerNum())
     end
-    return portion
+    return portion, reason
+end
+
+-- A completed portion may be followed by natural need growth during the action
+-- or mask restoration. Ignore that small drift only after the entire planned
+-- quantity is confirmed, never after an insufficient item or partial packet.
+function Consumables.goalSatisfied(player, item, kind, goal, completed)
+    if not goal or not goal.fullyCovered or not goal.expectedRemaining then return false end
+    local need = player:getStats():get(kind == "water" and CharacterStat.THIRST or CharacterStat.HUNGER)
+    if need > Consumables.pairedNeedThreshold then return false end
+    local remaining
+    if goal.world then
+        -- Mains/infinite fixtures advertise a constant reserve. They have no
+        -- item-quantity receipt: require native completion AND observed hydration,
+        -- never completion alone or a requested waterUnit count.
+        if goal.world:isWaterInfinite() then
+            return completed == true and goal.baselineNeed
+                and need < goal.baselineNeed - Consumables.restoredThreshold
+        end
+        remaining = goal.world:getFluidAmount()
+    elseif not item or not item:getContainer() then remaining = 0
+    elseif goal.fluid then
+        local fluid = Fluids.container(item)
+        remaining = fluid and fluid:getAmount() or 0
+    else
+        local hunger = item:getHungChange()
+        remaining = hunger < 0 and -hunger or math.max(0,-item:getThirstChange())
+    end
+    return remaining <= goal.expectedRemaining + Consumables.restoredThreshold
 end
 
 return Consumables

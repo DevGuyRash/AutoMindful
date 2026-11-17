@@ -245,7 +245,7 @@ local function resetSupply(state)
     end
     state.fluidSupply = nil
     state.supplyItem, state.supplyKind, state.supplyLoan, state.supplySource = nil, nil, nil, nil
-    state.supplyBaseline, state.awaitSupplyUntil, state.preparation = nil, nil, nil
+    state.supplyBaseline, state.awaitSupplyUntil, state.preparation, state.supplyGoal = nil, nil, nil, nil
 end
 
 local function fluidSourceKey(source)
@@ -418,7 +418,8 @@ local function useSupply(player, state, kind, item, loan)
             end)
         else
             queued = ownBatch(player, state, kind == "food" and "eating" or "drinking", "Using " .. item:getDisplayName() .. ".", function()
-                Consumables.consume(player, item, kind)
+                local _, goal = Consumables.consume(player, item, kind)
+                if type(goal) == "table" then state.supplyGoal = goal end
             end)
         end
     end
@@ -518,6 +519,10 @@ local function supply(player, state, kind, onlyWorldWater)
         state.supplyKind, state.supplySource = "water", source
         state.supplyBaseline = {thirst = stat(player, "THIRST")}
         local queued = ownBatch(player, state, "drinking", "Drinking from a nearby clean-water source.", function()
+            local needed = stat(player, "THIRST") * 2
+            local amount = source.object:getFluidAmount()
+            state.supplyGoal = {fullyCovered=amount >= needed, world=source.object,
+                expectedRemaining=math.max(0, amount-needed)}
             local used, reason = WaterSources.drink(player, source)
             if not used then state.supplyMissingReason = reason end
         end)
@@ -750,7 +755,10 @@ local function finishPending(player, state, now)
             or (state.supplyKind == "literature" and stat(player, "BOREDOM") < before.boredom)
         if improved then
             failed = false
-            if state.supplyKind == "literature" then Supplies.markRead(player, state.supplyItem) end
+            if state.supplyKind == "literature" then Supplies.markRead(player, state.supplyItem)
+            elseif Consumables.goalSatisfied(player, state.supplyItem, state.supplyKind, state.supplyGoal) then
+                state.careNeeds[state.supplyKind] = nil
+            end
         elseif not failed then
             state.awaitSupplyUntil = state.awaitSupplyUntil or now + 2000
             if now < state.awaitSupplyUntil then return true end

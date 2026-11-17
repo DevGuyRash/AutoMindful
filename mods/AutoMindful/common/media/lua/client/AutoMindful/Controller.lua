@@ -245,7 +245,7 @@ local function resetSupply(state)
     end
     state.fluidSupply = nil
     state.supplyItem, state.supplyKind, state.supplyLoan, state.supplySource = nil, nil, nil, nil
-    state.supplyBaseline, state.awaitSupplyUntil, state.preparation = nil, nil, nil
+    state.supplyBaseline, state.awaitSupplyUntil, state.preparation, state.supplyGoal = nil, nil, nil, nil
 end
 
 local function fluidSourceKey(source)
@@ -418,7 +418,8 @@ local function useSupply(player, state, kind, item, loan)
             end)
         else
             queued = ownBatch(player, state, kind == "food" and "eating" or "drinking", "Using " .. item:getDisplayName() .. ".", function()
-                Consumables.consume(player, item, kind)
+                local _, goal = Consumables.consume(player, item, kind)
+                if type(goal) == "table" then state.supplyGoal = goal end
             end)
         end
     end
@@ -518,6 +519,10 @@ local function supply(player, state, kind, onlyWorldWater)
         state.supplyKind, state.supplySource = "water", source
         state.supplyBaseline = {thirst = stat(player, "THIRST")}
         local queued = ownBatch(player, state, "drinking", "Drinking from a nearby clean-water source.", function()
+            local needed = stat(player, "THIRST") * 2
+            local amount = source.object:getFluidAmount()
+            state.supplyGoal = {fullyCovered=amount >= needed, world=source.object, baselineNeed=needed/2,
+                expectedRemaining=math.max(0, amount-needed)}
             local used, reason = WaterSources.drink(player, source)
             if not used then state.supplyMissingReason = reason end
         end)
@@ -693,7 +698,7 @@ end
 local function finishPending(player, state, now)
     local failed = false
     for _, action in ipairs(state.pending) do
-        if not action.autoMindfulFinished then failed = true end
+        if not action.autoMindfulFinished or action.autoMindfulStopped then failed = true end
     end
     if state.fluidSupply and state.fluidSupply.phase ~= "using" then
         local kind = state.fluidSupply.kind
@@ -749,8 +754,12 @@ local function finishPending(player, state, now)
             or (state.supplyKind == "water" and stat(player, "THIRST") < before.thirst)
             or (state.supplyKind == "literature" and stat(player, "BOREDOM") < before.boredom)
         if improved then
+            local completed = not failed
             failed = false
-            if state.supplyKind == "literature" then Supplies.markRead(player, state.supplyItem) end
+            if state.supplyKind == "literature" then Supplies.markRead(player, state.supplyItem)
+            elseif Consumables.goalSatisfied(player, state.supplyItem, state.supplyKind, state.supplyGoal, completed) then
+                state.careNeeds[state.supplyKind] = nil
+            end
         elseif not failed then
             state.awaitSupplyUntil = state.awaitSupplyUntil or now + 2000
             if now < state.awaitSupplyUntil then return true end

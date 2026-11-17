@@ -521,7 +521,7 @@ local function supply(player, state, kind, onlyWorldWater)
         local queued = ownBatch(player, state, "drinking", "Drinking from a nearby clean-water source.", function()
             local needed = stat(player, "THIRST") * 2
             local amount = source.object:getFluidAmount()
-            state.supplyGoal = {fullyCovered=amount >= needed, world=source.object,
+            state.supplyGoal = {fullyCovered=amount >= needed, world=source.object, baselineNeed=needed/2,
                 expectedRemaining=math.max(0, amount-needed)}
             local used, reason = WaterSources.drink(player, source)
             if not used then state.supplyMissingReason = reason end
@@ -698,7 +698,7 @@ end
 local function finishPending(player, state, now)
     local failed = false
     for _, action in ipairs(state.pending) do
-        if not action.autoMindfulFinished then failed = true end
+        if not action.autoMindfulFinished or action.autoMindfulStopped then failed = true end
     end
     if state.fluidSupply and state.fluidSupply.phase ~= "using" then
         local kind = state.fluidSupply.kind
@@ -754,9 +754,10 @@ local function finishPending(player, state, now)
             or (state.supplyKind == "water" and stat(player, "THIRST") < before.thirst)
             or (state.supplyKind == "literature" and stat(player, "BOREDOM") < before.boredom)
         if improved then
+            local completed = not failed
             failed = false
             if state.supplyKind == "literature" then Supplies.markRead(player, state.supplyItem)
-            elseif Consumables.goalSatisfied(player, state.supplyItem, state.supplyKind, state.supplyGoal) then
+            elseif Consumables.goalSatisfied(player, state.supplyItem, state.supplyKind, state.supplyGoal, completed) then
                 state.careNeeds[state.supplyKind] = nil
             end
         elseif not failed then

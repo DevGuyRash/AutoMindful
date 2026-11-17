@@ -463,6 +463,7 @@ test("milk care finishes residual thirst from plain water before resuming",funct
     local water={object={},remainingLiters=20,directDrink=true,
         description={remainingLiters=20,hungerEffect=0,thirstEffect=10,hungerRelief=0,thirstRelief=10,food=false,water=true,calories=0}}
     function water.object:getFluidAmount() return water.remainingLiters end
+    function water.object:isWaterInfinite() return false end
     local drinks=0
     sources.scan=function() return {water} end
     sources.drink=function(player)
@@ -531,6 +532,28 @@ test("confirmed final portion does not chase new metabolism with extra sips",fun
     assert(drinks==1 and hasHistory(p,"Meditation"), "Confirmed covering sip completes care despite small new metabolism")
     assert(math.abs(bottle.fluid.amount-.69)<.000001)
     C.stop(p)
+end)
+
+test("infinite water completion uses hydration not constant advertised reserve",function()
+    local sources=require "AutoMindful/WaterSources"
+    local scan,drink=sources.scan,sources.drink
+    local p=T.playerNew(); p.values.THIRST=.155
+    local water={object={},remainingLiters=10000,directDrink=true,
+        description={remainingLiters=10000,hungerEffect=0,thirstEffect=5000,hungerRelief=0,thirstRelief=5000,food=false,water=true,calories=0}}
+    function water.object:getFluidAmount() return 10000 end
+    function water.object:isWaterInfinite() return true end
+    local drinks=0
+    sources.scan=function() return {water} end
+    sources.drink=function(player)
+        ISTimedActionQueue.add(T.action(player,"world-drink",function()
+            player.values.THIRST=.0001; drinks=drinks+1
+        end))
+        return true
+    end
+    assert(C.start(p,"meditation",true))
+    for i=1,8 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(drinks==1 and hasHistory(p,"Meditation"))
+    C.stop(p); sources.scan,sources.drink=scan,drink
 end)
 
 test("water uses native fluid portions and waits for the native fullness gate",function()

@@ -164,17 +164,29 @@ local function needSleep(player)
     return stat(player, "FATIGUE") >= 0.6
 end
 
+local function routeAction(action)
+    return action and (action.Type == "ISWalkToTimedAction" or action.Type == "ISPathFindAction")
+end
+
+local function excursionMotion(player, state)
+    if not state or not state.excursion then return false end
+    if player:pressedMovement(false) or player:pressedCancelAction() then return false end
+    local current = queueFor(player)[1]
+    if current then return current.autoMindfulOwner == state and routeAction(current) end
+    -- Native motion can outlive the queued walk by a frame at completion or path failure.
+    if state.phase == "travelling" then
+        for _, action in ipairs(state.pending or {}) do
+            if routeAction(action) and (action.autoMindfulFinished or action.autoMindfulStopped) then return true end
+        end
+    end
+    return false
+end
+
 local function unsafeReason(player, state)
     if player:isDead() then return "Stopped because the survivor died." end
     if player:isOnFire() then return "Stopped because the survivor is on fire." end
     if player:getVehicle() then return "Stopped because you entered a vehicle." end
-    if player:isPlayerMoving() then
-        local current = state and queueFor(player)[1]
-        if not (state and state.excursion and current and current.autoMindfulOwner == state
-                and (current.Type == "ISWalkToTimedAction" or current.Type == "ISPathFindAction")) then
-            return "Cancelled because you moved."
-        end
-    end
+    if player:isPlayerMoving() and not excursionMotion(player, state) then return "Cancelled because you moved." end
     local menu = getPlayerContextMenu and getPlayerContextMenu(player:getPlayerNum())
     local inspecting = menu and menu:isVisible()
     if state then state.contextVisible = inspecting == true end
@@ -438,6 +450,14 @@ local function vehicleTargetAvailable(player, target)
         and Storage.permitted(player, vehicle:getSquare())
 end
 
+local function prepareScoutWalk()
+    -- Build 42 refuses to start a native walking action above speed 2.
+    if not isClient() and getGameSpeed() > 2 then
+        local controls = UIManager.getSpeedControls()
+        if controls then controls:SetCurrentGameSpeed(1) end
+    end
+end
+
 local function nearbyTarget(player, state, kind, onlyWorldWater)
     if state.excursion or not Options.searchNearby() then return nil end
     state.travelRejected = state.travelRejected or {}
@@ -475,6 +495,7 @@ local function beginExcursion(player, state, kind, onlyWorldWater)
     end
     local route
     local queued = ownBatch(player, state, "travelling", "Walking to a supply container; returning here after care.", function()
+        prepareScoutWalk()
         if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
         if target.part then
             local vehicle = Storage.vehiclePart(target.part)
@@ -503,6 +524,7 @@ local function returnToOrigin(player, state)
     end
     trip.stage = "homebound"
     return ownBatch(player, state, "travelling", "Returning to the original training spot.", function()
+        prepareScoutWalk()
         if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
         ISTimedActionQueue.add(ISWalkToTimedAction:new(player, trip.origin))
     end)
@@ -902,16 +924,28 @@ function Controller.update(player)
     end
     if state.excursion and state.pending and state.phase == "travelling" then
         local trip = state.excursion
+        local failedPath = false
         for _, action in ipairs(state.pending) do
             if action.autoMindfulStopped then
-                Controller.stop(player, "The supply walk was cancelled or blocked. Stopped without forcing a return.")
-                return
+                print("[AutoMindful] " .. trip.stage .. " walk stopped: action=" .. tostring(action.Type)
+                    .. " path=" .. tostring(action.result) .. " speed=" .. tostring(getGameSpeed()))
+                if routeAction(action) and action.result ~= nil and action.result == BehaviorResult.Failed
+                        and not player:pressedMovement(false) and not player:pressedCancelAction() then
+                    failedPath = true
+                else
+                    Controller.stop(player, trip.stage == "homebound"
+                        and "The return walk was cancelled. Start again when you are ready."
+                        or "The supply walk was cancelled. Stopped without forcing a return.")
+                    return
+                end
             end
         end
         state.pending = nil
         if trip.stage == "homebound" then
             if not sameSquare(player:getSquare(), trip.origin) then
-                Controller.stop(player, "Could not return to the original training spot. Clear the route and start again.")
+                Controller.stop(player, failedPath
+                    and "The game found no path back to the original training spot. Clear the route and start training again."
+                    or "Could not return to the original training spot. Clear the route and start again.")
                 return
             end
             state.excursion = nil
@@ -929,6 +963,7 @@ function Controller.update(player)
                 trip.stage = "care"
                 state.travelRejected[trip.target.key] = true
                 state.travelScan = nil
+                if failedPath then state.careNotice = "No route to this supply. Skipping it and returning to the training spot." end
             end
         end
     end

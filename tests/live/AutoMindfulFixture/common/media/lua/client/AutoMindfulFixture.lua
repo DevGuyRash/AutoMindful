@@ -492,10 +492,14 @@ Events.OnPlayerUpdate.Add(function(player)
                 player:getNutrition():setCalories(1000)
             elseif command == "snapshot" then
                 local window = AutoMindful.UI.windows[0]
+                local scout = PZAPI.ModOptions:getOptions("AutoMindful"):getOption("searchNearby")
                 print("[AutoMindfulFixture] SNAPSHOT xp=" .. tostring(player:getXp():getXP(Perks.Meditation))
                     .. " yogaXP=" .. tostring(HiddenSkills.getSkill(player, "Yoga")[2])
                     .. " thirst=" .. tostring(player:getStats():get(CharacterStat.THIRST))
-                    .. " nearby=" .. tostring(window and window.nearby:isSelected(1)))
+                    .. " nearby=" .. tostring(window and window.nearby:isSelected(1))
+                    .. " scoutPane=" .. tostring(window and window.scouting:isSelected(1))
+                    .. " scoutOption=" .. tostring(scout:getValue())
+                    .. " scoutMods=" .. tostring(scout.element and scout.element:isSelected(1)))
             end
             print("[AutoMindfulFixture] COMMAND " .. command)
         end

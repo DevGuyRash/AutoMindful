@@ -14,15 +14,22 @@ local key = settings:getOption("openWindow") or settings:addKeyBind("openWindow"
     "Open AutoMindful window", 0,
     "Choose a shortcut to open the training and supply window. Opening or closing the window does not stop training. Unassigned by default.")
 
+Options.scoutingLabel = "Scout nearby for supplies"
+Options.scoutingHelp = "When training needs food, water or a book, walk to nearby supplies or inspect an unknown container on the same floor, then return. Danger, manual movement or Stop cancels the trip."
 local search = settings:getOption("searchNearby") or settings:addTickBox("searchNearby",
-    "Walk to nearby food, water and entertainment", false,
-    "Opt in to care trips and scouting actual uninspected containers on the same floor, then return to the training spot. Native paths and access rules apply. Danger, manual movement or Stop cancels instead of forcing a return.")
+    Options.scoutingLabel, true, Options.scoutingHelp)
 local radius = settings:getOption("searchRadius") or settings:addSlider("searchRadius",
     "Nearby search radius (tiles)", 2, 30, 1, 10,
     "Search distance from the original training spot for each care trip. Default: 10 tiles. The route itself may be longer.")
 
 function Options.searchNearby()
     return search:getValue() == true
+end
+
+function Options.setSearchNearby(enabled)
+    if search:getValue() == enabled then return end
+    search:setValue(enabled)
+    PZAPI.ModOptions:save()
 end
 
 function Options.searchRadius()

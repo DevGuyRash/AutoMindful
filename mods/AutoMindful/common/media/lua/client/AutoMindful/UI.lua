@@ -6,6 +6,7 @@ require "ISUI/ISLabel"
 require "ISUI/ISRichTextPanel"
 require "ISUI/ISProgressBar"
 local Controller = require "AutoMindful/Controller"
+local Options = require "AutoMindful/Options"
 local Progress = require "AutoMindful/Progress"
 
 AutoMindful = AutoMindful or {}
@@ -149,6 +150,11 @@ function UI:onNearbyChanged()
     self:checkSupplies()
 end
 
+function UI:onScoutingChanged()
+    Options.setSearchNearby(self.scouting:isSelected(1))
+    self:checkSupplies()
+end
+
 function UI:checkSupplies()
     self.startError = nil
     self.checkedAt = getTimestampMs()
@@ -183,6 +189,7 @@ end
 
 function UI:refresh()
     local status = Controller.status(self.player)
+    self.scouting:setSelected(1, Options.searchNearby())
     self.report = Controller.prepare(self.player, self.nearby:isSelected(1), true, self.forceSupplyRefresh)
     self.forceSupplyRefresh = nil
     self.status = status
@@ -242,7 +249,7 @@ function UI:createChildren()
     local row = math.max(28, line + 10)
     local width = self.width - pad * 2
     local bodyY = self:titleBarHeight() + 10
-    local controlsHeight = row * 3 + line * 3 + 30
+    local controlsHeight = row * 4 + line * 3 + 34
     self.body = ScrollPanel:new(pad, bodyY, width, self.height - bodyY - controlsHeight - 8)
     self.body:initialise()
     self:addChild(self.body)
@@ -281,11 +288,18 @@ function UI:createChildren()
     self.guidance.marginTop, self.guidance.marginBottom = 0, 0
     self.body:setScrollHeight(y + guide.height + 4)
     y = self.body:getBottom() + 6
+    self.scouting = ISTickBox:new(pad, y, width, row, Options.scoutingLabel, self, UI.onScoutingChanged)
+    self.scouting:initialise()
+    self.scouting:addOption(Options.scoutingLabel)
+    self.scouting:setSelected(1, Options.searchNearby())
+    self.scouting.tooltip = Options.scoutingHelp
+    self:addChild(self.scouting)
+    y = y + row + 4
     self.nearby = ISTickBox:new(pad, y, width, row, "Adjacent supplies", self, UI.onNearbyChanged)
     self.nearby:initialise()
     self.nearby:addOption("Use adjacent supplies")
     self.nearby:setSelected(1, preferences(self.player).collectNearby == true)
-    self.nearby.tooltip = "Collection happens only when training needs a supply. Borrowed supplies and leftover containers return to their source when it remains reachable. This can be changed during training."
+    self.nearby.tooltip = "When scouting is off, allow borrowing from adjacent supplies without walking away. Scouting already includes adjacent supplies."
     self:addChild(self.nearby)
     y = y + row + 4
     self.starts = {}
@@ -331,7 +345,7 @@ function UI:layout()
     self.footer:setWidth(width)
     self.footer:paginate()
     self.footer:setHeight(math.max(line * 2 + 4, self.footer:getScrollHeight()))
-    local controlsHeight = row * 3 + line + self.footer.height + 26
+    local controlsHeight = row * 4 + line + self.footer.height + 30
     self.body:setWidth(width)
     self.body:setHeight(math.max(1, self.height - bodyY - controlsHeight - 8))
     local contentWidth = width - 15
@@ -351,6 +365,9 @@ function UI:layout()
     self.guideFrame:setHeight(line + 24 + self.guidance.height)
     self.body:setScrollHeight(self.guideFrame:getBottom() + 4)
     y = self.body:getBottom() + 6
+    self.scouting:setY(y)
+    self.scouting:setWidth(width)
+    y = y + row + 4
     self.nearby:setY(y)
     self.nearby:setWidth(width)
     y = y + row + 4

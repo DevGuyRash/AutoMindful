@@ -48,9 +48,18 @@ function ISCollapsableWindow:onResize() end
 function ISCollapsableWindow:titleBarHeight() return 24 end
 ISButton = Widget:derive("ISButton")
 ISTickBox = Widget:derive("ISTickBox")
+function ISTickBox:new(x, y, width, height, _, target, callback)
+    local box = Widget.new(self, x, y, width, height)
+    box.target, box.callback = target, callback
+    return box
+end
 function ISTickBox:addOption(label) self.option = label end
 function ISTickBox:setSelected(_, value) self.selected = value end
 function ISTickBox:isSelected() return self.selected == true end
+function ISTickBox:click()
+    self:setSelected(1, not self:isSelected(1))
+    self.callback(self.target, 1, self:isSelected(1))
+end
 ISLabel = Widget:derive("ISLabel")
 function ISLabel:new(x, y, height, name)
     local label = Widget.new(self, x, y, 100, height)
@@ -94,6 +103,10 @@ function getSpecificPlayer(index) assert(index == 0); return player end
 
 PZAPI = {ModOptions={settings={}}}
 function PZAPI.ModOptions:getOptions(id) return self.settings[id] end
+function PZAPI.ModOptions:save()
+    self.saves = (self.saves or 0) + 1
+    self.savedSearch = self:getOptions("AutoMindful"):getOption("searchNearby"):getValue()
+end
 function PZAPI.ModOptions:create(id)
     local object = {options={}, count=0}
     function object:addDescription() end
@@ -102,11 +115,18 @@ function PZAPI.ModOptions:create(id)
         self.count = self.count + 1
         local option = {value=value}
         function option:getValue() return self.value end
-        function option:setValue(newValue) self.value = newValue end
+        function option:setValue(newValue)
+            self.value = newValue
+            if self.element then self.element:setSelected(1, newValue) end
+        end
         self.options[key] = option
         return option
     end
-    function object:addTickBox(id, _, value) return add(self, id, value) end
+    function object:addTickBox(id, label, value)
+        local option = add(self, id, value)
+        option.name = label
+        return option
+    end
     function object:addSlider(id, _, minimum, maximum, step, value) return add(self, id, value) end
     function object:addKeyBind(id, _, value) return add(self, id, value) end
     self.settings[id] = object
@@ -191,11 +211,13 @@ local UI = require "AutoMindful/UI"
 local Options = require "AutoMindful/Options"
 local Context = require "AutoMindful/ContextMenu"
 local settings = PZAPI.ModOptions:getOptions("AutoMindful")
-assert(not Options.searchNearby() and Options.searchRadius() == 10, "Roaming is opt-in with a 10-tile radius")
+local search = settings:getOption("searchNearby")
+assert(Options.searchNearby() and Options.searchRadius() == 10, "Scouting starts on within a 10-tile radius")
 assert(not Options.generalMenu() and Options.windowKey() == 0, "Idle menus and hotkeys default to opt-in")
+search:setValue(false)
 package.loaded["AutoMindful/Options"] = nil
 require "AutoMindful/Options"
-assert(settings.count == 4, "Reload reuses the same native options")
+assert(settings.count == 4 and not Options.searchNearby(), "Reload reuses an existing off preference")
 
 local context, world = ISContextMenu:new(), {"clicked square"}
 local first, second, third = ZenWellnessContextMenu.doBuildMenu(0, context, world)
@@ -236,6 +258,24 @@ assert(#general.options == 1, "The general context entry can be enabled")
 settings:getOption("generalContextMenu"):setValue(false)
 
 local window = UI.open(player)
+local scout = window.scouting
+assert(search.name == scout.option and not scout:isSelected(1), "Both surfaces show the same saved setting and label")
+search.element = ISTickBox:new() -- native Mods page was constructed while scouting was off
+local saves = PZAPI.ModOptions.saves or 0
+scout:click()
+assert(Options.searchNearby() and search.element:isSelected(1) and PZAPI.ModOptions.savedSearch,
+    "Clicking the pane updates both the native option and its existing widget, and persists the choice")
+window:refresh()
+assert(PZAPI.ModOptions.saves == saves + 1 and not window.nearby:isSelected(1),
+    "Ordinary refresh neither saves the setting again nor changes the separate adjacent preference")
+search.element:setSelected(1, false)
+search.value = search.element:isSelected(1) -- the native Mods Apply path
+PZAPI.ModOptions:save()
+now = now + 600; window:update()
+assert(not scout:isSelected(1) and PZAPI.ModOptions.savedSearch == false,
+    "Applying a change in Mods updates an already-open training pane")
+window:close(); UI.open(player)
+assert(not scout:isSelected(1) and not Options.searchNearby(), "Reopening the pane never reapplies the default")
 local function assertFooterVisible(view)
     local footer
     for _, child in ipairs(view.children) do
@@ -245,6 +285,8 @@ local function assertFooterVisible(view)
     assert(footer:getBottom() <= view.height, "Footer instructions remain inside the window")
     assert(view.stopButton:getBottom() <= view.checked.y and view.checked:getBottom() <= footer.y,
         "Buttons, refresh confirmation, and footer have separate visible rows")
+    assert(view.body:getBottom() <= view.scouting.y and view.scouting:getBottom() <= view.nearby.y
+        and view.nearby:getBottom() <= view.starts[1].y, "Both supply choices fit above the training controls")
     local plain = footer.text:gsub("<LINE>", "\n"):gsub("<[^>]+>", "")
     for line in plain:gmatch("[^\n]+") do
         assert(getTextManager():MeasureStringX(UIFont.Small, line) <= footer.width, "Footer instructions fit on two unwrapped lines")

@@ -11,8 +11,9 @@ package.loaded["AutoMindful/Options"] = {searchNearby=function() return roaming.
     searchRadius=function() return roaming.radius end}
 local nearbyTarget, nearbyArea
 package.loaded["AutoMindful/Nearby"] = {find=function(_, _, _, _, rejected)
-    if nearbyTarget and rejected and rejected[nearbyTarget.key] then return nil end
-    return nearbyTarget
+    local target=nearbyTarget
+    while target and rejected and rejected[target.key] do target=target.next end
+    return target
 end,
     scan=function() return nearbyArea end, invalidate=function() end}
 local T = {now = 0, nights = 50, client = false, sleepNeeded = true, sleepAllowed = true}
@@ -199,6 +200,8 @@ function T.playerNew()
     function p:isOnFire() return false end
     function p:getVehicle() return nil end
     function p:isPlayerMoving() return self.moving or false end
+    function p:pressedMovement() return self.movementInput or false end
+    function p:pressedCancelAction() return self.cancelInput or false end
     function p:isAiming() return self.aiming or false end
     function p:isDraggingCorpse() return false end
     function p:isAsleep() return self.asleep or false end
@@ -1012,10 +1015,18 @@ test("native auto drinking between pour and controller confirmation counts as su
     C.stop(p)
 end)
 -- Native pathfinding remains a boundary here; these tests exercise controller ownership and lifecycle.
+local walkSpeed = 1
+BehaviorResult = {Failed="Failed"}
+function getGameSpeed() return walkSpeed end
+UIManager = {getSpeedControls=function()
+    return {SetCurrentGameSpeed=function(_, value) walkSpeed=value end}
+end}
 ISWalkToTimedAction = {new=function(_, p, square)
-    return T.action(p, "ISWalkToTimedAction", function()
+    local action = T.action(p, "ISWalkToTimedAction", function()
         if not p.pathBlocked then p.square = square end
     end)
+    function action:isValid() return walkSpeed <= 2 end -- native Build 42 walk contract
+    return action
 end}
 luautils = luautils or {}
 function luautils.walkAdj(p, square, keepActions)
@@ -1051,6 +1062,26 @@ test("blocked meditation uses owned literature before scouting unknown container
     C.stop(p); roaming.enabled=false; nearbyTarget=nil
 end)
 
+test("fast-forward during inspection cannot silently invalidate the native return walk", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=25
+    local origin=p:getSquare(); local shelf=T.container(6,0); p.available={shelf}
+    nearbyTarget={square=shelf.square,key="unknown:6:0:0",unknown=true,container=shelf}
+    walkSpeed=4
+    assert(C.start(p,"meditation",false))
+    T.tick(p,false)
+    assert(walkSpeed==1, "Outbound scouting starts a valid native walk at normal speed")
+    local inspected=false
+    for i=1,20 do
+        T.tick(p)
+        if C.status(p).phase=="scouting" then inspected=true; walkSpeed=4 end
+        if hasHistory(p,"Meditation") then break end
+    end
+    assert(inspected and p:getSquare()==origin and walkSpeed==1 and hasHistory(p,"Meditation"),
+        "After a fruitless search the survivor gets home and resumes eligible training")
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil; walkSpeed=1
+end)
+
 test("owned walking is allowed but manual cancellation never forces a return", function()
     roaming.enabled=true
     local p=T.playerNew(); p.values.BOREDOM=40
@@ -1060,6 +1091,33 @@ test("owned walking is allowed but manual cancellation never forces a return", f
     assert(C.status(p).active, "Owned walk is not mistaken for user movement")
     C.stop(p,"Manual stop"); p.moving=false; T.tick(p)
     assert(#ISTimedActionQueue.getTimedActionQueue(p).queue==0 and not C.status(p).active)
+    roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("a failed native outbound path skips that container rather than treating residual motion as player input", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    local origin=p:getSquare(); local shelf=T.container(5,0)
+    local book=T.add(shelf,T.item("Literature")); p.available={shelf}
+    nearbyTarget={square=T.square(2,0),key="blocked",next={square=shelf.square,key="book"}}
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    local walk=ISTimedActionQueue.getTimedActionQueue(p).queue[1]
+    walk.result=BehaviorResult.Failed; walk:stop()
+    p.moving=true; T.tick(p,false); p.moving=false
+    for i=1,20 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(C.status(p).active and hasHistory(p,"read") and hasHistory(p,"Meditation"))
+    assert(shelf:contains(book) and p:getSquare()==origin)
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("a player-cancelled walk does not retry or queue a return", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    nearbyTarget={square=T.square(5,0),key="shelf"}
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    local walk=ISTimedActionQueue.getTimedActionQueue(p).queue[1]
+    p.cancelInput=true; walk:stop(); T.tick(p,false)
+    assert(not C.status(p).active and #ISTimedActionQueue.getTimedActionQueue(p).queue==0)
     roaming.enabled=false; nearbyTarget=nil
 end)
 
@@ -1080,6 +1138,25 @@ test("blocked homeward path stops instead of training away from origin", functio
     end
     assert(not C.status(p).active and C.status(p).message:find("Could not return"))
     assert(not hasHistory(p,"Meditation"))
+    roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("native homebound path failure reports the game rejection, not manual movement, and never trains away", function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    local shelf=T.container(6,0); T.add(shelf,T.item("Literature")); p.available={shelf}
+    nearbyTarget={square=shelf.square,key="book"}
+    assert(C.start(p,"meditation",false))
+    for i=1,20 do
+        T.tick(p,false)
+        local a=ISTimedActionQueue.getTimedActionQueue(p).queue[1]
+        if a and a.Type=="ISWalkToTimedAction" and hasHistory(p,"read") then
+            a.result=BehaviorResult.Failed; a:stop(); p.moving=true; T.tick(p,false)
+            break
+        elseif a then a:perform() end
+    end
+    assert(not C.status(p).active and C.status(p).message:find("no path back",1,true))
+    assert(not hasHistory(p,"Meditation") and #ISTimedActionQueue.getTimedActionQueue(p).queue==0)
     roaming.enabled=false; nearbyTarget=nil
 end)
 

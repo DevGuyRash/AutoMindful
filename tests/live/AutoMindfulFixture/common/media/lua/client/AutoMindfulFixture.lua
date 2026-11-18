@@ -1,4 +1,6 @@
 local Controller = require "AutoMindful/Controller"
+local Nearby = require "AutoMindful/Nearby"
+local Options = require "AutoMindful/Options"
 
 local function fluid(item)
     local world = item:getWorldItem()
@@ -77,6 +79,46 @@ local function removeFixtureItem(item)
     local world = item:getWorldItem()
     if world then world:removeFromWorld(); world:removeFromSquare()
     elseif item:getContainer() then item:getContainer():Remove(item) end
+end
+
+local scoutCase
+local function startScoutCase(player, mode)
+    if mode ~= "book" and mode ~= "fast-empty" then return end
+    local status, origin = Controller.status(player), player:getSquare()
+    if status.active or status.pendingReturns > 0 or player:tooDarkToRead() then
+        print("[AutoMindfulFixture] SCOUTCASE_PRECONDITION need idle survivor, no loans and reading light"); return
+    end
+    if scoutCase then removeFixtureItem(scoutCase.item); scoutCase=nil end
+    clearLiterature(player)
+    local target
+    for _, delta in ipairs({{1,0},{-1,0},{0,1},{0,-1}}) do
+        local previous = origin
+        for step=1,6 do
+            local square = getCell():getGridSquare(origin:getX()+delta[1]*step, origin:getY()+delta[2]*step, origin:getZ())
+            if not square or not square:isFree(false) or not previous:canReachTo(square) then break end
+            previous = square
+            if step==6 then target=square end
+        end
+        if target then break end
+    end
+    if not target then print("[AutoMindfulFixture] SCOUTCASE_PRECONDITION need six clear floor tiles"); return end
+    local item = target:AddWorldInventoryItem(mode=="book" and "Base.Book" or "Base.Bag_Schoolbag", 0.4, 0.4, 0)
+    if mode=="fast-empty" then item:getInventory():setExplored(false) end
+    Options.setSearchNearby(true)
+    Nearby.invalidate(player)
+    local selected = Nearby.find(player, "literature", origin, Options.searchRadius(), {})
+    if not selected or (mode=="book" and selected.item~=item)
+            or (mode=="fast-empty" and selected.container~=item:getInventory()) then
+        removeFixtureItem(item)
+        print("[AutoMindfulFixture] SCOUTCASE_PRECONDITION move away from competing supplies"); return
+    end
+    local stats = player:getStats()
+    for _, key in ipairs({"HUNGER","THIRST","FATIGUE","PANIC"}) do stats:set(CharacterStat[key], 0) end
+    stats:set(CharacterStat.ENDURANCE, 1)
+    stats:set(CharacterStat.BOREDOM, mode=="book" and 40 or 25)
+    scoutCase = {mode=mode, item=item, origin=origin}
+    local started,message = Controller.start(player, "meditation", false)
+    print("[AutoMindfulFixture] SCOUTCASE mode="..mode.." started="..tostring(started).." "..tostring(message))
 end
 
 local function setupFluidCase(player, mode)
@@ -307,11 +349,17 @@ Events.OnPlayerUpdate.Add(function(player)
     nextReport = getTimestampMs() + 1000
     local status = Controller.status(player)
     local levelText = tostring(status.meditation) .. "/" .. tostring(status.yoga)
+    if scoutCase and scoutCase.mode=="fast-empty" and not scoutCase.sped and status.phase=="scouting" then
+        scoutCase.sped=true; setGameSpeed(4)
+        print("[AutoMindfulFixture] SCOUTCASE fast-forward during inspection")
+    end
     if status.phase ~= lastPhase or levelText ~= lastLevels then
         lastPhase = status.phase
         lastLevels = levelText
         print("[AutoMindfulFixture] STATE " .. status.phase .. " meditation=" .. tostring(status.meditation)
             .. " yoga=" .. tostring(status.yoga) .. " " .. status.message)
+        if scoutCase then print("[AutoMindfulFixture] SCOUTCASE phase="..status.phase.." active="..tostring(status.active)
+            .." atOrigin="..tostring(player:getSquare()==scoutCase.origin).." speed="..getGameSpeed()) end
     end
     local reader = getFileReader("automindful-fixture-command.txt", false)
     if reader then
@@ -332,6 +380,7 @@ Events.OnPlayerUpdate.Add(function(player)
                     .. " screen=" .. getCore():getScreenWidth() .. "x" .. getCore():getScreenHeight()
                     .. " position=" .. player:getX() .. "," .. player:getY())
             elseif command == "open" then AutoMindful.UI.open(player)
+            elseif command == "scoutcase" then startScoutCase(player, line:match("^%S+%s+(%S+)"))
             elseif command == "fluidcase" then setupFluidCase(player, line:match("^%S+%s+(%S+)") or "owned")
             elseif command == "fluidstate" then fixtureFluidState(player, "requested")
             elseif command == "xpstate" then progressSnapshot(player)

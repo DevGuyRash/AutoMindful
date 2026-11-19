@@ -437,10 +437,20 @@ test("one terminal meditation card uses observed XP, elapsed time, and the local
     assert(C.status(p).phase=="complete" and #p.cards==1 and #p.halos==0)
     local card=p.cards[1]
     assert(card.brand=="AUTOMINDFUL" and card.theme=="mindful")
-    assert(card.title=="Meditation session complete" and card.detail=="2s  •  +1 Meditation XP")
+    assert(card.title=="Meditation session complete" and card.detail=="2s | +1 Meditation XP")
     C.update(p); C.stop(p)
     assert(#p.cards==1, "Repeated terminal events must not generate another card")
 end)
+test("stopped session detail uses a font-safe ASCII separator",function()
+    local p=T.playerNew(); p.sitting=true
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    p.xp=p.xp+91; T.now=T.now+475000
+    C.stop(p,"Stopped by you.")
+    local card=p.cards[1]
+    assert(card.status=="stopped" and card.detail=="476s | +91 Meditation XP")
+    assert(not card.detail:find("[^%z\1-\127]"), "Duration and XP separator must be ASCII")
+end)
+
 test("yoga level caps use level changes when XP is not recoverable",function()
     local p=T.playerNew(); p.yoga={9,97,100}
     assert(C.start(p,"yoga",false)); assert(T.run(p,5).phase=="complete")

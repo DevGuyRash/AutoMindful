@@ -164,7 +164,8 @@ function UI:checkSupplies()
 end
 
 function UI.startTraining(player, mode)
-    local started, message = Controller.start(player, mode, preferences(player).collectNearby == true)
+    local collect = mode ~= "endurance" and preferences(player).collectNearby == true
+    local started, message = Controller.start(player, mode, collect)
     local window = UI.windows[player:getPlayerNum()]
     if not started then window = UI.open(player) end
     if window then
@@ -194,10 +195,17 @@ function UI:refresh()
     self.forceSupplyRefresh = nil
     self.status = status
     for _, button in ipairs(self.starts) do button:setEnable(not status.active) end
+    self.enduranceButton:setEnable(not status.active)
     self.stopButton:setEnable(status.active)
     self.nearby.enable = true
     local activityColor = status.active and palette.meditation or (self.startError and palette.missing or palette.text)
     local phase = status.active and (status.mode == "both" and "Training both" or status.mode == "yoga" and "Training yoga" or "Training meditation") or "Ready"
+    if status.active and status.mode == "endurance" then
+        phase = "Recovering endurance"
+        if type(status.endurance) == "number" and status.endurance >= 0 and status.endurance <= 1 then
+            phase = phase .. string.format(" (%d%%)", math.floor(status.endurance * 100))
+        end
+    end
     if status.phase == "stopped" then phase = "Stopped"; activityColor = palette.yoga end
     setText(self.activity, colored(activityColor, phase) .. " <LINE> " .. colored(palette.text, self.startError or status.message))
     local now = getTimestampMs()
@@ -220,6 +228,9 @@ function UI:refresh()
     self.progressObserved = self:getIsVisible()
     self.checked:setName(getTimestampMs() - (self.checkedAt or -10000) < 3000 and "Supplies checked just now" or "Live supply refresh")
     local tips = {}
+    if status.active and status.mode == "endurance" then
+        tips[#tips + 1] = colored(palette.meditation, "This session does not use supplies or scout.")
+    end
     if status.returnNotice then tips[#tips + 1] = colored(palette.yoga, status.returnNotice) end
     if status.active and status.careNotice then tips[#tips + 1] = colored(palette.yoga, status.careNotice) end
     if (status.pendingReturns or 0) > 0 then
@@ -249,7 +260,7 @@ function UI:createChildren()
     local row = math.max(28, line + 10)
     local width = self.width - pad * 2
     local bodyY = self:titleBarHeight() + 10
-    local controlsHeight = row * 4 + line * 3 + 34
+    local controlsHeight = row * 5 + line * 3 + 38
     self.body = ScrollPanel:new(pad, bodyY, width, self.height - bodyY - controlsHeight - 8)
     self.body:initialise()
     self:addChild(self.body)
@@ -315,6 +326,12 @@ function UI:createChildren()
         self.starts[index] = button
     end
     y = y + row + 4
+    self.enduranceButton = ISButton:new(pad, y, width, row, "Meditate to Full Endurance", self, UI.onStart)
+    self.enduranceButton:initialise()
+    self.enduranceButton.mode = "endurance"
+    self.enduranceButton.tooltip = "Meditate until endurance is full, then stop. No yoga, supply use or scouting."
+    self:addChild(self.enduranceButton)
+    y = y + row + 4
     self.check = ISButton:new(pad, y, width / 2 - 3, row, "Check supplies", self, UI.checkSupplies)
     self.check:initialise()
     self.check.tooltip = "Refresh known container contents within the configured radius now. Unknown contents stay unknown; this does not move the survivor or collect items."
@@ -345,7 +362,7 @@ function UI:layout()
     self.footer:setWidth(width)
     self.footer:paginate()
     self.footer:setHeight(math.max(line * 2 + 4, self.footer:getScrollHeight()))
-    local controlsHeight = row * 4 + line + self.footer.height + 30
+    local controlsHeight = row * 5 + line + self.footer.height + 34
     self.body:setWidth(width)
     self.body:setHeight(math.max(1, self.height - bodyY - controlsHeight - 8))
     local contentWidth = width - 15
@@ -377,6 +394,9 @@ function UI:layout()
         button:setY(y)
         button:setWidth(buttonWidth)
     end
+    y = y + row + 4
+    self.enduranceButton:setY(y)
+    self.enduranceButton:setWidth(width)
     y = y + row + 4
     self.check:setY(y)
     self.check:setWidth(width / 2 - 3)

@@ -14,13 +14,14 @@ local Storage = require "AutoMindful/Storage"
 require "Vehicles/TimedActions/ISPathFindAction"
 local Options = require "AutoMindful/Options"
 local ActionYield = require "AutoMindful/ActionYield"
+local EnduranceGoal = require "AutoMindful/EnduranceGoal"
 require "TimedActions/WalkToTimedAction"
 
 AutoMindful = AutoMindful or {}
 local Controller = {}
 AutoMindful.Controller = Controller
 local states = {}
-local modeTitles = {both = "Training", meditation = "Meditation", yoga = "Yoga"}
+local modeTitles = {both = "Training", meditation = "Meditation", yoga = "Yoga", endurance = "Endurance meditation"}
 local yogaRecoveryStart, yogaRecoveryTarget = 0.85, 0.95
 
 local function stateFor(player)
@@ -69,6 +70,7 @@ local function showSessionEnd(player, state)
     state.session = nil
     local hud = PZActionCompletionHUD
     local detail = {hud.duration((getTimestampMs() - session.startedAt) / 1000)}
+    if state.endurance and state.endPhase == "complete" then detail[#detail+1] = "100% endurance" end
     local progress = Progress.snapshot(player)
     for _, kind in ipairs({"meditation", "yoga"}) do
         if state.mode == "both" or state.mode == kind then
@@ -335,6 +337,7 @@ local function yieldToPlayer(player, state)
     end
     state.idleSince = nil
     state.observedGameHours = player:getHoursSurvived()
+    if state.endurance then EnduranceGoal.observe(state.endurance, nil, getTimestampMs(), false) end
     if entering or state.pending or state.releasePending then clearOwned(player, state) end
 end
 
@@ -701,6 +704,7 @@ local function train(player, state, kind)
     local option = kind == "meditation" and ZenWellnessContextMenu.Options.Meditation or ZenWellnessContextMenu.Options.Yoga
     state.lastTraining = kind
     if not ownBatch(player, state, kind, kind == "yoga" and "Practicing yoga. Poses may fail normally; completed sessions restart automatically."
+            or state.endurance and "Meditating until endurance reaches 100%."
             or "Meditating. AutoMindful will take care breaks and resume.", function()
         option.onAction({}, option, player)
     end) then
@@ -779,6 +783,7 @@ local function care(player, state)
 end
 
 local function advance(player, state)
+    if state.endurance then train(player, state, "meditation"); return end
     local meditation, yoga = levels(player)
     local needsMeditation = state.mode ~= "yoga" and meditation < 10
     local needsYoga = state.mode ~= "meditation" and yoga < 10
@@ -915,6 +920,30 @@ local function finishPending(player, state, now)
     return false
 end
 
+local function updateEndurance(player, state, now, quiet)
+    local value = EnduranceGoal.read(player)
+    local head = queueFor(player)[1]
+    local running = quiet and head and head.autoMindfulOwner == state
+        and head.Type == "LSMeditateAction" and head:isStarted()
+    if running then state.endurance.meditated = true end
+    if value == nil then
+        Controller.stop(player, "Could not read endurance. Stopped without assuming recovery.")
+    elseif quiet and EnduranceGoal.full(value) then
+        state.active = false
+        clearOwned(player, state)
+        state.endPhase, state.endMessage = "complete", "Endurance is full. Meditation finished."
+        setPhase(state, state.endPhase, state.endMessage)
+        if not state.endurance.meditated then state.session = nil end
+        showSessionEnd(player, state)
+    elseif criticalNeed(player, "water") or criticalNeed(player, "food") then
+        Controller.stop(player, "A critical hunger or thirst need interrupted endurance meditation.")
+    else
+        if not EnduranceGoal.observe(state.endurance, value, now, running) then return false end
+        Controller.stop(player, "Endurance did not improve during five minutes of meditation. Check what is preventing recovery.")
+    end
+    return true
+end
+
 function Controller.update(player)
     local state = states[player]
     if not state or not player:isLocalPlayer() then return end
@@ -932,6 +961,11 @@ function Controller.update(player)
     if state.active then
         local ready, reason = available(player)
         if not ready then Controller.stop(player, reason); return end
+        if state.endurance then
+            local quiet = not busy and not state.releasePending and not player:isAsleep() and not state.aimStarted
+                and not state.contextVisible and (not state.yielding or (state.idleSince and now - state.idleSince >= 750))
+            if updateEndurance(player, state, now, quiet) then return end
+        end
     end
     if state.releasePending then clearOwned(player, state); return end
     if not state.active and #state.loans == 0 then return end
@@ -960,7 +994,7 @@ function Controller.update(player)
         Controller.stop(player, "The vehicle supply source moved or became inaccessible. Stopped without forcing movement.")
         return
     end
-    if state.active then
+    if state.active and not state.endurance then
         local gameHours = player:getHoursSurvived()
         local yoga = HiddenSkills.getSkill(player, "Yoga")
         local meditationXP = player:getXp():getXP(Perks.Meditation)
@@ -982,7 +1016,7 @@ function Controller.update(player)
             return
         end
         local urgent = criticalNeed(player, "water") or criticalNeed(player, "food")
-        if state.phase == "meditation" then
+        if state.phase == "meditation" and not state.endurance then
             local meditation = levels(player)
             local boredom = stat(player, "BOREDOM")
             local reading = boredom >= 20 and comfortSupplyAvailable(player, state, "literature")
@@ -1096,10 +1130,10 @@ function Controller.update(player)
     end
     local endedTraining = state.pending and (state.phase == "meditation" or state.phase == "yoga")
     if state.pending and finishPending(player, state, now) then return end
-    if endedTraining and state.active and not atSkillGoal(player, state) then
+    if endedTraining and state.active and (state.endurance or not atSkillGoal(player, state)) then
         state.cycleUntil = now + 500
     end
-    if returnBorrowed(player, state) then return end
+    if not (state.active and state.endurance) and returnBorrowed(player, state) then return end
     if state.active and returnToOrigin(player, state) then return end
     if not state.active then
         if state.endPhase then setPhase(state, state.endPhase, state.endMessage) end
@@ -1116,6 +1150,12 @@ function Controller.start(player, mode, collectNearby)
     if old.releasePending and not clearOwned(player, old) then return false, "Waiting for the previous action to settle." end
     local ready, message = available(player)
     if not ready then return false, message end
+    local initialEndurance
+    if mode == "endurance" then
+        initialEndurance = EnduranceGoal.read(player)
+        if initialEndurance == nil then return false, "Could not read the survivor's endurance." end
+        if EnduranceGoal.full(initialEndurance) then return false, "Endurance is already full." end
+    end
     local danger = unsafeReason(player)
     if danger then return false, danger end
     if player:isAsleep() then return false, "Wait until the survivor wakes up." end
@@ -1125,7 +1165,8 @@ function Controller.start(player, mode, collectNearby)
         observedGameHours = player:getHoursSurvived(), progressMeditation = player:getXp():getXP(Perks.Meditation),
         progressYogaLevel = yoga[1], progressYogaXP = yoga[2]}
     ActionYield.rememberPosition(state, player)
-    if (mode ~= "yoga" and player:getPerkLevel(Perks.Meditation) < 10) or (mode ~= "meditation" and yoga[1] < 10) then
+    if initialEndurance then state.endurance = {best=initialEndurance} end
+    if state.endurance or (mode ~= "yoga" and player:getPerkLevel(Perks.Meditation) < 10) or (mode ~= "meditation" and yoga[1] < 10) then
         state.session = {startedAt=getTimestampMs(), progress=Progress.snapshot(player)}
     end
     state.loans, state.returnNotice = old.loans or {}, old.returnNotice
@@ -1140,6 +1181,7 @@ function Controller.status(player)
     local meditation, yoga = levels(player)
     return {active = state.active, phase = state.phase, message = state.message, meditation = meditation, yoga = yoga,
         progress = Progress.snapshot(player), mode = state.mode, collectNearby = state.collectNearby,
+        endurance = state.endurance and EnduranceGoal.read(player) or nil,
         returnNotice = state.returnNotice or state.fluidNotice, careNotice = state.careNotice, pendingReturns = #state.loans}
 end
 

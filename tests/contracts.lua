@@ -17,7 +17,8 @@ package.loaded["AutoMindful/Nearby"] = {find=function(_, _, _, _, rejected)
     while target and rejected and rejected[target.key] do target=target.next end
     return target
 end,
-    scan=function() return nearbyArea end, invalidate=function() end}
+    scan=function() return nearbyArea end, invalidate=function() end,
+    waterObject=function(_, target) return target.object:getMasterObject() end}
 local T = {now = 0, nights = 50, client = false, sleepNeeded = true, sleepAllowed = true}
 local FluidFixtures = loadTest and loadTest("fluid_fixtures.lua") or assert(loadfile("tests/fluid_fixtures.lua"))()
 FluidCategory = FluidFixtures.categories
@@ -1118,6 +1119,16 @@ function luautils.walkAdj(p, square, keepActions)
     return true
 end
 
+function luautils.walkAdjObject(p, world, diagonal, keepActions)
+    assert(diagonal and keepActions, "Use the native world-drink approach without clearing the queue")
+    p.objectWalk=world
+    local square=world:getSquare()
+    ISTimedActionQueue.add(T.action(p,"ISPathFindAction",function()
+        p.square=T.square(square:getX()-1,square:getY(),square:getZ())
+    end))
+    return true
+end
+
 test("nearby care walks, borrows, reads, returns the book and returns home before training", function()
     roaming.enabled=true
     local p=T.playerNew(); p.values.BOREDOM=40; p.sitting=true
@@ -1135,19 +1146,23 @@ end)
 
 test("a single finite or mains drink on a scouting trip returns home and resumes meditation", function()
     local sources=require "AutoMindful/WaterSources"
-    local scan, drink=sources.scan, sources.drink
+    local scan, drink, choose=sources.scan, sources.drink, sources.choose
     roaming.enabled=true
     for _,initial in ipairs({5,10000}) do
         local p=T.playerNew(); p.values.THIRST=.25
         local origin, target=p:getSquare(), T.square(6,0)
         local reserve, drinks=initial, 0
-        local world={getFluidAmount=function() return reserve end,getFluidCapacity=function() return initial end,
+        local world={getSquare=function() return target end,getMasterObject=function(self) return self end,
+            getFluidAmount=function() return reserve end,getFluidCapacity=function() return initial end,
             getUsesExternalWaterSource=function() return false end,getFluidContainer=function() return nil end}
         local water={object=world,remainingLiters=initial,directDrink=true,
             description={remainingLiters=initial,hungerEffect=0,thirstEffect=initial/2,hungerRelief=0,
                 thirstRelief=initial/2,food=false,water=true,calories=0}}
         nearbyTarget={square=target,key="water:6:0:0",object=world}
         sources.scan=function() return p:getSquare():canReachTo(target) and {water} or {} end
+        sources.choose=function(_,_,expected)
+            for _,s in ipairs(sources.scan()) do if s.object==expected then return s end end
+        end
         sources.drink=function(player, source)
             assert(source.object==world and player:getSquare()~=origin and player:getSquare():canReachTo(target))
             ISTimedActionQueue.add(T.action(player,"world-drink",function()
@@ -1158,12 +1173,41 @@ test("a single finite or mains drink on a scouting trip returns home and resumes
         end
         assert(C.start(p,"meditation",false))
         for i=1,20 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+        assert(p.objectWalk==world,"Scout to the object itself, as the stock Drink action does")
         assert(drinks==1 and reserve==(initial==5 and 4.5 or 10000))
         assert(C.status(p).active and p:getSquare()==origin and hasHistory(p,"Meditation"))
         C.stop(p)
     end
-    sources.scan,sources.drink=scan,drink
+    sources.scan,sources.drink,sources.choose=scan,drink,choose
     roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("a stale or refused scouted tap does not consume other nearby hydration", function()
+    local sources=require "AutoMindful/WaterSources"
+    local scan,drink,choose=sources.scan,sources.drink,sources.choose
+    roaming.enabled=true
+    for _,refused in ipairs({false,true}) do
+        local p=T.playerNew(); p.values.THIRST=.25
+        local origin, target=p:getSquare(),T.square(6,0)
+        local world={getSquare=function() return target end,getMasterObject=function(self) return self end,
+            getFluidAmount=function() return 5 end}
+        local rival=T.container(6,0); local bottle=T.add(rival,T.water())
+        p.available={rival}
+        nearbyTarget={square=target,key="water:6:0:0",object=world}
+        sources.scan=function() return {} end
+        sources.choose=function(_,rejected,expected)
+            assert(expected==world)
+            if refused and not rejected[world] then return {object=world,directDrink=true} end
+        end
+        sources.drink=function() return false,"The game refused drinking." end
+        assert(C.start(p,"meditation",false))
+        for i=1,30 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+        assert(p.objectWalk==world and p:getSquare()==origin and C.status(p).active and hasHistory(p,"Meditation"))
+        assert(rival:contains(bottle) and bottle.fluid.amount==1 and not hasHistory(p,"drink"))
+        C.stop(p)
+    end
+    roaming.enabled=false;nearbyTarget=nil
+    sources.scan,sources.drink,sources.choose=scan,drink,choose
 end)
 
 test("blocked meditation uses owned literature before scouting unknown containers", function()

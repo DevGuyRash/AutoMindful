@@ -7,6 +7,7 @@ local Supplies = require "AutoMindful/Supplies"
 local Consumables = require "AutoMindful/Consumables"
 local WaterSources = require "AutoMindful/WaterSources"
 local Progress = require "AutoMindful/Progress"
+require "AutoMindful/CompletionHUD"
 local Fluids = require "AutoMindful/Fluids"
 local Nearby = require "AutoMindful/Nearby"
 local Storage = require "AutoMindful/Storage"
@@ -18,7 +19,7 @@ AutoMindful = AutoMindful or {}
 local Controller = {}
 AutoMindful.Controller = Controller
 local states = {}
-local modes = {both = true, meditation = true, yoga = true}
+local modeTitles = {both = "Training", meditation = "Meditation", yoga = "Yoga"}
 local yogaRecoveryStart, yogaRecoveryTarget = 0.85, 0.95
 
 local function stateFor(player)
@@ -74,9 +75,36 @@ local function clearOwned(player, state)
     state.pending = nil
 end
 
+local function showSessionEnd(player, state)
+    local session = state.session
+    if not session then return end
+    state.session = nil
+    local hud = PZActionCompletionHUD
+    local detail = {hud.duration((getTimestampMs() - session.startedAt) / 1000)}
+    local progress = Progress.snapshot(player)
+    for _, kind in ipairs({"meditation", "yoga"}) do
+        if state.mode == "both" or state.mode == kind then
+            local before, after = session.progress[kind], progress[kind]
+            local change = Progress.change(before, after)
+            if change and change.amount then
+                local sign = change.amount > 0 and "+" or ""
+                table.insert(detail, sign .. Progress.number(change.amount) .. " " .. modeTitles[kind] .. " XP")
+            elseif change and change.levels then
+                table.insert(detail, string.format("%s level %d → %d", modeTitles[kind], before.level, after.level))
+            end
+        end
+    end
+    local stopped = state.endPhase == "stopped"
+    hud.show(player:getPlayerNum(), {
+        brand="AUTOMINDFUL", theme="mindful",
+        title=modeTitles[state.mode] .. (stopped and " session stopped" or " session complete"),
+        detail=table.concat(detail, "  •  "),
+        status=state.endPhase, note=stopped and state.endMessage or nil,
+    })
+end
+
 function Controller.stop(player, reason)
     local state = stateFor(player)
-    local wasActive = state.active
     state.active = false
     state.excursion = nil
     clearOwned(player, state)
@@ -86,9 +114,7 @@ function Controller.stop(player, reason)
     state.supplyBaseline, state.preparation, state.collectingItem, state.fluidSupply = nil, nil, nil, nil
     state.endPhase, state.endMessage = "stopped", reason or "Stopped. Start again when you are ready."
     setPhase(state, state.endPhase, state.endMessage)
-    if wasActive and HaloTextHelper then
-        HaloTextHelper.addBadText(player, "AutoMindful: " .. state.endMessage)
-    end
+    showSessionEnd(player, state)
 end
 
 function Controller.setCollectNearby(player, enabled)
@@ -676,6 +702,7 @@ local function advance(player, state)
         state.active = false
         state.endPhase, state.endMessage = "complete", "Training complete. Selected skills have reached level 10."
         setPhase(state, state.endPhase, state.endMessage)
+        showSessionEnd(player, state)
         return
     end
     if care(player, state) then return end
@@ -999,7 +1026,7 @@ end
 
 function Controller.start(player, mode, collectNearby)
     if not player or not player:isLocalPlayer() then return false, "Choose a local survivor." end
-    if not modes[mode] then return false, "Unknown training mode." end
+    if not modeTitles[mode] then return false, "Unknown training mode." end
     local ready, message = available(player)
     if not ready then return false, message end
     local danger = unsafeReason(player)
@@ -1014,6 +1041,9 @@ function Controller.start(player, mode, collectNearby)
         message = "Checking supplies and training requirements.", rejected = {}, careNeeds = {}, failures = 0, hoursWithoutXP = 0,
         observedGameHours = player:getHoursSurvived(), progressMeditation = player:getXp():getXP(Perks.Meditation),
         progressYogaLevel = yoga[1], progressYogaXP = yoga[2]}
+    if (mode ~= "yoga" and player:getPerkLevel(Perks.Meditation) < 10) or (mode ~= "meditation" and yoga[1] < 10) then
+        state.session = {startedAt=getTimestampMs(), progress=Progress.snapshot(player)}
+    end
     state.loans, state.returnNotice = old.loans or {}, old.returnNotice
     states[player] = state
     return true, state.message

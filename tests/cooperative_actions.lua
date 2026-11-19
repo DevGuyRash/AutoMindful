@@ -19,6 +19,127 @@ return function(T, C, test, scoutTarget)
         assert(C.status(p).active and C.status(p).phase=="meditation", "Training resumes after the foreign queue drains")
         C.stop(p)
     end
+    local function withPanels(fn)
+        local oldUI,oldModal,oldWorld=UIManager.getUI,UIManager.getModal,ISWorldMap_instance
+        local panels={items={},modal=nil}
+        UIManager.getUI=function() return T.list(panels.items) end
+        UIManager.getModal=function() return panels.modal end
+        ISWorldMap_instance=nil
+        function panels:java(luaPanel)
+            return {getTable=function() return luaPanel end,
+                isVisible=function() return luaPanel.visible~=false end}
+        end
+        function panels:paper(slot)
+            local panel={Type="ISMapWrapper",mapUI={playerNum=slot},visible=true,isCollapsed=false}
+            function panel:isReallyVisible() return self.visible end
+            self.items[#self.items+1]=self:java(panel)
+            return panel
+        end
+        function panels:world(slot)
+            local panel={Type="ISWorldMap",playerNum=slot,visible=true}
+            function panel:isVisible() return self.visible end
+            ISWorldMap_instance=panel
+            self.items[#self.items+1]=self:java(panel)
+            return panel
+        end
+        local ok,reason=pcall(fn,panels)
+        UIManager.getUI,UIManager.getModal,ISWorldMap_instance=oldUI,oldModal,oldWorld
+        assert(ok,reason)
+    end
+    test("both native map readers yield both training modes until their map panel closes",function()
+        withPanels(function(panels)
+            for _,mode in ipairs({"yoga","meditation"}) do
+                for _,kind in ipairs({"ISReadMapItem","ISReadWorldMap"}) do
+                    panels.items={}; ISWorldMap_instance=nil
+                    local p=T.playerNew(); p.sitting=mode=="meditation"
+                    assert(C.start(p,mode,false)); T.tick(p,false)
+                    local panel
+                    local map=T.action(p,kind,function()
+                        if kind=="ISReadMapItem" then panel=panels:paper(p:getPlayerNum()) else panel=panels:world(p:getPlayerNum()) end
+                    end)
+                    ISTimedActionQueue.add(map); T.tick(p,false)
+                    assert(C.status(p).active and #p.cards==0 and #p.halos==0)
+                    assert(queue(p)[1]==map and p.nativeHead==map.action); untouched(map)
+                    map:perform()
+                    local count=#p.history
+                    for i=1,6 do T.tick(p,false); assert(C.status(p).active and #queue(p)==0 and #p.history==count and #p.cards==0) end
+                    -- Raw right-button pan and Escape/close are UI gestures, not
+                    -- actual isAiming/attack or world displacement.
+                    p.aimInput=true; p.cancelInput=true
+                    T.tick(p,false); T.tick(p,false)
+                    assert(C.status(p).active and #queue(p)==0 and #p.cards==0)
+                    p.aimInput=false; p.cancelInput=false
+                    if kind=="ISReadMapItem" then panel.isCollapsed=true else panel.visible=false end
+                    for i=1,6 do T.tick(p,false); if C.status(p).phase==mode then break end end
+                    assert(C.status(p).active and C.status(p).phase==mode and #p.cards==0 and #p.halos==0)
+                    C.stop(p)
+                end
+            end
+        end)
+    end)
+    test("native modal and lost no-queue actions pause without restart loops or stop cards",function()
+        withPanels(function(panels)
+            for _,mode in ipairs({"yoga","meditation"}) do
+                local p=T.playerNew(); p.sitting=mode=="meditation"
+                assert(C.start(p,mode,false)); T.tick(p,false)
+                for cycle=1,3 do
+                    assert(queue(p)[1])
+                    panels.modal=panels:java({visible=true,playerNum=p:getPlayerNum()})
+                    ISTimedActionQueue.clear(p) -- foreign UI invalidates training, without queuing a replacement
+                    local count=#p.history
+                    for i=1,6 do T.tick(p,false); assert(C.status(p).active and #queue(p)==0 and #p.history==count and #p.cards==0) end
+                    panels.modal=nil
+                    for i=1,6 do T.tick(p,false); if C.status(p).phase==mode then break end end
+                    assert(C.status(p).phase==mode and #p.cards==0)
+                end
+                C.stop(p)
+            end
+        end)
+    end)
+    test("a global modal holds both modes and ordinary no-queue losses resume after quiet",function()
+        withPanels(function(panels)
+            for _,mode in ipairs({"yoga","meditation"}) do
+                local p=T.playerNew(); p.sitting=mode=="meditation"
+                assert(C.start(p,mode,false)); T.tick(p,false)
+                panels.modal=panels:java({visible=true})
+                ISTimedActionQueue.clear(p)
+                T.tick(p,false); T.tick(p,false)
+                assert(C.status(p).active and #queue(p)==0 and #p.cards==0)
+                panels.modal=nil
+                for i=1,6 do T.tick(p,false); if C.status(p).phase==mode then break end end
+                assert(C.status(p).phase==mode)
+                ISTimedActionQueue.clear(p)
+                T.now=T.now+1; C.update(p)
+                assert(C.status(p).active and #queue(p)==0 and #p.cards==0)
+                T.now=T.now+700; C.update(p); assert(#queue(p)==0)
+                for i=1,6 do T.tick(p,false); if C.status(p).phase==mode then break end end
+                assert(C.status(p).phase==mode and #p.cards==0)
+                C.stop(p)
+            end
+        end)
+    end)
+    test("persistent HUD hidden maps and other players panels do not block local training",function()
+        withPanels(function(panels)
+            panels.items={panels:java({Type="ISMiniMap",visible=true,playerNum=0}),panels:java({Type="HUD",visible=true})}
+            local other=panels:paper(1); panels:world(1)
+            local hidden=panels:paper(0); hidden.visible=false
+            panels.modal=panels:java({visible=true,playerNum=1})
+            local p,owned=began()
+            T.tick(p,false); assert(queue(p)[1]==owned and C.status(p).phase=="meditation")
+            C.stop(p)
+        end)
+    end)
+    test("map UI does not hide actual aiming attacks or meaningful displacement",function()
+        withPanels(function(panels)
+            for _,change in ipairs({function(p) p.aiming=true end,function(p) p.attacking=true end,function(p) p.x=p:getX()+2 end}) do
+                panels.items={}; ISWorldMap_instance=nil
+                local p=began(); panels:world(p:getPlayerNum()); ISTimedActionQueue.clear(p)
+                T.tick(p,false); assert(C.status(p).active and #queue(p)==0)
+                change(p); C.update(p); T.now=T.now+500; C.update(p)
+                assert(not C.status(p).active and #p.cards==1 and #queue(p)==0)
+            end
+        end)
+    end)
     test("native-only work yields without creating Lua actions or changing posture",function()
         local p=T.playerNew(); local native={}; p.nativeHead=native
         assert(C.start(p,"meditation",false)); T.tick(p,false); T.tick(p,false)

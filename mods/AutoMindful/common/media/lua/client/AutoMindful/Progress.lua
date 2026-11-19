@@ -7,6 +7,18 @@ local function sample(level, current, required, total)
         total=total, capped=capped}
 end
 
+function Progress.yoga(player)
+    if not player or not HiddenSkills or not HiddenSkills.getSkill then return nil end
+    local yoga = HiddenSkills.getSkill(player, "Yoga")
+    if type(yoga) ~= "table" then return nil end
+    local level, current, required = yoga[1], yoga[2], yoga[3]
+    if type(level) ~= "number" or level < 0 or level > 10 or level ~= math.floor(level) then return nil end
+    if level == 10 then return sample(level, 0, 0) end
+    if type(current) ~= "number" or not (current >= 0 and current-current == 0)
+        or type(required) ~= "number" or not (required > 0 and required-required == 0) then return nil end
+    return sample(level, current, required)
+end
+
 function Progress.snapshot(player)
     local result = {}
     if not player then return result end
@@ -16,8 +28,7 @@ function Progress.snapshot(player)
         local required = level < 10 and perk:getXpForLevel(level + 1) or 0
         result.meditation = sample(level, total - perk:getTotalXpForLevel(level), required, total)
     end
-    local yoga = HiddenSkills and HiddenSkills.getSkill and HiddenSkills.getSkill(player, "Yoga")
-    if yoga then result.yoga = sample(yoga[1], yoga[2], yoga[3]) end
+    result.yoga = Progress.yoga(player)
     return result
 end
 

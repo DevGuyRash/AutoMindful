@@ -13,13 +13,15 @@ local Nearby = require "AutoMindful/Nearby"
 local Storage = require "AutoMindful/Storage"
 require "Vehicles/TimedActions/ISPathFindAction"
 local Options = require "AutoMindful/Options"
+local ActionYield = require "AutoMindful/ActionYield"
+local EnduranceGoal = require "AutoMindful/EnduranceGoal"
 require "TimedActions/WalkToTimedAction"
 
 AutoMindful = AutoMindful or {}
 local Controller = {}
 AutoMindful.Controller = Controller
 local states = {}
-local modeTitles = {both = "Training", meditation = "Meditation", yoga = "Yoga"}
+local modeTitles = {both = "Training", meditation = "Meditation", yoga = "Yoga", endurance = "Endurance meditation"}
 local yogaRecoveryStart, yogaRecoveryTarget = 0.85, 0.95
 
 local function stateFor(player)
@@ -38,9 +40,14 @@ local function stat(player, name)
 end
 
 local function levels(player)
-    local meditation = Perks.Meditation and player:getPerkLevel(Perks.Meditation) or 0
+    local meditation = Perks and Perks.Meditation and player:getPerkLevel(Perks.Meditation) or 0
     local yoga = HiddenSkills and HiddenSkills.getLevel and HiddenSkills.getLevel(player, "Yoga") or 0
     return meditation, yoga
+end
+
+local function atSkillGoal(player, state)
+    local meditation, yoga = levels(player)
+    return (state.mode == "yoga" or meditation >= 10) and (state.mode == "meditation" or yoga >= 10)
 end
 
 local function setPhase(state, phase, message)
@@ -51,28 +58,10 @@ local function setPhase(state, phase, message)
 end
 
 local function clearOwned(player, state)
-    local timed = ISTimedActionQueue.getTimedActionQueue(player)
-    if timed.queue[1] and timed.queue[1].autoMindfulOwner == state then
-        local foreign = {}
-        for index = #timed.queue, 1, -1 do
-            local action = timed.queue[index]
-            if action.autoMindfulOwner ~= state then
-                table.insert(foreign, 1, action)
-                timed:removeFromQueue(action)
-            end
-        end
-        ISTimedActionQueue.clear(player)
-        for _, action in ipairs(foreign) do ISTimedActionQueue.add(action) end
-    else
-        for index = #timed.queue, 1, -1 do
-            local action = timed.queue[index]
-            if action.autoMindfulOwner == state then
-                action:forceCancel()
-                timed:removeFromQueue(action)
-            end
-        end
-    end
     state.pending = nil
+    local done = ActionYield.release(player, state)
+    state.releasePending = not done or nil
+    return done
 end
 
 local function showSessionEnd(player, state)
@@ -81,6 +70,7 @@ local function showSessionEnd(player, state)
     state.session = nil
     local hud = PZActionCompletionHUD
     local detail = {hud.duration((getTimestampMs() - session.startedAt) / 1000)}
+    if state.endurance and state.endPhase == "complete" then detail[#detail+1] = "100% endurance" end
     local progress = Progress.snapshot(player)
     for _, kind in ipairs({"meditation", "yoga"}) do
         if state.mode == "both" or state.mode == kind then
@@ -107,6 +97,10 @@ function Controller.stop(player, reason)
     local state = stateFor(player)
     state.active = false
     state.excursion = nil
+    state.yielding, state.idleSince, state.cycleUntil = nil, nil, nil
+    if ActionYield.hasForeign(queueFor(player), state) then
+        for _, loan in ipairs(state.loans) do loan.interference = true end
+    end
     clearOwned(player, state)
     Supplies.finishLoan(player, state.supplyLoan)
     for _, loan in ipairs(state.loans) do loan.defer = nil end
@@ -131,11 +125,17 @@ local function ownAction(player, state, action)
             action[method] = function(self, ...)
                 if method == "perform" then self.autoMindfulFinished = true end
                 if method == "stop" then self.autoMindfulStopped = true end
+                local pending, queue = state.pending, queueFor(player)
+                -- A foreign successor may begin and append its own children
+                -- inside stock perform(). Those children are never ours.
+                if not pending or ActionYield.hasForeign(queue, state) then return original(self, ...) end
                 local before = {}
-                for _, queued in ipairs(queueFor(player)) do before[queued] = true end
+                for _, queued in ipairs(queue) do before[queued] = true end
                 local result = original(self, ...)
-                for _, queued in ipairs(queueFor(player)) do
-                    if not before[queued] then ownAction(player, state, queued) end
+                if state.pending == pending then
+                    for _, queued in ipairs(queueFor(player)) do
+                        if not before[queued] then ownAction(player, state, queued) end
+                    end
                 end
                 return result
             end
@@ -212,14 +212,25 @@ local function unsafeReason(player, state)
     if player:isDead() then return "Stopped because the survivor died." end
     if player:isOnFire() then return "Stopped because the survivor is on fire." end
     if player:getVehicle() then return "Stopped because you entered a vehicle." end
-    if player:isPlayerMoving() and not excursionMotion(player, state) then return "Cancelled because you moved." end
+    if not player:getSquare() then return "Stopped because the survivor has no loaded square." end
+    if player:isRunning() or player:isSprinting() then return "Cancelled because you started running." end
+    if player:pressedCancelAction() and not (state and state.uiCancelHeld) then return "Cancelled by your input." end
+    if player:isAttacking() then return "Stopped because you started attacking." end
+    if state and state.active then
+        if ActionYield.leftArea(state, player, excursionMotion(player, state)) then
+            return "Cancelled because you moved away from the activity or changed floor."
+        end
+    elseif player:isPlayerMoving() and (player:pressedMovement(false) or not ActionYield.nativeBusy(player)) then
+        return "Stop moving before training."
+    end
     local menu = getPlayerContextMenu and getPlayerContextMenu(player:getPlayerNum())
     local inspecting = menu and menu:isVisible()
     if state then state.contextVisible = inspecting == true end
-    if player:isAiming() and not inspecting then
+    if (player:isAiming() or (player:pressedAim() and not (state and state.inspectingUI))) and not inspecting then
         if not state then return "Stop aiming before starting training." end
-        state.aimStarted = state.aimStarted or getTimestampMs()
-        if getTimestampMs() - state.aimStarted >= 500 then return "Cancelled because you started aiming." end
+        local now = getTimestampMs()
+        if not state.aimStarted or now < state.aimStarted then state.aimStarted = now end
+        if now - state.aimStarted >= 500 then return "Cancelled because you started aiming." end
     elseif state then state.aimStarted = nil end
     if player:isDraggingCorpse() then return "Stop dragging the corpse before training." end
     local stats = player:getStats()
@@ -231,8 +242,10 @@ end
 
 local function available(player)
     local data = player:getModData()
-    if not ZenWellnessContextMenu or not ZenWellnessContextMenu.Options or not HiddenSkills
-            or not HiddenSkills.getSkill or not Perks.Meditation then
+    local options = ZenWellnessContextMenu and ZenWellnessContextMenu.Options
+    if not options or not options.Meditation or not options.Meditation.canPerform or not options.Meditation.onAction
+            or not options.Yoga or not options.Yoga.canPerform or not options.Yoga.onAction
+            or not HiddenSkills or not HiddenSkills.getSkill or not Perks or not Perks.Meditation then
         return false, "Enable Lifestyle: Hobbies with yoga support before starting AutoMindful."
     end
     if not data.LSMoodles or not data.LSMoodles.Embarrassed or not data.LSMoodles.MindfulState
@@ -251,7 +264,26 @@ local function yogaGate(player, state)
     return not blocked, message
 end
 
+local function leaveFurniture(player, state)
+    if player:getModData().IsSittingOnSeat then
+        setPhase(state, "seated", "Waiting for your seat activity to end. Stand up normally if needed.")
+        return false
+    end
+    if not player:isSittingOnFurniture() then return true end
+    if state.furnitureAttempted then
+        Controller.stop(player, "Could not get up from the furniture. Stand up normally and try again.")
+    else
+        state.furnitureAttempted = true
+        ownBatch(player, state, "standing", "Getting up from the furniture before training.", function()
+            ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player))
+        end)
+    end
+    return false
+end
+
 local function sit(player, state)
+    if not leaveFurniture(player, state) then return false end
+    state.furnitureAttempted = nil
     if player:isSitOnGround() then return true end
     if state.phase ~= "sitting" then
         player:reportEvent("EventSitOnGround")
@@ -264,6 +296,8 @@ local function sit(player, state)
 end
 
 local function stand(player, state)
+    if not leaveFurniture(player, state) then return false end
+    state.furnitureAttempted = nil
     if not player:isSitting() then return true end
     ownBatch(player, state, "standing", "Standing up for yoga.", function()
         ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player))
@@ -284,6 +318,27 @@ local function resetSupply(state)
     state.fluidSupply = nil
     state.supplyItem, state.supplyKind, state.supplyLoan, state.supplySource = nil, nil, nil, nil
     state.supplyBaseline, state.awaitSupplyUntil, state.preparation, state.supplyGoal = nil, nil, nil, nil
+end
+
+local function yieldToPlayer(player, state)
+    local entering = not state.yielding
+    if entering then
+        state.yielding = true
+        for _, loan in ipairs(state.loans) do loan.interference, loan.defer = true, nil end
+        Supplies.finishLoan(player, state.supplyLoan)
+        resetSupply(state)
+        state.collectingItem, state.contextInterrupted, state.travelScan = nil, nil, nil
+        state.furnitureAttempted, state.cycleUntil = nil, nil
+        state.careNeeds = {}
+        -- Keep the way home, never the old target, item, action or portion.
+        if state.excursion then state.excursion = {origin=state.excursion.origin, stage="resume-home"} end
+        Nearby.invalidate(player)
+        if state.active then setPhase(state, "manual", "Waiting for your action. Training will resume when you are ready.") end
+    end
+    state.idleSince = nil
+    state.observedGameHours = player:getHoursSurvived()
+    if state.endurance then EnduranceGoal.observe(state.endurance, nil, getTimestampMs(), false) end
+    if entering or state.pending or state.releasePending then clearOwned(player, state) end
 end
 
 local function fluidSourceKey(source)
@@ -554,12 +609,22 @@ local function returnToOrigin(player, state)
         state.excursion = nil
         return false
     end
+    if trip.stage == "resume-home" and trip.origin then
+        local cell, origin = getCell(), trip.origin
+        trip.origin = cell and cell:getGridSquare(origin:getX(), origin:getY(), origin:getZ())
+    end
+    if not trip.origin or trip.origin:getZ() ~= player:getSquare():getZ() or not Storage.permitted(player, trip.origin) then
+        Controller.stop(player, "The original training spot is no longer accessible. Stopped without forcing movement.")
+        return true
+    end
     trip.stage = "homebound"
-    return ownBatch(player, state, "travelling", "Returning to the original training spot.", function()
+    local queued = ownBatch(player, state, "travelling", "Returning to the original training spot.", function()
         prepareScoutWalk()
         if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
         ISTimedActionQueue.add(ISWalkToTimedAction:new(player, trip.origin))
     end)
+    if not queued then Controller.stop(player, "Could not start the walk back to the original training spot.") end
+    return true
 end
 
 local function supply(player, state, kind, onlyWorldWater, waterObject)
@@ -623,6 +688,14 @@ local function supply(player, state, kind, onlyWorldWater, waterObject)
 end
 
 local function train(player, state, kind)
+    if state.cycleUntil then
+        local remaining = state.cycleUntil - getTimestampMs()
+        if remaining > 0 and remaining <= 500 then
+            setPhase(state, "between", "Waiting briefly before the next training action.")
+            return
+        end
+        state.cycleUntil = nil
+    end
     if kind == "meditation" then
         if not sit(player, state) then return end
         local blocked, message = ZenWellnessContextMenu.Options.Meditation.canPerform(player, "", nil)
@@ -631,6 +704,7 @@ local function train(player, state, kind)
     local option = kind == "meditation" and ZenWellnessContextMenu.Options.Meditation or ZenWellnessContextMenu.Options.Yoga
     state.lastTraining = kind
     if not ownBatch(player, state, kind, kind == "yoga" and "Practicing yoga. Poses may fail normally; completed sessions restart automatically."
+            or state.endurance and "Meditating until endurance reaches 100%."
             or "Meditating. AutoMindful will take care breaks and resume.", function()
         option.onAction({}, option, player)
     end) then
@@ -709,6 +783,7 @@ local function care(player, state)
 end
 
 local function advance(player, state)
+    if state.endurance then train(player, state, "meditation"); return end
     local meditation, yoga = levels(player)
     local needsMeditation = state.mode ~= "yoga" and meditation < 10
     local needsYoga = state.mode ~= "meditation" and yoga < 10
@@ -752,10 +827,6 @@ local function advance(player, state)
     else
         Controller.stop(player, yogaMessage or "Yoga is unavailable. Check the mat and Lifestyle sandbox requirements.")
     end
-end
-
-local function allowedManual(action)
-    return action.Type == "ISInventoryTransferAction"
 end
 
 local function finishPending(player, state, now)
@@ -849,58 +920,105 @@ local function finishPending(player, state, now)
     return false
 end
 
+local function updateEndurance(player, state, now, quiet)
+    local value = EnduranceGoal.read(player)
+    local head = queueFor(player)[1]
+    local running = quiet and head and head.autoMindfulOwner == state
+        and head.Type == "LSMeditateAction" and head:isStarted()
+    if running then state.endurance.meditated = true end
+    if value == nil then
+        Controller.stop(player, "Could not read endurance. Stopped without assuming recovery.")
+    elseif quiet and EnduranceGoal.full(value) then
+        state.active = false
+        clearOwned(player, state)
+        state.endPhase, state.endMessage = "complete", "Endurance is full. Meditation finished."
+        setPhase(state, state.endPhase, state.endMessage)
+        if not state.endurance.meditated then state.session = nil end
+        showSessionEnd(player, state)
+    elseif criticalNeed(player, "water") or criticalNeed(player, "food") then
+        Controller.stop(player, "A critical hunger or thirst need interrupted endurance meditation.")
+    else
+        if not EnduranceGoal.observe(state.endurance, value, now, running) then return false end
+        Controller.stop(player, "Endurance did not improve during five minutes of meditation. Check what is preventing recovery.")
+    end
+    return true
+end
+
+local function lostTrainingAction(state, queue)
+    if #queue > 0 or not state.pending or (state.phase ~= "meditation" and state.phase ~= "yoga") then return false end
+    for _, action in ipairs(state.pending) do
+        if action.autoMindfulStopped or not action.autoMindfulFinished then return true end
+    end
+    return false
+end
+
 function Controller.update(player)
     local state = states[player]
     if not state or not player:isLocalPlayer() then return end
-    if not state.active and #state.loans == 0 then return end
+    ActionYield.finishHandoff(player)
+    if not state.active and #state.loans == 0 and not state.releasePending then return end
+    local now = getTimestampMs()
+    local queue = queueFor(player)
+    if state.uiQueueHead ~= queue[1] or (state.paperMapOpen and player:pressedCancelAction()) then
+        state.windowChecked = nil
+    end
+    state.uiQueueHead = queue[1]
+    local wasInspecting = state.inspectingUI
+    state.inspectingUI = ActionYield.inspecting(player, state, now)
+    if not player:pressedCancelAction() then state.uiCancelHeld = nil
+    elseif state.inspectingUI or wasInspecting then state.uiCancelHeld = true end
     local danger = unsafeReason(player, state)
     if danger then
         if state.active then Controller.stop(player, danger)
-        elseif state.pending then clearOwned(player, state) end
+        elseif state.pending or state.releasePending then clearOwned(player, state) end
         return
     end
-    if state.aimStarted then return end
+    local occupied = ActionYield.occupied(player, queue, state) or state.inspectingUI
+    local lost = state.active and lostTrainingAction(state, queue)
+    local busy = occupied or lost or (state.active and player:pressedMovement(false))
+    if occupied then state.unknownPauses, state.quietMs = nil, 750
+    elseif lost and not state.yielding then
+        state.unknownPauses = math.min(4, 1 + (state.unknownPauses or 0))
+        state.quietMs = math.min(5000, 750 * 2 ^ (state.unknownPauses - 1))
+    end
+    local quietMs = state.quietMs or 750
+    if state.active then
+        local ready, reason = available(player)
+        if not ready then Controller.stop(player, reason); return end
+        if state.endurance then
+            local quiet = not busy and not state.releasePending and not player:isAsleep() and not state.aimStarted
+                and not state.contextVisible and (not state.yielding or (state.idleSince and now - state.idleSince >= quietMs))
+            if updateEndurance(player, state, now, quiet) then return end
+        end
+    end
+    if state.releasePending then clearOwned(player, state); return end
+    if not state.active and #state.loans == 0 then return end
+    if state.aimStarted then state.idleSince = nil; return end
+    if busy then
+        yieldToPlayer(player, state)
+        return
+    end
     if player:isAsleep() then
+        state.idleSince = nil
         if state.active then setPhase(state, "sleeping", "Sleeping. Training resumes after waking.") end
         return
     end
-    local now = getTimestampMs()
-    if state.lastUpdate and now - state.lastUpdate < 250 then return end
+    if state.yielding then
+        if state.contextVisible then state.idleSince = nil; return end
+        if not state.idleSince or now < state.idleSince then state.idleSince = now end
+        if now - state.idleSince < quietMs then return end
+        state.yielding, state.idleSince = nil, nil
+        state.observedGameHours = player:getHoursSurvived()
+        if state.active then setPhase(state, "resuming", "Checking your current needs and training spot.") end
+    end
+    if state.lastUpdate and now >= state.lastUpdate and now - state.lastUpdate < 250 then return end
     state.lastUpdate = now
-    local queue = queueFor(player)
     if state.excursion and state.excursion.stage == "outbound" and state.excursion.target.part
             and not vehicleTargetAvailable(player, state.excursion.target) then
         Controller.stop(player, "The vehicle supply source moved or became inaccessible. Stopped without forcing movement.")
         return
     end
-    local foreign, takeover
-    for _, action in ipairs(queue) do
-        if action.autoMindfulOwner ~= state then
-            foreign = action
-            if not allowedManual(action) then takeover = action; break end
-        end
-    end
-    if takeover then
-        if state.active then
-            print("[AutoMindful] manual action took over: " .. tostring(takeover.Type))
-            Controller.stop(player, takeover.Type == "ISWalkToTimedAction"
-                and "Cancelled because you started walking."
-                or "Cancelled because another action took over. Start again after it finishes.")
-        end
-        return
-    end
-    if foreign then
-        if state.pending then
-            for _, loan in ipairs(state.loans) do loan.interference = true end
-            clearOwned(player, state)
-            Supplies.finishLoan(player, state.supplyLoan)
-            for _, loan in ipairs(state.loans) do loan.defer = nil end
-            resetSupply(state)
-        end
-        if state.active then setPhase(state, "manual", "Waiting for your inventory transfer. Training resumes afterward.") end
-        return
-    end
-    if state.active then
+    if state.active and not state.endurance then
         local gameHours = player:getHoursSurvived()
         local yoga = HiddenSkills.getSkill(player, "Yoga")
         local meditationXP = player:getXp():getXP(Perks.Meditation)
@@ -922,7 +1040,7 @@ function Controller.update(player)
             return
         end
         local urgent = criticalNeed(player, "water") or criticalNeed(player, "food")
-        if state.phase == "meditation" then
+        if state.phase == "meditation" and not state.endurance then
             local meditation = levels(player)
             local boredom = stat(player, "BOREDOM")
             local reading = boredom >= 20 and comfortSupplyAvailable(player, state, "literature")
@@ -1034,8 +1152,13 @@ function Controller.update(player)
         trip.stage = "care"
         Nearby.invalidate(player)
     end
+    local endedTraining = state.pending and (state.phase == "meditation" or state.phase == "yoga")
     if state.pending and finishPending(player, state, now) then return end
-    if returnBorrowed(player, state) then return end
+    if endedTraining then state.unknownPauses, state.quietMs = nil, nil end
+    if endedTraining and state.active and (state.endurance or not atSkillGoal(player, state)) then
+        state.cycleUntil = now + 500
+    end
+    if not (state.active and state.endurance) and returnBorrowed(player, state) then return end
     if state.active and returnToOrigin(player, state) then return end
     if not state.active then
         if state.endPhase then setPhase(state, state.endPhase, state.endMessage) end
@@ -1047,25 +1170,33 @@ end
 function Controller.start(player, mode, collectNearby)
     if not player or not player:isLocalPlayer() then return false, "Choose a local survivor." end
     if not modeTitles[mode] then return false, "Unknown training mode." end
-    local ready, message = available(player)
-    if not ready then return false, message end
-    local danger = unsafeReason(player)
-    if danger then return false, danger end
     local old = stateFor(player)
     if old.active then return false, "Training is already active. Stop before changing the mode." end
-    if #queueFor(player) > 0 or player:hasTimedActions() then return false, "Finish the current action before starting." end
-    if player:isSittingOnFurniture() or player:getModData().IsSittingOnSeat then return false, "Stand up from the seat before starting." end
+    if old.releasePending and not clearOwned(player, old) then return false, "Waiting for the previous action to settle." end
+    local ready, message = available(player)
+    if not ready then return false, message end
+    local initialEndurance
+    if mode == "endurance" then
+        initialEndurance = EnduranceGoal.read(player)
+        if initialEndurance == nil then return false, "Could not read the survivor's endurance." end
+        if EnduranceGoal.full(initialEndurance) then return false, "Endurance is already full." end
+    end
+    local danger = unsafeReason(player)
+    if danger then return false, danger end
     if player:isAsleep() then return false, "Wait until the survivor wakes up." end
     local yoga = HiddenSkills.getSkill(player, "Yoga")
     local state = {active = true, mode = mode, collectNearby = collectNearby == true, phase = "starting",
         message = "Checking supplies and training requirements.", rejected = {}, careNeeds = {}, failures = 0, hoursWithoutXP = 0,
         observedGameHours = player:getHoursSurvived(), progressMeditation = player:getXp():getXP(Perks.Meditation),
         progressYogaLevel = yoga[1], progressYogaXP = yoga[2]}
-    if (mode ~= "yoga" and player:getPerkLevel(Perks.Meditation) < 10) or (mode ~= "meditation" and yoga[1] < 10) then
+    ActionYield.rememberPosition(state, player)
+    if initialEndurance then state.endurance = {best=initialEndurance} end
+    if state.endurance or (mode ~= "yoga" and player:getPerkLevel(Perks.Meditation) < 10) or (mode ~= "meditation" and yoga[1] < 10) then
         state.session = {startedAt=getTimestampMs(), progress=Progress.snapshot(player)}
     end
     state.loans, state.returnNotice = old.loans or {}, old.returnNotice
     states[player] = state
+    if #queueFor(player) > 0 or ActionYield.nativeBusy(player) then yieldToPlayer(player, state) end
     return true, state.message
 end
 
@@ -1075,6 +1206,7 @@ function Controller.status(player)
     local meditation, yoga = levels(player)
     return {active = state.active, phase = state.phase, message = state.message, meditation = meditation, yoga = yoga,
         progress = Progress.snapshot(player), mode = state.mode, collectNearby = state.collectNearby,
+        endurance = state.endurance and EnduranceGoal.read(player) or nil,
         returnNotice = state.returnNotice or state.fluidNotice, careNotice = state.careNotice, pendingReturns = #state.loans}
 end
 
@@ -1093,7 +1225,7 @@ end
 
 local function onPlayerUpdate(player)
     local state = states[player]
-    if not state or (not state.active and #state.loans == 0) then return end
+    if not state or (not state.active and #state.loans == 0 and not state.releasePending) then return end
     local ok, message = pcall(Controller.update, player)
     if not ok then
         Controller.stop(player, "AutoMindful stopped after an error. See console.txt for details.")

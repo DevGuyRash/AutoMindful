@@ -19,7 +19,7 @@ AutoMindful uses client Lua for Build 42.22 and later. It has no server scripts.
 1. Choose a safe training spot. Deploy a complete yoga mat if the sandbox requires one.
 2. Right-click near your survivor and open Lifestyle's **Wellness** menu.
 3. While standing, open **Yoga**. While sitting on the ground, open **Meditate**.
-4. Choose **Open AutoMindful** to see the full window, or **Train yoga** or **Train meditation** for a quick start. **Check supplies** opens the live report without interrupting training.
+4. Choose **Open AutoMindful** for the window, **Train yoga** or **Train meditation** for a skill loop, or **Meditate to Full Endurance** for one recovery session. **Check supplies** opens the live report without interrupting training.
 
 The original single-session Lifestyle action remains in the submenu. **Train both** is available in the AutoMindful window. Context menus follow Lifestyle's posture and availability rules instead of appearing everywhere by default.
 
@@ -74,7 +74,13 @@ Zomboid's separate automatic-drinking option can still use carried water before 
 
 ## Keep control of the loop
 
-**Stop training** cancels explicitly. Clear movement, sustained aiming, or another gameplay action taking control also cancels. Looking at the window or context menu does not cancel. Inventory transfers can pause the automatic work and let it resume afterward.
+You can eat, drink, transfer an item, or let another mod run a workout while AutoMindful is active. AutoMindful pauses, keeps your actions in their original order, and resumes after the queue and native activity have been quiet for 0.75 seconds. A long workout is fine. Continuous queued work takes priority; two timed actions do not run at once. Between training actions AutoMindful leaves a half-second opening for work that only queues when the survivor is idle. A pause does not end the session or show a completion card.
+
+You can also open the world map or read a paper map during yoga or meditation. Training waits for your map to close or collapse, not just for the short reading animation to end. The minimap and another local player's map do not pause you. If another interface removes a training action without leaving any identifiable activity, AutoMindful waits and rechecks. Repeated unexplained interruptions increase that quiet period to at most five seconds.
+
+**Stop training**, cancel input, combat, running, sprinting, a floor change, or moving more than 1.5 tiles from the activity ends the session. Small position adjustments are fine. The reference follows AutoMindful's own supply walks, not a player's movement or an unrelated queued path. Looking at a context menu does not cancel. On an interrupted supply trip, the mod settles identifiable borrowed items, drops the old plan, checks that the training square is still accessible, and returns before choosing new work. It will not repeat a spent portion or claim another action's empty can.
+
+You can start training while seated on furniture. AutoMindful waits for anyone else's action, uses the game's get-up action and waits for it to finish before sitting on the floor for meditation. If Lifestyle still owns the seat, AutoMindful waits for you to leave it normally.
 
 When training stops or reaches its target, a small click-through HUD card shows the elapsed session time and any measured progress, even if the AutoMindful window is closed. If Lifestyle's XP data cannot establish an exact gain across a level change, the card reports the level change instead. Care breaks and supply trips do not end the session. The card fades after about four seconds; reopen AutoMindful for the full stop reason or pending returns.
 
@@ -83,6 +89,8 @@ Meditation needs sitting on the ground and cannot start above Lifestyle's boredo
 **Meditation** trains only meditation, and **Yoga** trains only yoga. A single-skill loop stops with its blocking reason if care cannot make that skill available. **Train both** permits alternating skills, including yoga to relieve boredom that blocks meditation.
 
 Low stamina does not block or interrupt meditation. In Train both, meditation can continue while stamina recovers for yoga. Yoga keeps its recovery break, with a visible stamina target. Fatigue that requires sleep remains a separate care condition.
+
+**Meditate to Full Endurance** is available in the training window and the Lifestyle meditation submenu. It reads the game's endurance stat and runs only normal meditation, even at Meditation level 10. It does not restore stamina itself, queue yoga, use supplies, or start a scouting trip. Selecting it at full endurance does nothing. It finishes when the game reports 100%; a missing stat, blocked meditation, critical hunger or thirst, or five observed minutes of meditation without a new endurance high stops it with a reason. Time waiting for someone else's action does not count.
 
 ## Configure access
 

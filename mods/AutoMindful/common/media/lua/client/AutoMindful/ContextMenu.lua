@@ -45,6 +45,13 @@ local function decorate(menu, option, player, mode)
         .. " <LINE> " .. (status.active and "Stop the current loop before changing modes."
             or "Uses your saved adjacent-supply setting. The window can stay closed.")
     tooltip(submenu, train, "Automatic " .. mode, description)
+    if mode == "meditation" then
+        local endurance = submenu:addOptionOnTop("Meditate to Full Endurance", player, UI.startTraining, "endurance")
+        endurance.notAvailable = status.active
+        tooltip(submenu, endurance, "Meditate to Full Endurance", status.active
+            and "Stop the current loop before starting another."
+            or "Meditate until endurance is full, then stop. No yoga, supply use or scouting.")
+    end
     local open = submenu:addOptionOnTop("Open AutoMindful", player, UI.open)
     tooltip(submenu, open, "AutoMindful window", "Open training, both-skill mode, live supplies, and collection settings. Closing the window keeps the training loop running.")
     menu:addSubMenu(option, submenu)

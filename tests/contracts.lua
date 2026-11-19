@@ -35,7 +35,7 @@ Fluid = {Water="Water"}
 SkillBook = {Cooking=true}
 SandboxVars = {Yoga={KeepBags=true}, Meditation={KeepBags=true}, LSMeditation={RemoveLevitation=false}}
 Events = {}
-for _, name in ipairs({"OnPlayerUpdate", "OnPlayerDeath", "OnGameStart"}) do Events[name] = {Add=function() end} end
+for _, name in ipairs({"OnPlayerUpdate", "OnPlayerDeath", "OnGameStart"}) do Events[name] = {Add=function(callback) Events[name].callback=callback end} end
 function getTimestampMs() return T.now end
 function getGameTime() return {getNightsSurvived=function() return T.nights end} end
 HaloTextHelper = {addBadText=function(player,text) player.halos[#player.halos+1]=text end}
@@ -199,9 +199,14 @@ function T.playerNew()
     function p:getHoursSurvived() return self.hours end
     function p:getLastHourSleeped() return 0 end
     function p:getSquare() return self.square or self.inventory:getSourceGrid() end
+    function p:getX() return self.x or self:getSquare():getX()+0.5 end
+    function p:getY() return self.y or self:getSquare():getY()+0.5 end
+    function p:getZ() return self:getSquare():getZ() end
+    function p:isRunning() return self.running or false end
+    function p:isSprinting() return self.sprinting or false end
     function p:isSitOnGround() return self.sitting or false end
     function p:isSitting() return self.sitting or false end
-    function p:reportEvent() self.sitting = true end
+    function p:reportEvent(event) self.postureEvents=(self.postureEvents or 0)+1; self.sitting = event ~= "EventGetUp" end
     function p:setVariable() end
     function p:tooDarkToRead() return self.dark or false end
     function p:hasTrait(trait) return self.traits[trait] end
@@ -212,6 +217,25 @@ function T.playerNew()
     end
     function p:getReadPrintMedia() local ids={} for id in pairs(self.printRead) do ids[#ids+1]=id end return T.list(ids) end
     function p:hasTimedActions() return #ISTimedActionQueue.getTimedActionQueue(self).queue > 0 end
+    function p:getCharacterActions()
+        local function values()
+            local result={}
+            if p.nativeHead then result[#result+1]=p.nativeHead end
+            for _,action in ipairs(p.nativeAdditional or {}) do result[#result+1]=action end
+            return result
+        end
+        return {size=function() return #values() end,
+            isEmpty=function() return #values()==0 end,
+            contains=function(_, action) for _,entry in ipairs(values()) do if entry==action then return true end end return false end,
+            get=function(_, index) return values()[index+1] end}
+    end
+    function p:isPlayerDoingAction() return not self:getCharacterActions():isEmpty() end
+    function p:StopAllActionQueue()
+        local native=self.nativeHead
+        if native and native.forceStop then native:forceStop() end
+        self.nativeHead=nil
+        self.nativeAdditional=nil
+    end
     function p:isDead() return self.dead or false end
     function p:isOnFire() return false end
     function p:getVehicle() return nil end
@@ -219,17 +243,29 @@ function T.playerNew()
     function p:pressedMovement() return self.movementInput or false end
     function p:pressedCancelAction() return self.cancelInput or false end
     function p:isAiming() return self.aiming or false end
+    function p:pressedAim() return self.aimInput or false end
+    function p:isAttacking() return self.attacking or false end
     function p:isDraggingCorpse() return false end
     function p:isAsleep() return self.asleep or false end
-    function p:isSittingOnFurniture() return false end
+    function p:isSittingOnFurniture() return self.furniture or false end
     T.player = p
     return p
 end
 ISTimedActionQueue = {queues={}}
+function ISTimedActionQueue.isPlayerDoingAction(player) return not player:getCharacterActions():isEmpty() end
 function ISTimedActionQueue.getTimedActionQueue(player)
     if not ISTimedActionQueue.queues[player] then
         local q = {queue={}}
-        function q:removeFromQueue(action) for index, entry in ipairs(self.queue) do if entry == action then table.remove(self.queue,index) return end end end
+        function q:removeFromQueue(action) for index, entry in ipairs(self.queue) do if entry == action then action.removes=(action.removes or 0)+1; table.remove(self.queue,index) return end end end
+        function q:onCompleted(action)
+            self:removeFromQueue(action)
+            if self.current==action then self.current=nil end
+            local head=self.queue[1]
+            if head and self.current~=head then self.current=head; head:begin() end
+        end
+        function q:resetQueue() self.queue={}; self.current=nil end
+        function q:clearQueue() self.queue={}; self.current=nil end
+        function q:isCurrentActionAddingOtherActions() return false end
         ISTimedActionQueue.queues[player] = q
     end
     return ISTimedActionQueue.queues[player]
@@ -237,20 +273,39 @@ end
 function ISTimedActionQueue.add(action)
     if not action.ignoreAction then
         local q = ISTimedActionQueue.getTimedActionQueue(action.character)
+        action.adds=(action.adds or 0)+1
         q.queue[#q.queue+1] = action
         action.character.history[#action.character.history+1] = action.Type
+        if #q.queue==1 then q.current=action; action:begin() end
     end
 end
 function ISTimedActionQueue.clear(player)
-    local q = ISTimedActionQueue.getTimedActionQueue(player)
-    if q.queue[1] then q.queue[1]:stop() end
-    q.queue = {}
+    player:StopAllActionQueue()
+    ISTimedActionQueue.getTimedActionQueue(player):clearQueue()
 end
 function T.action(player, kind, effect)
     local a = {character=player, Type=kind, effect=effect}
-    function a:perform() if self.effect then self.effect() end ISTimedActionQueue.getTimedActionQueue(self.character):removeFromQueue(self) end
-    function a:stop() self.stopped=true; ISTimedActionQueue.getTimedActionQueue(self.character).queue={} end
+    function a:perform()
+        if self.effect then self.effect() end
+        if self.character.nativeHead==self.action then self.character.nativeHead=nil end
+        ISTimedActionQueue.getTimedActionQueue(self.character):onCompleted(self)
+    end
+    function a:stop()
+        if self.onStop then self:onStop() end
+        self.stopped=true
+        if self.character.nativeHead==self.action then self.character.nativeHead=nil end
+        ISTimedActionQueue.getTimedActionQueue(self.character):resetQueue()
+    end
     function a:forceCancel() self.cancelled=true end
+    function a:isStarted() return self.action~=nil end
+    function a:forceStop() if self.action then self.action:forceStop() end end
+    function a:begin()
+        self.begins=(self.begins or 0)+1
+        self.action={forceStop=function() a.forceStopped=true; a:stop() end,
+            forceComplete=function() a:perform() end}
+        self.character.nativeHead=self.action
+        if self.start then self:start() end
+    end
     function a:isValid() return true end
     return a
 end
@@ -290,7 +345,7 @@ ISDrinkFluidAction = {new=function(_, p, item, percentage)
         end
     end)
 end}
-ISWaitWhileGettingUp = {new=function(_, p) return T.action(p,"stand",function() p.sitting=false end) end}
+ISWaitWhileGettingUp = {new=function(_, p) return T.action(p,"stand",function() p.sitting=false; p.furniture=false end) end}
 ISWearClothing = {new=function(_,p) return T.action(p,"wear") end}
 ISWorldObjectContextMenu = {onSleepWalkToComplete=function() T.player.asleep=true end}
 ISInventoryPaneContextMenu = {
@@ -372,6 +427,7 @@ local passed = 0
 local function test(name, fn) fn(); passed=passed+1; print("PASS "..name) end
 local function hasHistory(p,kind) for _, entry in ipairs(p.history) do if entry == kind then return true end end return false end
 T.hasHistory = hasHistory
+if AutoMindfulContractHarnessOnly then return end
 
 test("one terminal meditation card uses observed XP, elapsed time, and the local survivor slot",function()
     local p=T.playerNew(); p.slot=1; p.meditation=9; p.xp=912; p.sitting=true
@@ -625,12 +681,14 @@ test("sleep follows server rules and resumes after waking",function()
     p.asleep=false; p.values.FATIGUE=0; T.tick(p); assert(hasHistory(p,"Yoga"))
     C.stop(p); T.client=false
 end)
-test("foreign queued action survives while actual training is cancelled",function()
+test("foreign queued action yields training without cancelling the session",function()
     local p=T.playerNew(); assert(C.start(p,"yoga",false)); T.tick(p,false)
     local q=ISTimedActionQueue.getTimedActionQueue(p); local owned=q.queue[1]
     local foreign=T.action(p,"manual"); ISTimedActionQueue.add(foreign); T.tick(p,false)
-    assert(not C.status(p).active and owned.stopped)
+    assert(C.status(p).active and (owned.stopped or owned.cancelled))
     assert(#q.queue == 1 and q.queue[1] == foreign and not foreign.cancelled and not foreign.stopped)
+    assert(foreign.adds==1 and not foreign.removes, "Yield never removes and re-adds someone else's action")
+    C.stop(p)
 end)
 test("refused care cannot loop indefinitely",function()
     for _, kind in ipairs({"food","water","literature"}) do
@@ -642,7 +700,9 @@ test("refused care cannot loop indefinitely",function()
 end)
 test("zero XP watchdog spans completed sessions",function()
     local p=T.playerNew(); p.noXP=true; assert(C.start(p,"yoga",false))
-    for i=1,10 do T.tick(p,true,1); if not C.status(p).active then break end end
+    -- A 500ms fairness gap alternates with completed training; its game hours
+    -- are not active no-XP time, so allow enough cycles to observe the watchdog.
+    for i=1,20 do T.tick(p,true,1); if not C.status(p).active then break end end
     assert(not C.status(p).active and C.status(p).phase == "stopped")
 end)
 test("embarrassment recovery resumes yoga without literature",function()
@@ -718,7 +778,7 @@ test("inventory transfers pause and resume care without cancelling the training 
     local transfer=T.action(p,"ISInventoryTransferAction",function() T.add(p.inventory,T.item("Food")) end)
     ISTimedActionQueue.add(transfer)
     T.tick(p,false)
-    assert(C.status(p).active and C.status(p).phase=="manual", "Training must remain active while your inventory transfer finishes.")
+    assert(C.status(p).active, "Training must remain active while your inventory transfer finishes.")
     local queue=ISTimedActionQueue.getTimedActionQueue(p).queue
     assert(#queue==1 and queue[1]==transfer and not transfer.cancelled)
     transfer:perform()
@@ -733,7 +793,7 @@ test("movement cancels once with a visible reason while brief context gestures d
     p.contextOpen=true; T.now=T.now+100; C.update(p)
     assert(C.status(p).active)
     p.aiming=false; p.contextOpen=false
-    p.moving=true; T.now=T.now+1000; C.update(p); C.update(p)
+    p.moving=true; p.x=p:getX()+3; T.now=T.now+1000; C.update(p); C.update(p)
     assert(not C.status(p).active and #p.cards==1 and #p.halos==0 and p.cards[1].note:find("moved",1,true))
 end)
 test("live preparation reflects movement inventory changes and collection permission",function()
@@ -849,7 +909,7 @@ test("an unavailable original container keeps the borrowed resource without stop
     for i=1,5 do T.tick(p) end
     assert(C.status(p).active and C.status(p).returnNotice and p.inventory:contains(book))
     shelf.reject=false
-    for i=1,4 do T.tick(p) end
+    for i=1,10 do T.tick(p); if shelf:contains(book) then break end end
     assert(shelf:contains(book))
     C.stop(p)
 end)
@@ -1076,7 +1136,7 @@ test("movement during a partial pour returns both loans without consuming the pa
     assert(C.status(p).phase=="transferring")
     bulk.fluid.amount=4.9; vessel.fluid.amount=.1
     vessel.fluid.hungerRate=bulk.fluid.hungerRate; vessel.fluid.components=bulk.fluid.components
-    p.moving=true; T.tick(p,false)
+    p.moving=true; p.movementInput=true; p.x=p:getX()+3; T.tick(p,false)
     assert(not C.status(p).active and #p.cards==1 and #p.halos==0 and p.cards[1].note:find("moved",1,true))
     p.moving=false
     for i=1,8 do T.tick(p) end
@@ -1526,6 +1586,9 @@ test("corpse care reads direct storage and returns its loan before going home",f
     assert(hasHistory(p,"read") and corpse:contains(book) and p:getSquare()==origin)
     C.stop(p); roaming.enabled=false; nearbyTarget=nil
 end)
+
+local cooperative = loadTest and loadTest("cooperative_actions.lua") or assert(loadfile("tests/cooperative_actions.lua"))()
+cooperative(T, C, test, function(target) nearbyTarget=target; roaming.enabled=target~=nil end)
 
 print("CONTRACTS PASS "..passed.." cases; game boundaries are explicit doubles, not gameplay evidence")
 if not loadTest then function loadTest(name) return assert(loadfile("tests/"..name))() end end

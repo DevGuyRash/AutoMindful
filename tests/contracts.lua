@@ -1,3 +1,5 @@
+-- Build 42's Kahlua exposes pairs, but no global next.
+next = nil
 local runtime = "mods/AutoMindful/common/media/lua/client/"
 package.path = runtime .. "?.lua;" .. package.path
 package.loaded["AutoMindful/WaterSources"] = {scan=function() return {} end, choose=function() return nil end}
@@ -791,6 +793,39 @@ test("consuming borrowed food returns only its new native empty container",funct
     assert(#shelf.items==1 and shelf.items[1]:getFullType()=="Base.EmptyTinCan")
     assert(shelf.items[1]~=owned and p.inventory:contains(owned))
     C.stop(p)
+end)
+test("fully consumed borrowed food without a container settles on completion or Stop",function()
+    for _,stop in ipairs({false,true}) do
+        local p=T.playerNew(); p.values.HUNGER=.5
+        local shelf=T.container(1,0)
+        local corn=T.add(shelf,T.item("Food",{fullType="Base.Corn",hunger=-.5,baseHunger=-.5}))
+        p.nearby={shelf}; assert(C.start(p,"meditation",true))
+        T.tick(p); T.tick(p)
+        assert(hasHistory(p,"eat") and not p.inventory:contains(corn) and not shelf:contains(corn))
+        if stop then C.stop(p,"Stopped by the player.") end
+        for i=1,5 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+        local status=C.status(p)
+        assert(status.pendingReturns==0 and #shelf.items==0 and not status.returnNotice)
+        if stop then assert(not status.active and not hasHistory(p,"Meditation"))
+        else assert(status.active and hasHistory(p,"Meditation")); C.stop(p) end
+    end
+end)
+test("missing declared replacement waits up to three seconds and never takes an existing can",function()
+    local S=require "AutoMindful/Supplies"
+    for _,arrives in ipairs({false,true}) do
+        local p=T.playerNew(); local shelf=T.container(1,0)
+        local used=T.add(shelf,T.item("Food",{replace="Base.EmptyTinCan"}))
+        local owned=T.add(p.inventory,T.item("InventoryItem",{fullType="Base.EmptyTinCan"}))
+        local loan=S.loan(p,used)
+        T.remove(shelf,used); T.add(p.inventory,used); S.watchLoan(p,loan,used); T.remove(p.inventory,used)
+        assert(not S.finishLoan(p,loan,1000) and not S.finishLoan(p,loan,3999))
+        local replacement
+        if arrives then replacement=T.add(p.inventory,T.item("InventoryItem",{fullType="Base.EmptyTinCan"})) end
+        assert(S.finishLoan(p,loan,4000) and not loan.usedItem)
+        if arrives then assert(loan.items[2]==replacement and not loan.notice)
+        else assert(#loan.items==1 and loan.notice:find("did not confirm",1,true)) end
+        assert(p.inventory:contains(owned))
+    end
 end)
 test("cancelled borrowing keeps unreachable items and returns them when the source is reachable again",function()
     local p=T.playerNew(); p.values.BOREDOM=40

@@ -23,6 +23,7 @@ AutoMindful.Controller = Controller
 local states = {}
 local modeTitles = {both = "Training", meditation = "Meditation", yoga = "Yoga", endurance = "Endurance meditation"}
 local yogaRecoveryStart, yogaRecoveryTarget = 0.85, 0.95
+local aimStopMessage = "Cancelled because you started aiming."
 
 local function stateFor(player)
     if not states[player] then
@@ -95,7 +96,7 @@ end
 
 function Controller.stop(player, reason)
     local state = stateFor(player)
-    state.active = false
+    state.active, state.trainingAimStopped = false, nil
     state.excursion = nil
     state.yielding, state.idleSince, state.cycleUntil = nil, nil, nil
     if ActionYield.hasForeign(queueFor(player), state) then
@@ -124,8 +125,17 @@ local function ownAction(player, state, action)
         if original then
             action[method] = function(self, ...)
                 if method == "perform" then self.autoMindfulFinished = true end
-                if method == "stop" then self.autoMindfulStopped = true end
                 local pending, queue = state.pending, queueFor(player)
+                if method == "stop" then
+                    self.autoMindfulStopped = true
+                    -- Native aim can cancel Lifestyle between two player updates.
+                    -- Our own cleanup clears pending before it invokes stop.
+                    if pending and state.active and queue[1] == self
+                            and (state.phase == "meditation" or state.phase == "yoga") and player:isAiming() then
+                        state.trainingAimStopped = true
+                        return ActionYield.nativeAimStop(player, state, self, original, ...)
+                    end
+                end
                 -- A foreign successor may begin and append its own children
                 -- inside stock perform(). Those children are never ours.
                 if not pending or ActionYield.hasForeign(queue, state) then return original(self, ...) end
@@ -223,14 +233,16 @@ local function unsafeReason(player, state)
     elseif player:isPlayerMoving() and (player:pressedMovement(false) or not ActionYield.nativeBusy(player)) then
         return "Stop moving before training."
     end
-    local menu = getPlayerContextMenu and getPlayerContextMenu(player:getPlayerNum())
-    local inspecting = menu and menu:isVisible()
-    if state then state.contextVisible = inspecting == true end
-    if (player:isAiming() or (player:pressedAim() and not (state and state.inspectingUI))) and not inspecting then
+    if player:isAiming() or (state and state.trainingAimStopped) then
+        return state and aimStopMessage or "Stop aiming before starting training."
+    end
+    local inspecting = ActionYield.contextOpen(player)
+    if state then state.contextVisible = inspecting end
+    if player:pressedAim() and not inspecting and not (state and state.inspectingUI) then
         if not state then return "Stop aiming before starting training." end
         local now = getTimestampMs()
         if not state.aimStarted or now < state.aimStarted then state.aimStarted = now end
-        if now - state.aimStarted >= 500 then return "Cancelled because you started aiming." end
+        if now - state.aimStarted >= 500 then return aimStopMessage end
     elseif state then state.aimStarted = nil end
     if player:isDraggingCorpse() then return "Stop dragging the corpse before training." end
     local stats = player:getStats()
@@ -320,7 +332,7 @@ local function resetSupply(state)
     state.supplyBaseline, state.awaitSupplyUntil, state.preparation, state.supplyGoal = nil, nil, nil, nil
 end
 
-local function yieldToPlayer(player, state)
+local function yieldToPlayer(player, state, unexplained)
     local entering = not state.yielding
     if entering then
         state.yielding = true
@@ -333,7 +345,10 @@ local function yieldToPlayer(player, state)
         -- Keep the way home, never the old target, item, action or portion.
         if state.excursion then state.excursion = {origin=state.excursion.origin, stage="resume-home"} end
         Nearby.invalidate(player)
-        if state.active then setPhase(state, "manual", "Waiting for your action. Training will resume when you are ready.") end
+        if state.active then
+            setPhase(state, "manual", unexplained and "Training was interrupted. Checking before resuming."
+                or "Waiting for your action. Training will resume when you are ready.")
+        end
     end
     state.idleSince = nil
     state.observedGameHours = player:getHoursSurvived()
@@ -976,10 +991,31 @@ function Controller.update(player)
     local occupied = ActionYield.occupied(player, queue, state) or state.inspectingUI
     local lost = state.active and lostTrainingAction(state, queue)
     local busy = occupied or lost or (state.active and player:pressedMovement(false))
-    if occupied then state.unknownPauses, state.quietMs = nil, 750
+    -- Recognized activity (including a long map/workout) has no time limit.
+    -- A stale native busy flag with neither a Lua action nor Java handle is
+    -- ambiguous: while recovering from a vanished action, only disarm our loop.
+    local unconfirmed = occupied and state.active and (lost or state.lostWithoutAction)
+        and not queue[1] and player:getCharacterActions():isEmpty() and not ISTimedActionQueue.isPlayerDoingAction(player)
+        and not state.inspectingUI and not state.contextVisible and not player:isAsleep() and not player:pressedMovement(false)
+    if unconfirmed then
+        if not state.unconfirmedSince or now < state.unconfirmedSince then state.unconfirmedSince = now end
+        if now - state.unconfirmedSince >= 5000 then
+            Controller.stop(player, "Training stopped; the game reported activity without a current action. Start again when ready.")
+            return
+        end
+    else
+        state.unconfirmedSince = nil
+    end
+    if (occupied and not unconfirmed) or state.contextVisible then
+        state.unknownPauses, state.quietMs, state.lostWithoutAction = nil, 750, nil
     elseif lost and not state.yielding then
-        state.unknownPauses = math.min(4, 1 + (state.unknownPauses or 0))
-        state.quietMs = math.min(5000, 750 * 2 ^ (state.unknownPauses - 1))
+        state.lostWithoutAction = true
+        state.unknownPauses = 1 + (state.unknownPauses or 0)
+        if state.unknownPauses >= 4 then
+            Controller.stop(player, "Training was interrupted repeatedly without another action. Start again when ready.")
+            return
+        end
+        state.quietMs = 750 * 2 ^ (state.unknownPauses - 1)
     end
     local quietMs = state.quietMs or 750
     if state.active then
@@ -995,7 +1031,7 @@ function Controller.update(player)
     if not state.active and #state.loans == 0 then return end
     if state.aimStarted then state.idleSince = nil; return end
     if busy then
-        yieldToPlayer(player, state)
+        yieldToPlayer(player, state, lost and not occupied and not state.contextVisible)
         return
     end
     if player:isAsleep() then
@@ -1007,7 +1043,7 @@ function Controller.update(player)
         if state.contextVisible then state.idleSince = nil; return end
         if not state.idleSince or now < state.idleSince then state.idleSince = now end
         if now - state.idleSince < quietMs then return end
-        state.yielding, state.idleSince = nil, nil
+        state.yielding, state.idleSince, state.lostWithoutAction = nil, nil, nil
         state.observedGameHours = player:getHoursSurvived()
         if state.active then setPhase(state, "resuming", "Checking your current needs and training spot.") end
     end
@@ -1171,6 +1207,7 @@ function Controller.start(player, mode, collectNearby)
     if not player or not player:isLocalPlayer() then return false, "Choose a local survivor." end
     if not modeTitles[mode] then return false, "Unknown training mode." end
     local old = stateFor(player)
+    if old.active and old.trainingAimStopped then Controller.stop(player, aimStopMessage) end
     if old.active then return false, "Training is already active. Stop before changing the mode." end
     if old.releasePending and not clearOwned(player, old) then return false, "Waiting for the previous action to settle." end
     local ready, message = available(player)

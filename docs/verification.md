@@ -10,6 +10,10 @@ python3 tools/verify.py
 
 The verification entry point builds the actual archive first, runs controller, supply, context/UI, consumable, world-water, fluid-transfer, and release-integrity contracts, and records results outside the repository. Portable contracts use explicit game-boundary doubles. They check scheduling, provenance, portions, refresh behavior, recovery, and terminal HUD card selection and progress; they do not prove multiplayer acceptance, actual rendering, animations, or a full real-time game journey.
 
+For cooperative training, the contracts track Lua and native action identities separately. They exercise ordinary queued actions, map-reading windows with an empty queue, a chair-to-floor transition, interrupted scout trips, spent supplies, quiet intervals and hard stops. The endurance suite includes full and nearly full values, long workouts, skill-cap meditation without XP, preparation before meditation actually starts, missing stats, and stopped recovery.
+
+For gameplay acceptance use a disposable survivor, not a personal save. Start both yoga and meditation separately; insert a workout, open and close a world and paper map, and verify the same mode resumes after each without a stop card. Check an occupied chair is left only after existing actions finish. Start endurance meditation below full, inspect the unchanged native stat during recovery, and confirm one completion at actual full. Verify genuine aiming, travel, danger and explicit Stop still terminate while waiting.
+
 ## Check the game's interpreter and upstream source
 
 ```sh
@@ -17,6 +21,8 @@ python3 tools/verify.py --game /path/to/ProjectZomboid/projectzomboid --lifestyl
 ```
 
 Use the directory containing `projectzomboid.jar` and `jre64/bin/java` for `--game`. Native checks also need a JDK compiler compatible with the game's Java 25 runtime. Game and Workshop content stay outside the repository and distribution. The report identifies tests that use the installed interpreter and upstream source, including any accelerated clocks or boundary doubles.
+
+Supplying the game also runs `tests/stock_queue.lua` against its unmodified queue and base action Lua. The Java character stack in that check is a double; this distinguishes stock Lua handoff behavior from an in-game playtest.
 
 Each Lua suite runs in a fresh installed Kahlua environment. The core suite can load Lifestyle's actual menu, action, and hidden-skill Lua. The water and fluid-transfer suites use the game's `media` reference root and execute the installed `ISTakeWaterAction.lua` and native fluid wrappers and transfer action respectively. Character, inventory, world, fluid storage, and network receivers remain explicit boundaries in these checks. Real client journeys are still required for rendering, server round trips, and actual resource movement.
 

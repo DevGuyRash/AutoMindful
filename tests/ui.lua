@@ -226,15 +226,28 @@ local parent = context:getSubMenu(context.options[1].subOption).options[1]
 local submenu = context:getSubMenu(parent.subOption)
 assert(parent.onSelect == nil and not parent.notAvailable, "A blocked native action still allows submenu navigation")
 assert(parent.toolTip == nil, "Parent tooltips do not cover the quick-action submenu")
-assert(submenu.options[1].name == "Open AutoMindful" and submenu.options[2].name == "Train meditation"
-    and submenu.options[3].name == "Check supplies", "Open window precedes the mode-specific quick actions")
-assert(submenu.options[2].toolTip.description:find("25 / 200 XP",1,true), "Quick-action tooltips include progress toward the next level")
-local manual = submenu.options[4]
+assert(submenu.options[1].name == "Open AutoMindful" and submenu.options[2].name == "Meditate to Full Endurance"
+    and submenu.options[3].name == "Train meditation" and submenu.options[4].name == "Check supplies",
+    "Open precedes the meditation-only endurance action and other quick actions")
+assert(submenu.options[3].toolTip.description:find("25 / 200 XP",1,true), "Quick-action tooltips include progress toward the next level")
+local endurance = submenu.options[2]
+player.data.AutoMindfulPreferences = {collectNearby=true}
+assert(endurance.onSelect(endurance.target, endurance.param1))
+assert(Controller.state.mode == "endurance" and Controller.state.collectNearby == false,
+    "The endurance context action bypasses the saved adjacent-supply setting")
+player.data.AutoMindfulPreferences = nil
+local occupiedMenu = ISContextMenu:new()
+ZenWellnessContextMenu.doBuildMenu(0, occupiedMenu, world)
+local occupiedWellness = occupiedMenu:getSubMenu(occupiedMenu.options[1].subOption)
+assert(occupiedMenu:getSubMenu(occupiedWellness.options[1].subOption).options[2].notAvailable,
+    "The endurance menu action cannot replace an active session")
+Controller.state.active = false
+local manual = submenu.options[5]
 assert(manual.notAvailable and manual.iconTexture == "native meditation icon" and manual.toolTip, "Native availability and presentation are retained")
 assert(manual.onSelect(manual.target) == "native meditation")
 assert(manualCall[1] == world and manualCall[2] == meditation and manualCall[3] == player, "Manual action retains native target and arguments")
 Context.attach(context, player)
-assert(#submenu.options == 4 and manual.subOption == nil, "Repeated menu attachment does not nest or duplicate manual actions")
+assert(#submenu.options == 5 and manual.subOption == nil, "Repeated menu attachment does not nest or duplicate manual actions")
 local wrapper = ZenWellnessContextMenu.doBuildMenu
 Context.install()
 assert(ZenWellnessContextMenu.doBuildMenu == wrapper, "Repeated installation is a no-op")
@@ -287,6 +300,8 @@ local function assertFooterVisible(view)
         "Buttons, refresh confirmation, and footer have separate visible rows")
     assert(view.body:getBottom() <= view.scouting.y and view.scouting:getBottom() <= view.nearby.y
         and view.nearby:getBottom() <= view.starts[1].y, "Both supply choices fit above the training controls")
+    assert(view.starts[1]:getBottom() <= view.enduranceButton.y and view.enduranceButton:getBottom() <= view.check.y
+        and view.enduranceButton.width == view.body.width, "The endurance button fits on its own visible row")
     local plain = footer.text:gsub("<LINE>", "\n"):gsub("<[^>]+>", "")
     for line in plain:gmatch("[^\n]+") do
         assert(getTextManager():MeasureStringX(UIFont.Small, line) <= footer.width, "Footer instructions fit on two unwrapped lines")
@@ -303,6 +318,21 @@ assert(shortWindow.body.height > 0 and shortWindow.body:getScrollHeight() > shor
 shortWindow:close()
 UI.windows[1] = nil
 core.getScreenHeight = screenHeight
+assert(window.enduranceButton.enable and window.enduranceButton.mode == "endurance",
+    "The window offers an enabled endurance job while idle")
+window:onStart(window.enduranceButton)
+assert(Controller.state.mode == "endurance" and not Controller.state.collectNearby and not window.enduranceButton.enable,
+    "The window starts endurance without supplies and disables the button during the active session")
+Controller.state.endurance = .999
+window:refresh()
+assert(window.activity.text:find("Recovering endurance (99%)", 1, true),
+    "Active endurance is rounded down and does not show 100% early")
+Controller.state.endurance = nil
+window:refresh()
+assert(window.activity.text:find("Recovering endurance", 1, true) and not window.activity.text:find("99%", 1, true),
+    "An unreadable stat does not claim a percentage")
+Controller.state.active = false
+window:refresh()
 assert(Controller.lastScope.collect == false and Controller.lastScope.preview == true, "Preview uses the actual collection setting")
 assert(window.report.food == 3 and window.report.nearbyFood == 5)
 assert(window.skills[1].bar.progress == 0.125 and window.skills[2].bar.progress == 0.4, "Skill bars represent XP within the current level")

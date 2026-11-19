@@ -33,10 +33,19 @@ end
 
 local function keepWaiters() end
 
+-- In stock B42 Kahlua, rawget(instance, key) can return a metatable method.
+-- Restore only a field this queue actually owned; otherwise later class hooks
+-- would be hidden behind a stale function copied onto the player instance.
+local function ownField(instance, key)
+    for name, value in pairs(instance) do
+        if name == key then return value end
+    end
+end
+
 local function deferHandoff(player, timed, head)
     if timed.autoMindfulHandoff then return timed.autoMindfulHandoff end
     local previous = timed.tick
-    local hold = {head=head, prior=rawget(timed, "tick")}
+    local hold = {head=head, prior=ownField(timed, "tick")}
     hold.tick = function(self)
         if ActionYield.finishHandoff(player) and previous then return previous(self) end
     end
@@ -47,7 +56,7 @@ end
 local function preserveWaiters(timed, fn, ...)
     -- Protect this player's actual queue only while stock stop/reset is on
     -- the stack. Additions remain visible and explicit later clears still win.
-    local reset, clear = rawget(timed, "resetQueue"), rawget(timed, "clearQueue")
+    local reset, clear = ownField(timed, "resetQueue"), ownField(timed, "clearQueue")
     timed.resetQueue, timed.clearQueue = keepWaiters, keepWaiters
     local ok, result = pcall(fn, ...)
     if timed.resetQueue == keepWaiters then timed.resetQueue = reset end

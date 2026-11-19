@@ -394,13 +394,18 @@ function Supplies.watchLoan(player, loan, item)
     if not known then loan.items[#loan.items + 1] = item end
 end
 
+local function expectsReplacement(types)
+    for _ in pairs(types) do return true end
+    return false
+end
+
 function Supplies.finishLoan(player, loan, now)
     if not loan or not loan.usedItem then return true end
     if not Supplies.inventoryItem(player, loan.usedItem) and not loan.interference then
         local replacements = Supplies.newOutputs(player, loan.before, loan.expected)
         if #replacements == 1 then loan.items[#loan.items + 1] = replacements[1]
         elseif #replacements > 1 then loan.notice = "An empty container could not be identified safely; it stays in your inventory."
-        elseif next(loan.expected) and now then
+        elseif now and expectsReplacement(loan.expected) then
             loan.awaitResultUntil = loan.awaitResultUntil or now + 3000
             if now < loan.awaitResultUntil then return false end
             loan.notice = "The game did not confirm an empty container; any delayed result stays in your inventory."

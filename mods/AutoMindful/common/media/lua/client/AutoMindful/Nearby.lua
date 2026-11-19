@@ -4,6 +4,7 @@ local Consumables = require "AutoMindful/Consumables"
 local Supplies = require "AutoMindful/Supplies"
 local Fluids = require "AutoMindful/Fluids"
 local Storage = require "AutoMindful/Storage"
+local PainCare = require "AutoMindful/PainCare"
 local Nearby = {}
 local snapshots = {}
 
@@ -49,7 +50,7 @@ function Nearby.invalidate(player)
 end
 
 function Nearby.scan(player, originSquare, radius, force)
-    local result = {food = {}, water = {}, literature = {}, waterSources = {},
+    local result = {food = {}, water = {}, literature = {}, pain = {}, waterSources = {},
         unknownTargets = {}, containerCount = 0, unloadedSquares = 0, cooldownLiterature = 0, potentialBulk = 0}
     local here = player:getSquare()
     if not here or not originSquare or here:getZ() ~= originSquare:getZ() then return result end
@@ -67,6 +68,10 @@ function Nearby.scan(player, originSquare, radius, force)
         seenItems[item] = true
         local entry = {square = square, key = key(square), item = item, container = container, owned = false, part = part}
         if part then entry.key = entry.key .. ":vehicle:" .. tostring(part:getVehicle():getId()) .. ":" .. tostring(part:getIndex()) end
+        if PainCare.eligible(item) then
+            result.pain[#result.pain + 1] = entry
+            return
+        end
         local description = Consumables.inspect(player, item, false)
         entry.description = description
         if description.needsVessel and (description.food or description.water) then
@@ -168,7 +173,7 @@ function Nearby.scan(player, originSquare, radius, force)
 end
 
 function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWorldWater)
-    if kind ~= "food" and kind ~= "water" and kind ~= "literature" then return nil end
+    if kind ~= "food" and kind ~= "water" and kind ~= "literature" and kind ~= "pain" then return nil end
     local here = player:getSquare()
     if not here or not originSquare or here:getZ() ~= originSquare:getZ() then return nil end
     local snapshot = Nearby.scan(player, originSquare, radius)
@@ -199,8 +204,8 @@ function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWo
     local best = not onlyWorldWater and choose(snapshot[kind], false) or nil
     if kind == "water" then best = choose(snapshot.waterSources, false, best) end
     if best then return best end
-    -- World-only thirst cannot be addressed by opening an unknown item container.
-    if not onlyWorldWater then return choose(snapshot.unknownTargets, true) end
+    -- Pain care only scouts known medicine; never rummage blind for a dose.
+    if kind ~= "pain" and not onlyWorldWater then return choose(snapshot.unknownTargets, true) end
 end
 
 return Nearby

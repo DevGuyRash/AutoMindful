@@ -31,6 +31,19 @@ local function usableWater(object)
     return object:getPrimaryFluid() == Fluid.Water
 end
 
+-- Revalidate a radius-cache entry before handing its current object to stock pathfinding.
+function Nearby.waterObject(player, target)
+    local part = target.object
+    if not part or part:getSquare() ~= target.square then return nil end
+    local master = part:getMasterObject()
+    local square = master and master:getSquare()
+    local ground = instanceof(part, "IsoWorldInventoryObject")
+    if not square or not permitted(player, target.square, ground) or not permitted(player, square, ground)
+            or (instanceof(master, "IsoThumpable") and master:isLockedToCharacter(player))
+            or (ground and (not part:getItem() or part:getItem():isSealed())) or not usableWater(master) then return nil end
+    return master
+end
+
 function Nearby.invalidate(player)
     snapshots[player] = nil
 end
@@ -172,7 +185,8 @@ function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWo
             if not rejection and (allowAdjacent or (entry.part and not Storage.vehicleAccessible(player, entry.part))
                     or math.abs(dx) > 1 or math.abs(dy) > 1) then
                 local distance = dx * dx + dy * dy
-                if not best or distance < best.distance or (distance == best.distance and targetKey < best.key) then
+                if not best or distance < best.distance or (distance == best.distance and (targetKey < best.key
+                        or (targetKey == best.key and entry.object and entry.item and entry.item == best.item and not best.object))) then
                     -- Do not mutate the shared snapshot while choosing targets.
                     best = {square = square, key = targetKey, distance = distance,
                         unknown = entry.unknown, container = entry.container,

@@ -186,6 +186,16 @@ test("selection prefers current remaining water rather than discovery order or c
     assert(Sources.choose(p, {}).object == large)
 end)
 
+test("a scouted water object cannot be substituted by a larger source when it becomes unsafe", function()
+    local p = player()
+    local tap = source(square(1,0)); tap.amount=2
+    local other = source(square(0,1)); other.amount=5
+    assert(Sources.choose(p,{}).object==other)
+    assert(Sources.choose(p,{},tap).object==tap)
+    tap.tainted=true
+    assert(not Sources.choose(p,{},tap) and Sources.choose(p,{}).object==other)
+end)
+
 test("unsafe and sealed sources cannot enter the drink queue", function()
     for _, flag in ipairs({"tainted", "poison", "sickness", "alcohol", "otherFluid", "sealed"}) do
         local p = player()

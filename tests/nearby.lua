@@ -44,7 +44,9 @@ local function container(items, explored)
     return c
 end
 local function object(s, items)
-    local o = {kind="IsoObject",containers={}}
+    local o = {kind="IsoObject",containers={},square=s}
+    function o:getSquare() return self.square end
+    function o:getMasterObject() return self.master or self end
     if items then o.containers={container(items)} end
     function o:hasWater() return self.water == true end
     function o:getFluidAmount() return self.empty and 0 or 5 end
@@ -80,6 +82,18 @@ local function find(kind,radius,rejected,worldOnly)
     return Nearby.find(player,kind,origin,radius or 10,rejected,worldOnly)
 end
 local function refresh() Nearby.invalidate(player) end
+reset()
+local tile=square(5,0)
+local bottle=item({water=true})
+local water=ground(tile,bottle); water.water=true
+local target=find("water")
+assert(target.object==water and target.item==bottle and Nearby.waterObject(player,target)==water,
+    "A directly drinkable ground vessel keeps its world object even when it is also a portable supply")
+water.tainted=true; assert(not Nearby.waterObject(player,target)); water.tainted=false
+bottle.sealed=true; assert(not Nearby.waterObject(player,target)); bottle.sealed=false
+client=true;tile.noLoot=true; assert(not Nearby.waterObject(player,target)); tile.noLoot=false
+water.square=nil; assert(not Nearby.waterObject(player,target)); water.square=tile
+assert(Nearby.waterObject(player,target)==water)
 reset()
 local adjacent=object(square(1,0),{item({food=true})})
 local far=object(square(8,0),{item({food=true,book=true})})

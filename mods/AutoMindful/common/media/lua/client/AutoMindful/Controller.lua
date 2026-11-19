@@ -504,13 +504,15 @@ end
 local function beginExcursion(player, state, kind, onlyWorldWater)
     local target = nearbyTarget(player, state, kind, onlyWorldWater)
     if not target then return false end
-    if not vehicleTargetAvailable(player, target) then
+    local worldWater = kind == "water" and target.object ~= nil
+    local waterObject = worldWater and Nearby.waterObject(player, target) or nil
+    if (worldWater and not waterObject) or not vehicleTargetAvailable(player, target) then
         state.travelRejected[target.key] = true
         state.travelScan = nil
         return false
     end
     state.excursion = {origin = player:getSquare(), target = target, kind = kind,
-        onlyWorldWater = onlyWorldWater, stage = "outbound"}
+        onlyWorldWater = onlyWorldWater, waterObject = waterObject, stage = "outbound"}
     state.travelScan = nil
     local here = player:getSquare()
     if target.unknown and ((target.part and Storage.vehicleAccessible(player, target.part))
@@ -520,7 +522,9 @@ local function beginExcursion(player, state, kind, onlyWorldWater)
         return true
     end
     local route
-    local queued = ownBatch(player, state, "travelling", "Walking to a supply container; returning here after care.", function()
+    local message = waterObject and "Walking to a clean-water source; returning here after care."
+        or "Walking to a supply container; returning here after care."
+    local queued = ownBatch(player, state, "travelling", message, function()
         prepareScoutWalk()
         if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
         if target.part then
@@ -529,6 +533,8 @@ local function beginExcursion(player, state, kind, onlyWorldWater)
                 ISTimedActionQueue.add(ISPathFindAction:pathToVehicleArea(player, vehicle, target.part:getArea()))
                 route = true
             end
+        elseif waterObject then
+            route = luautils.walkAdjObject(player, waterObject, true, true)
         else
             route = luautils.walkAdj(player, target.square, true)
         end
@@ -556,11 +562,18 @@ local function returnToOrigin(player, state)
     end)
 end
 
-local function supply(player, state, kind, onlyWorldWater)
+local function supply(player, state, kind, onlyWorldWater, waterObject)
     if kind == "literature" and player:tooDarkToRead() then return beginExcursion(player, state, kind, onlyWorldWater) end
     state.supplyMissingReason = nil
     local collect = state.collectNearby or Options.searchNearby() or state.excursion ~= nil
-    local entry = Supplies.choose(player, kind, collect, state.rejected, onlyWorldWater)
+    local entry
+    if waterObject then
+        local source = WaterSources.choose(player, state.rejected, waterObject)
+        if not source then return false end
+        entry = {source=source}
+    else
+        entry = Supplies.choose(player, kind, collect, state.rejected, onlyWorldWater)
+    end
     while entry and entry.source do
         local source = entry.source
         state.supplyItem, state.supplyLoan, state.collectingItem = nil, nil, nil
@@ -580,6 +593,7 @@ local function supply(player, state, kind, onlyWorldWater)
             state.pending = nil
         end
         if queued then return true end
+        if waterObject then return false end
         entry = Supplies.choose(player, kind, collect, state.rejected, onlyWorldWater)
     end
     if entry and entry.transfer then
@@ -981,7 +995,11 @@ function Controller.update(player)
             local arrived = here and here:getZ() == target:getZ()
                 and math.abs(here:getX()-target:getX()) <= 1 and math.abs(here:getY()-target:getY()) <= 1
                 and (sameSquare(here, target) or here:canReachTo(target))
-            if trip.target.part then
+            if trip.waterObject then
+                -- Object paths may arrive at another part of a multi-tile fixture.
+                -- The inspection below still requires this exact adjacent, usable source.
+                arrived = not failedPath or WaterSources.choose(player, state.rejected, trip.waterObject) ~= nil
+            elseif trip.target.part then
                 arrived = vehicleTargetAvailable(player, trip.target) and Storage.vehicleAccessible(player, trip.target.part)
             end
             if arrived and Options.searchNearby() then
@@ -998,19 +1016,21 @@ function Controller.update(player)
     if trip and trip.stage == "inspect" then
         if Options.searchNearby() and (not trip.target.part or (vehicleTargetAvailable(player, trip.target) and Storage.vehicleAccessible(player, trip.target.part))) then
             Supplies.refreshNearby(player)
-            if supply(player, state, trip.kind, trip.onlyWorldWater) then
+            if supply(player, state, trip.kind, trip.onlyWorldWater, trip.waterObject) then
                 trip.stage = "care"
                 Nearby.invalidate(player)
                 return
             end
             if now < trip.inspectUntil then
-                setPhase(state, "scouting", "Waiting for this container's contents; unknown is not empty.")
+                setPhase(state, "scouting", trip.waterObject and "Checking the selected water source is still usable."
+                    or "Waiting for this container's contents; unknown is not empty.")
                 return
             end
         end
         state.travelRejected[trip.target.key] = true
         state.travelScan = nil
-        state.careNotice = "This container did not confirm a usable supply. Returning before trying another source."
+        state.careNotice = trip.waterObject and "The selected water source was not usable. Returning before trying another source."
+            or "This container did not confirm a usable supply. Returning before trying another source."
         trip.stage = "care"
         Nearby.invalidate(player)
     end

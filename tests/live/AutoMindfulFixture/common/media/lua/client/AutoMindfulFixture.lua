@@ -95,21 +95,29 @@ end
 
 local scoutCase
 local function startScoutCase(player, mode)
-    if mode ~= "book" and mode ~= "fast-empty" then return end
+    if mode == "stop" and scoutCase then
+        Controller.stop(player, "Finished the scouting journey fixture.")
+        removeFixtureItem(scoutCase.item)
+        scoutCase = nil
+        return
+    end
+    if mode ~= "book" and mode ~= "fast-empty" and mode ~= "corn" then return end
+    local corn = mode == "corn"
     local status, origin = Controller.status(player), player:getSquare()
-    if status.active or status.pendingReturns > 0 or player:tooDarkToRead() then
+    if status.active or status.pendingReturns > 0 or (not corn and player:tooDarkToRead()) then
         print("[AutoMindfulFixture] SCOUTCASE_PRECONDITION need idle survivor, no loans and reading light"); return
     end
     if scoutCase then removeFixtureItem(scoutCase.item); scoutCase=nil end
-    clearLiterature(player)
+    if corn then clearProvisions(player) else clearLiterature(player) end
     local target = scoutTargetSquare(origin)
     if not target then print("[AutoMindfulFixture] SCOUTCASE_PRECONDITION need six clear floor tiles"); return end
-    local item = target:AddWorldInventoryItem(mode=="book" and "Base.Book" or "Base.Bag_Schoolbag", 0.4, 0.4, 0)
+    local itemType = corn and "Base.Corn" or (mode == "book" and "Base.Book" or "Base.Bag_Schoolbag")
+    local item = target:AddWorldInventoryItem(itemType, 0.4, 0.4, 0)
     if mode=="fast-empty" then item:getInventory():setExplored(false) end
     Options.setSearchNearby(true)
     Nearby.invalidate(player)
-    local selected = Nearby.find(player, "literature", origin, Options.searchRadius(), {})
-    if not selected or (mode=="book" and selected.item~=item)
+    local selected = Nearby.find(player, corn and "food" or "literature", origin, Options.searchRadius(), {})
+    if not selected or ((corn or mode=="book") and selected.item~=item)
             or (mode=="fast-empty" and selected.container~=item:getInventory()) then
         removeFixtureItem(item)
         print("[AutoMindfulFixture] SCOUTCASE_PRECONDITION move away from competing supplies"); return
@@ -117,13 +125,86 @@ local function startScoutCase(player, mode)
     local stats = player:getStats()
     for _, key in ipairs({"HUNGER","THIRST","FATIGUE","PANIC"}) do stats:set(CharacterStat[key], 0) end
     stats:set(CharacterStat.ENDURANCE, 1)
-    stats:set(CharacterStat.BOREDOM, mode=="book" and 40 or 25)
-    scoutCase = {mode=mode, item=item, origin=origin}
+    stats:set(CharacterStat.BOREDOM, corn and 0 or (mode=="book" and 40 or 25))
+    local before
+    if corn then
+        local consumables = require "AutoMindful/Consumables"
+        local supplies = require "AutoMindful/Supplies"
+        stats:set(CharacterStat.HUNGER, math.max(0.16, -item:getHungerChange()+0.005))
+        player:getNutrition():setCalories(1000)
+        supplies.refreshNearby(player)
+        local hasReplacement = false
+        for _ in pairs(consumables.replacements(item)) do hasReplacement = true end
+        if hasReplacement or supplies.choose(player, "food", true, {}) then
+            removeFixtureItem(item)
+            print("[AutoMindfulFixture] SCOUTCASE_PRECONDITION need corn with no replacement and no food reachable at origin"); return
+        end
+        before = supplies.inventoryIDs(player)
+    end
     local started,message = Controller.start(player, "meditation", false)
-    print("[AutoMindfulFixture] SCOUTCASE mode="..mode.." started="..tostring(started).." "..tostring(message))
+    if started then scoutCase = {mode=mode, item=item, origin=origin, target=target, before=before}
+    else removeFixtureItem(item) end
+    print("[AutoMindfulFixture] SCOUTCASE mode="..mode.." started="..tostring(started).." itemID="..item:getID().." "..tostring(message))
 end
 
-local waterCase
+local waterCase, waterProbe
+local function beginWaterCase(player, mode, item, origin, source)
+    local started, message = Controller.start(player, "meditation", false)
+    if started then
+        waterCase = {mode=mode, item=item, origin=origin, source=source, before=source:getFluidAmount()}
+        print("[AutoMindfulFixture] WATERCASE mode=" .. mode .. " started=true target=" .. source:getSquare():getX()
+            .. "," .. source:getSquare():getY() .. " amount=" .. waterCase.before)
+    else
+        removeFixtureItem(item)
+        print("[AutoMindfulFixture] WATERCASE_PRECONDITION " .. tostring(message))
+    end
+end
+
+local function mainsSource(source)
+    local reservoir = source:getFluidContainer()
+    return not instanceof(source, "IsoWorldInventoryObject") and not source:isTaintedWater()
+        and source:getFluidAmount() == 10000 and source:getFluidCapacity() == 10000
+        and not source:getUsesExternalWaterSource() and (not reservoir or reservoir:getAmount() ~= 10000)
+end
+
+local function waterPosition(square)
+    return square:getX() .. "," .. square:getY()
+end
+
+local function finishWaterProbe(player)
+    local probe = waterProbe
+    if not probe then return end
+    if player:hasTimedActions() then
+        if getTimestampMs() > probe.deadline then
+            waterProbe = nil
+            print("[AutoMindfulFixture] WATERCASE_PRECONDITION native preflight did not finish in 20 seconds")
+        end
+        return
+    end
+    local here = player:getSquare()
+    local supplies = require "AutoMindful/Supplies"
+    supplies.refreshNearby(player)
+    local choice = supplies.choose(player, "water", true, {})
+    if probe.walkingOut then
+        if here == probe.origin or here:getRoom() ~= probe.origin:getRoom()
+                or not choice or not choice.source or choice.source.object ~= probe.source then
+            waterProbe = nil
+            print("[AutoMindfulFixture] WATERCASE_PRECONDITION native walkAdjObject ended at " .. waterPosition(here)
+                .. " without the intended same-room mains drink"); return
+        end
+        print("[AutoMindfulFixture] WATERCASE_ROUTE native walkAdjObject usable endpoint=" .. waterPosition(here))
+        probe.walkingOut = false
+        ISTimedActionQueue.add(ISWalkToTimedAction:new(player, probe.origin))
+        return
+    end
+    waterProbe = nil
+    if here ~= probe.origin or choice then
+        print("[AutoMindfulFixture] WATERCASE_PRECONDITION native return missed origin or hydration is reachable there"); return
+    end
+    print("[AutoMindfulFixture] WATERCASE_ROUTE native return reached origin=" .. waterPosition(here))
+    beginWaterCase(player, "mains", nil, probe.origin, probe.source)
+end
+
 local function startWaterCase(player, mode)
     if mode == "stop" and waterCase then
         Controller.stop(player, "Finished the water journey fixture.")
@@ -133,7 +214,7 @@ local function startWaterCase(player, mode)
     end
     if mode ~= "finite" and mode ~= "mains" then return end
     local status, origin = Controller.status(player), player:getSquare()
-    if status.active or status.pendingReturns > 0 then
+    if status.active or status.pendingReturns > 0 or player:hasTimedActions() or waterProbe then
         print("[AutoMindfulFixture] WATERCASE_PRECONDITION need idle survivor and no loans"); return
     end
     if waterCase then removeFixtureItem(waterCase.item); waterCase = nil end
@@ -149,11 +230,11 @@ local function startWaterCase(player, mode)
     end
     Options.setSearchNearby(true)
     Nearby.invalidate(player)
-    local selected = Nearby.find(player, "water", origin, Options.searchRadius(), {}, true)
+    local selected = Nearby.find(player, "water", origin, Options.searchRadius(), {}, mode == "finite")
     local source = selected and selected.object and selected.object:getMasterObject()
     local adjacent = require "AutoMindful/WaterSources"
     if adjacent.choose(player, {}) or not source or (mode == "finite" and source ~= item:getWorldItem())
-            or (mode == "mains" and (instanceof(source, "IsoWorldInventoryObject") or source:isTaintedWater())) then
+            or (mode == "mains" and (not origin:getRoom() or not mainsSource(source))) then
         removeFixtureItem(item)
         print("[AutoMindfulFixture] WATERCASE_PRECONDITION need expected distant clean source and no adjacent water"); return
     end
@@ -162,15 +243,16 @@ local function startWaterCase(player, mode)
     stats:set(CharacterStat.ENDURANCE, 1)
     stats:set(CharacterStat.THIRST, 0.25)
     player:getNutrition():setCalories(1000)
-    local started, message = Controller.start(player, "meditation", false)
-    if started then
-        waterCase = {mode=mode, item=item, origin=origin, source=source, before=source:getFluidAmount()}
-        print("[AutoMindfulFixture] WATERCASE mode=" .. mode .. " started=true target=" .. source:getSquare():getX()
-            .. "," .. source:getSquare():getY() .. " amount=" .. waterCase.before)
-    else
-        removeFixtureItem(item)
-        print("[AutoMindfulFixture] WATERCASE_PRECONDITION " .. tostring(message))
+    if mode == "finite" then beginWaterCase(player, mode, item, origin, source); return end
+    local supplies = require "AutoMindful/Supplies"
+    supplies.refreshNearby(player)
+    if supplies.choose(player, "water", true, {}) or getGameSpeed() ~= 1
+            or not luautils.walkAdjObject(player, source, true, true) or not player:hasTimedActions() then
+        print("[AutoMindfulFixture] WATERCASE_PRECONDITION need normal speed, no competing hydration, and a native outbound walk"); return
     end
+    waterProbe = {origin=origin, source=source, walkingOut=true, deadline=getTimestampMs()+20000}
+    print("[AutoMindfulFixture] WATERCASE_ROUTE probing native walkAdjObject from=" .. waterPosition(origin)
+        .. " target=" .. waterPosition(source:getSquare()))
 end
 
 local function setupFluidCase(player, mode)
@@ -378,6 +460,12 @@ Events.OnPlayerUpdate.Add(function(player)
     if player == getSpecificPlayer(0) then
         local queue = ISTimedActionQueue.getTimedActionQueue(player).queue
         for _,action in ipairs(queue) do
+            if scoutCase and scoutCase.mode == "corn" and not scoutCase.eat and action.Type == "ISEatFoodAction"
+                    and (action.item == scoutCase.item or action.food == scoutCase.item)
+                    and scoutCase.item:getContainer() == player:getInventory() and player:getSquare() ~= scoutCase.origin then
+                scoutCase.eat = true
+                print("[AutoMindfulFixture] CORNACTION native ISEatFoodAction for borrowed itemID=" .. scoutCase.item:getID())
+            end
             if action.Type == "ISTakeWaterAction" and action ~= lastWaterAction then
                 lastWaterAction = action
                 local object = action.waterObject
@@ -402,6 +490,7 @@ Events.OnPlayerUpdate.Add(function(player)
     end
     if player ~= getSpecificPlayer(0) or getTimestampMs() < nextReport then return end
     nextReport = getTimestampMs() + 1000
+    finishWaterProbe(player)
     local status = Controller.status(player)
     if waterCase and not waterCase.reported and (status.phase == "meditation" or status.phase == "stopped") then
         waterCase.reported = true
@@ -415,6 +504,26 @@ Events.OnPlayerUpdate.Add(function(player)
         print("[AutoMindfulFixture] WATERCASE_RESULT mode=" .. waterCase.mode .. " pass=" .. tostring(passed)
             .. " phase=" .. status.phase .. " atOrigin=" .. tostring(atOrigin) .. " drinks=" .. (waterCase.drinks or 0)
             .. " thirst=" .. thirst .. " before=" .. waterCase.before .. " after=" .. amount)
+    end
+    if scoutCase and scoutCase.mode == "corn" and not scoutCase.reported
+            and (status.phase == "meditation" or status.phase == "stopped") then
+        scoutCase.reported = true
+        local supplies = require "AutoMindful/Supplies"
+        local absent = not supplies.inventoryItem(player, scoutCase.item)
+        local objects = scoutCase.target:getWorldObjects()
+        for index=0,objects:size()-1 do
+            if objects:get(index):getItem():getID() == scoutCase.item:getID() then absent = false end
+        end
+        local replacements = 0
+        for id in pairs(supplies.inventoryIDs(player)) do
+            if not scoutCase.before[id] then replacements = replacements+1 end
+        end
+        local atOrigin = player:getSquare() == scoutCase.origin
+        local passed = status.active and status.phase == "meditation" and atOrigin and scoutCase.eat
+            and absent and replacements == 0 and status.pendingReturns == 0 and not status.returnNotice
+        print("[AutoMindfulFixture] SCOUTCASE_RESULT mode=corn pass=" .. tostring(passed == true)
+            .. " phase=" .. status.phase .. " atOrigin=" .. tostring(atOrigin) .. " ate=" .. tostring(scoutCase.eat == true)
+            .. " absent=" .. tostring(absent) .. " newItems=" .. replacements .. " pendingReturns=" .. status.pendingReturns)
     end
     local levelText = tostring(status.meditation) .. "/" .. tostring(status.yoga)
     if scoutCase and scoutCase.mode=="fast-empty" and not scoutCase.sped and status.phase=="scouting" then
@@ -526,6 +635,20 @@ Events.OnPlayerUpdate.Add(function(player)
                                         .. " y=" .. object:getSquare():getY() .. " amount=" .. object:getFluidAmount()
                                         .. " tainted=" .. tostring(object:isTaintedWater())
                                         .. " sprite=" .. tostring(object:getSprite() and object:getSprite():getName()))
+                                    local sink = object:getSquare()
+                                    local room = sink:getRoom()
+                                    if room and mainsSource(object) then
+                                        for _, delta in ipairs({{1,0},{-1,0},{0,1},{0,-1}}) do
+                                            for step=2,4 do
+                                                local origin = getCell():getGridSquare(sink:getX()+delta[1]*step,
+                                                    sink:getY()+delta[2]*step, sink:getZ())
+                                                if origin and origin:getRoom() == room and origin:isFree(false) then
+                                                    print("[AutoMindfulFixture] WATERORIGIN candidate=" .. waterPosition(origin)
+                                                        .. " sink=" .. waterPosition(sink))
+                                                end
+                                            end
+                                        end
+                                    end
                                 end
                             end
                         end

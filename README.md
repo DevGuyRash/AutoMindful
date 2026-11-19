@@ -21,6 +21,8 @@ AutoMindful uses client Lua for Build 42.22 and later. It has no server scripts.
 3. While standing, open **Yoga**. While sitting on the ground, open **Meditate**.
 4. Choose **Open AutoMindful** for the window, **Train yoga** or **Train meditation** for a skill loop, or **Meditate to Full Endurance** for one recovery session. **Check supplies** opens the live report without interrupting training.
 
+The menu uses a window for **Open**, a crate for **Check supplies**, a standing or seated figure for each skill, and a heart for **Full Endurance**. The manual **(once)** action keeps Lifestyle's artwork when available.
+
 The original single-session Lifestyle action remains in the submenu. **Train both** is available in the AutoMindful window. Context menus follow Lifestyle's posture and availability rules instead of appearing everywhere by default.
 
 During a running session, **AutoMindful (running)** lets you reopen the window even while Lifestyle hides its normal menu for timed actions. Closing the window or pressing Escape hides it without cancelling training. Loading a save or rejoining a server does not start the loop automatically.

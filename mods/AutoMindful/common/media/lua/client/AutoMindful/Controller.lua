@@ -15,6 +15,7 @@ require "Vehicles/TimedActions/ISPathFindAction"
 local Options = require "AutoMindful/Options"
 local ActionYield = require "AutoMindful/ActionYield"
 local EnduranceGoal = require "AutoMindful/EnduranceGoal"
+local PainCare = require "AutoMindful/PainCare"
 require "TimedActions/WalkToTimedAction"
 
 AutoMindful = AutoMindful or {}
@@ -486,7 +487,44 @@ local function finishFluidPreparation(player, state, failed, now)
     return "consume", vessel, flow.vesselLoan
 end
 
+local function wantsPainCare(player, state, now)
+    local wanted, reason = PainCare.wanted(player, state, now)
+    if reason then
+        state.painNotice, state.painNoticeUntil = reason, nil
+    elseif not wanted and (not state.painNoticeUntil or now >= state.painNoticeUntil) then
+        state.painNotice = nil
+    end
+    return wanted
+end
+
+local function usePainkiller(player, state, item, loan)
+    local now = getTimestampMs()
+    local permitted = Supplies.painLoanAllowed(player, loan, state.collectNearby or Options.searchNearby())
+    if not wantsPainCare(player, state, now) or not PainCare.eligible(item) or not permitted then
+        if not permitted then state.painNotice = "Borrowed Painkillers are no longer permitted; returning them if possible." end
+        if loan then loan.defer = nil end
+        resetSupply(state)
+        return false
+    end
+    state.supplyItem, state.supplyKind, state.supplyLoan = item, "pain", loan
+    if loan then loan.defer = true end
+    Supplies.watchLoan(player, loan, item)
+    local started, reason
+    local queued = ownBatch(player, state, "paincare", "Taking one dose of stock Painkillers.", function()
+        started, reason = PainCare.queue(player, state, item, now)
+    end)
+    if not started then state.painNotice = reason or "The game did not start pain relief." end
+    if queued then return true end
+    -- No native action was added. Never claim a dose, or retry an ambiguous
+    -- submission: PainCare keeps a distinct guard for each survivor.
+    state.painNextScan, state.pending = now + 5000, nil
+    if loan then loan.defer = nil end
+    resetSupply(state)
+    return false
+end
+
 local function useSupply(player, state, kind, item, loan)
+    if kind == "pain" then return usePainkiller(player, state, item, loan) end
     local descriptor = Consumables.inspect(player, item, state.collectNearby or Options.searchNearby() or state.excursion ~= nil)
     if kind ~= "literature" and not descriptor[kind] then
         state.rejected[item:getID()] = getTimestampMs() + 60000
@@ -559,7 +597,7 @@ local function nearbyTarget(player, state, kind, onlyWorldWater)
     if state.excursion or not Options.searchNearby() then return nil end
     state.travelRejected = state.travelRejected or {}
     local now, square, radius = getTimestampMs(), player:getSquare(), Options.searchRadius()
-    local critical = kind ~= "literature" and player:getMoodles():getMoodleLevel(
+    local critical = (kind == "food" or kind == "water") and player:getMoodles():getMoodleLevel(
         kind == "water" and MoodleType.THIRST or MoodleType.HUNGRY) >= 4
     state.travelScan = state.travelScan or {}
     local cached = state.travelScan[kind]
@@ -644,6 +682,7 @@ local function returnToOrigin(player, state)
 end
 
 local function supply(player, state, kind, onlyWorldWater, waterObject)
+    if kind == "pain" and not wantsPainCare(player, state, getTimestampMs()) then return false end
     if kind == "literature" and player:tooDarkToRead() then return beginExcursion(player, state, kind, onlyWorldWater) end
     state.supplyMissingReason = nil
     local collect = state.collectNearby or Options.searchNearby() or state.excursion ~= nil
@@ -683,7 +722,7 @@ local function supply(player, state, kind, onlyWorldWater, waterObject)
     end
     if not entry then
         if beginExcursion(player, state, kind, onlyWorldWater) then return true end
-        if kind ~= "literature" then
+        if kind == "water" or kind == "food" then
             local report = Supplies.report(player, state.collectNearby or Options.searchNearby())
             state.supplyMissingReason = state.supplyMissingReason
                 or report.fluidReason or (kind == "water" and report.waterSourceReason or report.openingReason)
@@ -692,11 +731,12 @@ local function supply(player, state, kind, onlyWorldWater, waterObject)
     end
     local item = entry.item
     local loan = loanFor(player, state, item)
+    if kind == "pain" and loan then loan.pain = true end
     state.supplyItem, state.supplyKind, state.supplyLoan = item, kind, loan
     if item:getContainer() ~= player:getInventory() then
         state.collectingItem = item
         return ownBatch(player, state, "collecting", "Collecting " .. item:getDisplayName() .. ".", function()
-            Supplies.transfer(player, item)
+            Supplies.transfer(player, item, kind == "pain" and loan or nil)
         end)
     end
     state.collectingItem = nil
@@ -740,6 +780,22 @@ local function comfortSupplyAvailable(player, state, kind)
     if full and kind == "food" then return false end
     return Supplies.choose(player, kind, state.collectNearby or Options.searchNearby(), state.rejected, full) ~= nil
         or nearbyTarget(player, state, kind, full) ~= nil
+end
+
+-- Mild pain is optional care: only interrupt our own meditation for a known,
+-- usable treatment. Don't disturb a Yoga action; its successful poses can
+-- already ease pain and Lifestyle penalizes stopping early.
+local function painAvailable(player, state, now)
+    if not wantsPainCare(player, state, now) then return false end
+    if state.painNextScan and now < state.painNextScan and state.painNextScan - now <= 5000 then return false end
+    if Supplies.choose(player, "pain", state.collectNearby or Options.searchNearby(), state.rejected)
+            or nearbyTarget(player, state, "pain", false) then
+        state.painNotice = nil
+        return true
+    end
+    state.painNextScan = now + 5000
+    state.painNotice = "Pain is rising. No usable stock Painkillers found within the permitted supply range."
+    return false
 end
 
 local function care(player, state)
@@ -811,6 +867,7 @@ local function advance(player, state)
         return
     end
     if care(player, state) then return end
+    if painAvailable(player, state, getTimestampMs()) and supply(player, state, "pain") then return end
     local canYoga, yogaMessage = yogaGate(player, state)
     local boredom, pain = stat(player, "BOREDOM"), stat(player, "PAIN")
     if needsMeditation and boredom >= 20 then
@@ -866,6 +923,19 @@ local function finishPending(player, state, now)
             state.pending, state.collectingItem = nil, nil
             return useSupply(player, state, kind, item, loan)
         end
+    elseif state.supplyKind == "pain" then
+        -- A completed client animation is not an authoritative medicine receipt.
+        local status, note = PainCare.receipt(player, state, now)
+        state.painNotice, state.painNoticeUntil = note, now + 8000
+        if status == "pending" then
+            setPhase(state, "paincare", "Waiting for the game to confirm pain relief.")
+            return true
+        end
+        if not Supplies.finishLoan(player, state.supplyLoan, now) then return true end
+        if state.supplyLoan then state.supplyLoan.defer = nil end
+        state.pending = nil
+        resetSupply(state)
+        return false
     elseif state.preparation then
         local preparation = state.preparation
         local candidates = {}
@@ -989,6 +1059,10 @@ function Controller.update(player)
         elseif state.pending or state.releasePending then clearOwned(player, state) end
         return
     end
+    if state.active and not state.endurance then
+        PainCare.observe(player, state, now)
+        PainCare.observeForeign(player, state, queue, now)
+    end
     local occupied = ActionYield.occupied(player, queue, state) or state.inspectingUI
     local lost = state.active and lostTrainingAction(state, queue)
     local busy = occupied or lost or (state.active and player:pressedMovement(false))
@@ -1050,6 +1124,17 @@ function Controller.update(player)
     end
     if state.lastUpdate and now >= state.lastUpdate and now - state.lastUpdate < 250 then return end
     state.lastUpdate = now
+    local trip = state.excursion
+    if trip and trip.kind == "pain" and (trip.stage == "outbound" or trip.stage == "inspect")
+            and (not Options.searchNearby() or criticalNeed(player, "water") or criticalNeed(player, "food")
+                or not wantsPainCare(player, state, now)) then
+        -- The need, treatment or permission can change while walking. Never
+        -- borrow or dose just because a previously valid trip reached its target.
+        trip.stage = "resume-home"
+        clearOwned(player, state)
+        if not state.releasePending then returnToOrigin(player, state) end
+        return
+    end
     if state.excursion and state.excursion.stage == "outbound" and state.excursion.target.part
             and not vehicleTargetAvailable(player, state.excursion.target) then
         Controller.stop(player, "The vehicle supply source moved or became inaccessible. Stopped without forcing movement.")
@@ -1083,7 +1168,8 @@ function Controller.update(player)
             local reading = boredom >= 20 and comfortSupplyAvailable(player, state, "literature")
             local eating = stat(player, "HUNGER") >= 0.2 and comfortSupplyAvailable(player, state, "food")
             local drinking = stat(player, "THIRST") >= 0.2 and comfortSupplyAvailable(player, state, "water")
-            if meditation >= 10 or boredom > 30 or reading or eating or drinking
+            local pain = not state.contextVisible and painAvailable(player, state, now)
+            if meditation >= 10 or boredom > 30 or reading or eating or drinking or pain
                     or urgent or needSleep(player) then
                 clearOwned(player, state)
                 setPhase(state, "care", "Taking a care break before resuming training.")
@@ -1167,7 +1253,7 @@ function Controller.update(player)
             end
         end
     end
-    local trip = state.excursion
+    trip = state.excursion
     if trip and trip.stage == "inspect" then
         if Options.searchNearby() and (not trip.target.part or (vehicleTargetAvailable(player, trip.target) and Storage.vehicleAccessible(player, trip.target.part))) then
             Supplies.refreshNearby(player)
@@ -1245,7 +1331,7 @@ function Controller.status(player)
     return {active = state.active, phase = state.phase, message = state.message, meditation = meditation, yoga = yoga,
         progress = Progress.snapshot(player), mode = state.mode, collectNearby = state.collectNearby,
         endurance = state.endurance and EnduranceGoal.read(player) or nil,
-        returnNotice = state.returnNotice or state.fluidNotice, careNotice = state.careNotice, pendingReturns = #state.loans}
+        returnNotice = state.returnNotice or state.fluidNotice, careNotice = state.careNotice, painNotice = state.painNotice, pendingReturns = #state.loans}
 end
 
 function Controller.prepare(player, collectNearby, showNearby, force)

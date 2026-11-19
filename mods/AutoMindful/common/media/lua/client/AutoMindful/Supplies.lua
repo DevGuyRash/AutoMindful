@@ -5,6 +5,7 @@ local Consumables = require "AutoMindful/Consumables"
 local WaterSources = require "AutoMindful/WaterSources"
 local Fluids = require "AutoMindful/Fluids"
 local Storage = require "AutoMindful/Storage"
+local PainCare = require "AutoMindful/PainCare"
 
 AutoMindful = AutoMindful or {}
 local Supplies = {}
@@ -100,7 +101,7 @@ end
 
 function Supplies.scan(player, includeNearby, useNearbyTools)
     if useNearbyTools == nil then useNearbyTools = includeNearby end
-    local result = {food = {}, water = {}, literature = {}, vessels = {}, waterSources = {},
+    local result = {food = {}, water = {}, literature = {}, pain = {}, vessels = {}, waterSources = {},
         cooldownLiterature = 0, nearbyCooldownLiterature = 0, worldFluidSourceCount = 0}
     local worldSources = includeNearby and WaterSources.scan(player) or {}
     result.waterSources.reason = worldSources.reason
@@ -126,27 +127,33 @@ function Supplies.scan(player, includeNearby, useNearbyTools)
             local world = floor and item:getWorldItem()
             if not floor or (world and reachable(player, world:getSquare())) then
                 local entry = {item = item, owned = owned}
-                local consumable = Consumables.inspect(player, item, useNearbyTools)
-                entry.description = consumable
-                if Fluids.emptyVessel(item) and (owned or useNearbyTools) then result.vessels[#result.vessels + 1] = entry end
-                if consumable.needsVessel then
-                    if not worldFluids[consumable.fluid] then bulk[#bulk + 1] = entry end
+                if PainCare.eligible(item) then
+                    if owned or Storage.permitted(player, world and world:getSquare() or containerSquare(container)) then
+                        result.pain[#result.pain + 1] = entry
+                    end
                 else
-                    if consumable.food then result.food[#result.food + 1] = entry end
-                    if consumable.water then result.water[#result.water + 1] = entry end
-                end
-                if Fluids.container(item) and consumable.reason and not consumable.needsVessel then
-                    result.fluidReason = result.fluidReason or consumable.reason
-                end
-                if consumable.needsOpening and consumable.reason then result.openingReason = consumable.reason end
-                local reading = readingState(player, item)
-                if reading == "cooldown" then
-                    local key = owned and "cooldownLiterature" or "nearbyCooldownLiterature"
-                    result[key] = result[key] + 1
-                elseif reading then
-                    local _, last = readingHistory(player, item)
-                    entry.lastRead = last
-                    result.literature[#result.literature + 1] = entry
+                    local consumable = Consumables.inspect(player, item, useNearbyTools)
+                    entry.description = consumable
+                    if Fluids.emptyVessel(item) and (owned or useNearbyTools) then result.vessels[#result.vessels + 1] = entry end
+                    if consumable.needsVessel then
+                        if not worldFluids[consumable.fluid] then bulk[#bulk + 1] = entry end
+                    else
+                        if consumable.food then result.food[#result.food + 1] = entry end
+                        if consumable.water then result.water[#result.water + 1] = entry end
+                    end
+                    if Fluids.container(item) and consumable.reason and not consumable.needsVessel then
+                        result.fluidReason = result.fluidReason or consumable.reason
+                    end
+                    if consumable.needsOpening and consumable.reason then result.openingReason = consumable.reason end
+                    local reading = readingState(player, item)
+                    if reading == "cooldown" then
+                        local key = owned and "cooldownLiterature" or "nearbyCooldownLiterature"
+                        result[key] = result[key] + 1
+                    elseif reading then
+                        local _, last = readingHistory(player, item)
+                        entry.lastRead = last
+                        result.literature[#result.literature + 1] = entry
+                    end
                 end
             end
             if recurse and instanceof(item, "InventoryContainer") then visit(item:getInventory(), owned, true) end
@@ -281,6 +288,16 @@ end
 function Supplies.choose(player, kind, includeNearby, rejected, worldOnly)
     local scan = Supplies.scan(player, includeNearby)
     local best
+    if kind == "pain" then
+        for _, entry in ipairs(scan.pain) do
+            if not rejectedItem(rejected, entry.item:getID()) and canCollect(player, entry)
+                    and PainCare.eligible(entry.item) then
+                if entry.owned then return entry end
+                best = best or entry
+            end
+        end
+        return best
+    end
     if kind == "literature" then
         for _, entry in ipairs(scan.literature) do
             if not rejectedItem(rejected, entry.item:getID()) and canCollect(player, entry)
@@ -340,11 +357,49 @@ local function guardStorageAction(player, action, container)
     return true
 end
 
-function Supplies.transfer(player, item)
-    if item:getContainer() == player:getInventory() then return true end
+function Supplies.painLoanAllowed(player, loan, worldAllowed)
+    if not loan then return true end
+    local origin = loan.origin
+    if not origin then return false end
+    if not loan.floor and origin:getOutermostContainer() == player:getInventory() then return true end
+    if not worldAllowed then return false end
+    if loan.floor then
+        local square = loan.floor.square
+        return reachable(player, square) and Storage.permitted(player, square)
+    end
+    local nearby = containers(player)
+    if not nearby or not nearby:contains(origin) then return false end
+    local part = Storage.partFor(origin)
+    if part then return Storage.vehicleAccessible(player, part) end
+    local square = containerSquare(origin)
+    return Storage.permitted(player, square) and Storage.containerReachable(player, origin, reachable(player, square))
+end
+
+local function guardPainLoanAction(action, accessible)
+    if not accessible() then return false end
+    local nativeValid = action.isValid
+    action.isValid = function(self)
+        return accessible() and (not nativeValid or nativeValid(self))
+    end
+    return true
+end
+
+function Supplies.transfer(player, item, painLoan)
+    local source = item:getContainer()
+    if source == player:getInventory() then return true end
     if not player:getInventory():hasRoomFor(player, item) then return false end
-    local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, item:getContainer(), player:getInventory())
-    if action.ignoreAction or not guardStorageAction(player, action, item:getContainer()) then return false end
+    local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, source, player:getInventory())
+    if action.ignoreAction then return false end
+    if painLoan then
+        if not guardPainLoanAction(action, function()
+            if item ~= painLoan.original or item:getContainer() ~= painLoan.origin then return false end
+            if painLoan.floor then
+                local world = item:getWorldItem()
+                if not world or world:getSquare() ~= painLoan.floor.square then return false end
+            end
+            return Supplies.painLoanAllowed(player, painLoan, true)
+        end) then return false end
+    elseif not guardStorageAction(player, action, source) then return false end
     ISTimedActionQueue.add(action)
     return true
 end
@@ -424,6 +479,13 @@ function Supplies.returnAction(player, loan)
         if current and current:getContainer() ~= origin then item = current; break end
     end
     if not item then return nil, nil, true end
+    local function painReturnAllowed()
+        -- Returning a borrowed bottle does not require permission to take a new dose.
+        return Supplies.painLoanAllowed(player, loan, true)
+    end
+    if loan.pain and not painReturnAllowed() then
+        return nil, "Borrowed supplies stay with you because their original source cannot currently be accessed."
+    end
     if loan.floor then
         if not reachable(player, loan.floor.square) then
             return nil, "Borrowed supplies stay with you because their original floor square is out of reach."
@@ -431,6 +493,9 @@ function Supplies.returnAction(player, loan)
         local floor = loan.floor
         local action = ISDropWorldItemAction:new(player, item, floor.square, floor.x, floor.y, floor.z, 0, false)
         action.isPlaceItem = true
+        if loan.pain and not guardPainLoanAction(action, painReturnAllowed) then
+            return nil, "Borrowed supplies stay with you because their original floor square cannot be accessed."
+        end
         if not action:isValid() then return nil, "Borrowed supplies stay with you because the original floor square cannot accept them." end
         return action
     end
@@ -445,7 +510,9 @@ function Supplies.returnAction(player, loan)
         return nil, "Borrowed supplies stay with you because their original container is full."
     end
     local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, item:getContainer(), origin)
-    if action.ignoreAction or not guardStorageAction(player, action, origin) or not action:isValid() then
+    local guarded = not action.ignoreAction and ((loan.pain and guardPainLoanAction(action, painReturnAllowed))
+        or (not loan.pain and guardStorageAction(player, action, origin)))
+    if not guarded or not action:isValid() then
         return nil, "Borrowed supplies stay with you because the original container cannot currently accept them."
     end
     return action
@@ -454,9 +521,9 @@ end
 function Supplies.report(player, includeNearby, collectNearby, area, collectArea)
     if collectNearby == nil then collectNearby = includeNearby end
     local scan = Supplies.scan(player, includeNearby, collectNearby)
-    local adjacent = {food=0, water=0, literature=0}
+    local adjacent = {food=0, water=0, literature=0, pain=0}
     local adjacentWater = {}
-    for _, kind in ipairs({"food", "water", "literature"}) do
+    for _, kind in ipairs({"food", "water", "literature", "pain"}) do
         for _, entry in ipairs(scan[kind]) do
             if not entry.owned then adjacent[kind] = adjacent[kind] + 1 end
             if kind == "water" and entry.item then adjacentWater[entry.item] = true end
@@ -466,10 +533,10 @@ function Supplies.report(player, includeNearby, collectNearby, area, collectArea
         if not source.item or not adjacentWater[source.item] then adjacent.water = adjacent.water + 1 end
     end
     if area then
-        for _, kind in ipairs({"food", "water", "literature"}) do
+        for _, kind in ipairs({"food", "water", "literature", "pain"}) do
             local entries = {}
             for _, entry in ipairs(scan[kind]) do if entry.owned then entries[#entries + 1] = entry end end
-            for _, entry in ipairs(area[kind]) do entries[#entries + 1] = entry end
+            for _, entry in ipairs(area[kind] or {}) do entries[#entries + 1] = entry end
             scan[kind] = entries
         end
         scan.waterSources = area.waterSources
@@ -477,7 +544,8 @@ function Supplies.report(player, includeNearby, collectNearby, area, collectArea
         scan.nearbyCooldownLiterature = area.cooldownLiterature or 0
     end
     local report = {food = 0, water = 0, literature = 0, nearbyFood = 0, nearbyWater = 0,
-        nearbyLiterature = 0, unreadLiterature = 0, rereadLiterature = 0,
+        nearbyLiterature = 0, pain = 0, nearbyPain = 0, adjacentPain = adjacent.pain,
+        unreadLiterature = 0, rereadLiterature = 0,
         nearbyUnreadLiterature = 0, nearbyRereadLiterature = 0, warnings = {}}
     if area then
         report.radius, report.containerCount = area.radius, area.containerCount
@@ -499,8 +567,8 @@ function Supplies.report(player, includeNearby, collectNearby, area, collectArea
     report.fluidReason = scan.fluidReason
     report.nearbyWaterSourceCount = scan.worldFluidSourceCount
     report.waterSourceReason = scan.waterSources.reason
-    local nearbyKeys = {food = "nearbyFood", water = "nearbyWater", literature = "nearbyLiterature"}
-    for _, kind in ipairs({"food", "water", "literature"}) do
+    local nearbyKeys = {food = "nearbyFood", water = "nearbyWater", literature = "nearbyLiterature", pain = "nearbyPain"}
+    for _, kind in ipairs({"food", "water", "literature", "pain"}) do
         for _, entry in ipairs(scan[kind]) do
             local key = entry.owned and kind or nearbyKeys[kind]
             report[key] = report[key] + 1

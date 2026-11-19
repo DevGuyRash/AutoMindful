@@ -25,7 +25,7 @@ A normal mod installation shows AutoMindful's artwork: a window for **Open**, a 
 
 The original single-session Lifestyle action remains in the submenu. **Train both** is available in the AutoMindful window. Context menus follow Lifestyle's posture and availability rules instead of appearing everywhere by default.
 
-On the character's **Skills** tab, expand Meditation's category to see **Yoga** with its own level and XP toward the next level. On a narrow pane the readout sits at the end of the scrollable list. These values come from Lifestyle; AutoMindful does not register another perk or grant XP.
+On the character's **Skills** tab, expand **Lifestyle**. **Yoga** sits directly below **Meditation**, with ten rank boxes like the other skills. Hover over the current box or select the row with a controller to see your Yoga XP toward the next rank. The row reads Lifestyle's progress; it doesn't register a perk, grant XP, or add a second row if Lifestyle already shows Yoga.
 
 During a running session, **AutoMindful (running)** lets you reopen the window even while Lifestyle hides its normal menu for timed actions. Closing the window or pressing Escape hides it without cancelling training. Loading a save or rejoining a server does not start the loop automatically.
 

@@ -62,7 +62,11 @@ return function(T, C, test, scoutTarget)
                     assert(queue(p)[1]==map and p.nativeHead==map.action); untouched(map)
                     map:perform()
                     local count=#p.history
-                    for i=1,6 do T.tick(p,false); assert(C.status(p).active and #queue(p)==0 and #p.history==count and #p.cards==0) end
+                    for i=1,8 do
+                        T.now=T.now+60000
+                        T.tick(p,false,2)
+                        assert(C.status(p).active and #queue(p)==0 and #p.history==count and #p.cards==0)
+                    end
                     -- Raw right-button pan and Escape/close are UI gestures, not
                     -- actual isAiming/attack or world displacement.
                     p.aimInput=true; p.cancelInput=true
@@ -135,7 +139,7 @@ return function(T, C, test, scoutTarget)
                 panels.items={}; ISWorldMap_instance=nil
                 local p=began(); panels:world(p:getPlayerNum()); ISTimedActionQueue.clear(p)
                 T.tick(p,false); assert(C.status(p).active and #queue(p)==0)
-                change(p); C.update(p); T.now=T.now+500; C.update(p)
+                change(p); C.update(p)
                 assert(not C.status(p).active and #p.cards==1 and #queue(p)==0)
             end
         end)
@@ -145,6 +149,55 @@ return function(T, C, test, scoutTarget)
         assert(C.start(p,"meditation",false)); T.tick(p,false); T.tick(p,false)
         assert(C.status(p).active and #queue(p)==0 and p.nativeHead==native and not p.postureEvents)
         p.nativeHead=nil; resumed(p)
+    end)
+    test("a stale busy flag without Lua or Java action disarms after five observed seconds",function()
+        local p=began()
+        ISTimedActionQueue.clear(p)
+        assert(#queue(p)==0 and p:getCharacterActions():isEmpty())
+        function p:hasTimedActions() return true end
+        T.now=T.now+1; C.update(p)
+        assert(C.status(p).active and C.status(p).phase=="manual" and #p.cards==0)
+        T.now=T.now+4999; C.update(p)
+        assert(C.status(p).active and #p.cards==0 and #queue(p)==0)
+        T.now=T.now+1; C.update(p)
+        local st=C.status(p)
+        assert(not st.active and st.phase=="stopped" and st.message:find("without a current action",1,true)
+            and #p.cards==1 and #queue(p)==0 and p:hasTimedActions())
+        for i=1,8 do T.tick(p,false) end
+        assert(not C.status(p).active and #p.cards==1 and #queue(p)==0)
+    end)
+    test("a live Java-only handle after training loss still yields for many minutes",function()
+        local p=began()
+        ISTimedActionQueue.clear(p)
+        local native={}
+        p.nativeHead=native
+        for i=1,8 do
+            T.now=T.now+60000; C.update(p)
+            assert(C.status(p).active and C.status(p).phase=="manual" and #p.cards==0
+                and #queue(p)==0 and p:getCharacterActions():contains(native))
+        end
+        p.nativeHead=nil
+        resumed(p)
+    end)
+    test("stock-recognized climb or door state without a Java handle stays cooperative",function()
+        local p=began()
+        ISTimedActionQueue.clear(p)
+        local original=ISTimedActionQueue.isPlayerDoingAction
+        local recognized=true
+        ISTimedActionQueue.isPlayerDoingAction=function(player)
+            return (player==p and recognized) or original(player)
+        end
+        local ok,reason=pcall(function()
+            for i=1,8 do
+                T.now=T.now+60000; C.update(p)
+                assert(C.status(p).active and C.status(p).phase=="manual"
+                    and #p.cards==0 and #queue(p)==0 and p:getCharacterActions():isEmpty())
+            end
+            recognized=false
+            resumed(p)
+        end)
+        ISTimedActionQueue.isPlayerDoingAction=original
+        assert(ok,reason)
     end)
     test("unidentified or mixed native action identity forbids owned-head cancellation",function()
         for _,mixed in ipairs({false,true}) do
@@ -162,19 +215,100 @@ return function(T, C, test, scoutTarget)
             untouched(foreign); foreign:perform(); resumed(p)
         end
     end)
-    test("brief aim gestures are ignored but sustained aim stops at 500ms and attacks immediately",function()
-        for _,field in ipairs({"aimInput","aiming"}) do
-            local p,owned=began(); p[field]=true; C.update(p)
-            T.now=T.now+499; C.update(p)
-            assert(C.status(p).active and #p.cards==0 and queue(p)[1]==owned and not owned.stopped)
-            T.now=T.now+1; C.update(p)
-            assert(not C.status(p).active and #p.cards==1)
+    test("raw aim alone uses 500ms but actual aim and attack stop immediately",function()
+        local p,owned=began(); p.aimInput=true; C.update(p)
+        T.now=T.now+499; C.update(p)
+        assert(C.status(p).active and #p.cards==0 and queue(p)[1]==owned and not owned.stopped)
+        T.now=T.now+1; C.update(p)
+        assert(not C.status(p).active and #p.cards==1 and C.status(p).message:lower():find("aim",1,true))
+        local gesture=began(); gesture.aimInput=true; C.update(gesture)
+        T.now=T.now+499; C.update(gesture); gesture.aimInput=false; C.update(gesture)
+        T.now=T.now+1000; C.update(gesture); assert(C.status(gesture).active); C.stop(gesture)
+        for _,input in ipairs({"aiming","attacking"}) do
+            local actual=began(); actual[input]=true; C.update(actual)
+            assert(not C.status(actual).active and #actual.cards==1 and #queue(actual)==0)
+            C.update(actual); assert(#actual.cards==1,"A terminal input must not produce another HUD")
         end
-        local p=began(); p.aimInput=true; C.update(p)
-        T.now=T.now+499; C.update(p); p.aimInput=false; C.update(p)
-        T.now=T.now+1000; C.update(p); assert(C.status(p).active); C.stop(p)
-        local attack=began(); attack.attacking=true; T.now=T.now+1; C.update(attack)
-        assert(not C.status(attack).active and #attack.cards==1)
+    end)
+    test("between-sample actual aim in a native stop is terminal and explicit rearm is fresh",function()
+        local p,owned=began()
+        p.aiming=true
+        owned:stop()
+        p.aiming=false
+        T.now=T.now+1; C.update(p)
+        local stopped=C.status(p)
+        assert(not stopped.active and stopped.phase=="stopped" and stopped.message:lower():find("aim",1,true)
+            and #p.cards==1 and #queue(p)==0,"Detect real aim even when it is gone by the next player update")
+        T.tick(p,false); assert(not C.status(p).active and #p.cards==1 and #queue(p)==0)
+        assert(C.start(p,"meditation",false),"A legitimate explicit rearm has no sticky aim cancellation")
+        T.tick(p,false)
+        assert(C.status(p).active and queue(p)[1] and queue(p)[1]~=owned and #p.cards==1)
+        C.stop(p,"Stopped by you."); C.update(p)
+        assert(not C.status(p).active and #p.cards==2 and p.cards[2].note=="Stopped by you.")
+    end)
+    test("meaningful context popup shields raw aim but actual aim still ends training",function()
+        local p,owned=began()
+        p.contextOpen=true; p.aimInput=true
+        C.update(p); T.now=T.now+800; C.update(p)
+        assert(C.status(p).active and #p.cards==0 and queue(p)[1]==owned,"Right-clicking a real popup is not aiming")
+        p.aiming=true; C.update(p)
+        assert(not C.status(p).active and #p.cards==1 and C.status(p).message:lower():find("aim",1,true))
+    end)
+    test("visible nonempty single-menu child is meaningful while the native root is hidden",function()
+        local p=began()
+        local child={options={{name="Inspect"}},visible=true}
+        function child:isVisible() return self.visible end
+        function child:isReallyVisible() return self.visible end
+        local root={options={},instanceMap={child}}
+        function root:isVisible() return false end
+        function root:isOptionSingleMenu() return true end
+        local original=getPlayerContextMenu
+        getPlayerContextMenu=function(slot) if slot==p:getPlayerNum() then return root end end
+        local ok,reason=pcall(function()
+            ISTimedActionQueue.clear(p)
+            p.aimInput=true
+            for i=1,6 do
+                T.now=T.now+60000; C.update(p)
+                assert(C.status(p).active and #queue(p)==0 and #p.cards==0)
+            end
+            child.visible=false; p.aimInput=false
+            resumed(p)
+        end)
+        getPlayerContextMenu=original
+        assert(ok,reason)
+    end)
+    test("empty or hidden context menus cannot stall an unexplained loss",function()
+        for _,reason in ipairs({"empty","hidden"}) do
+            local p,owned=began()
+            p.contextOpen=true
+            if reason=="empty" then p.contextOptions={} else p.contextHidden=true end
+            ISTimedActionQueue.clear(p)
+            T.now=T.now+1; C.update(p)
+            assert(C.status(p).active and #queue(p)==0)
+            for i=1,8 do T.tick(p,false); if queue(p)[1] then break end end
+            assert(C.status(p).active and C.status(p).phase=="meditation" and #p.cards==0
+                and queue(p)[1] and queue(p)[1]~=owned,reason)
+            C.stop(p)
+        end
+    end)
+    test("four consecutive unexplained training disappearances stop once and do not replay",function()
+        local p,owned=began()
+        for cycle=1,4 do
+            assert(queue(p)[1]==owned)
+            ISTimedActionQueue.clear(p)
+            T.now=T.now+1; C.update(p)
+            if cycle<4 then
+                assert(C.status(p).active and #queue(p)==0 and #p.cards==0)
+                for i=1,9 do T.tick(p,false); if queue(p)[1] then break end end
+                assert(C.status(p).active and C.status(p).phase=="meditation" and queue(p)[1]~=owned)
+                owned=queue(p)[1]
+            end
+        end
+        local status=C.status(p)
+        assert(not status.active and status.phase=="stopped" and status.message:lower():find("interrupt",1,true)
+            and #p.cards==1 and #queue(p)==0,"Do not loop forever after unidentified native action cancellations")
+        for i=1,8 do T.tick(p,false) end
+        assert(not C.status(p).active and #queue(p)==0 and #p.cards==1)
     end)
     test("concrete owned stop callback appends foreign work without hiding or replacing the live queue",function()
         local p,owned=began()
@@ -351,7 +485,11 @@ return function(T, C, test, scoutTarget)
     test("a long external workout does not consume the no-XP timeout budget",function()
         local p=began(); local workout=T.action(p,"ISFitnessAction")
         ISTimedActionQueue.add(workout); T.tick(p,false)
-        for i=1,10 do T.tick(p,false,1); untouched(workout); assert(C.status(p).active) end
+        for i=1,10 do
+            T.now=T.now+60000; T.tick(p,false,1)
+            untouched(workout)
+            assert(C.status(p).active and C.status(p).phase=="manual" and #p.cards==0)
+        end
         workout:perform()
         T.tick(p,false); T.tick(p,false); T.tick(p,false)
         assert(C.status(p).active and C.status(p).phase=="meditation", "External hours cannot trip the six-hour training watchdog")

@@ -13,3 +13,18 @@ jobs:
           python-version: '3.12'
       - run: sudo apt-get update && sudo apt-get install -y lua5.1
       - run: python3 tools/verify.py
+      - name: Check out pinned B42 queue lifecycle sources
+        uses: actions/checkout@v4
+        with:
+          repository: Project-Zomboid-Community-Modding/ProjectZomboid-Vanilla-Lua
+          ref: 3b21e63fe4905a0a300a4021d05d01a9bb534729
+          path: .stock-aim/lua
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /client/TimedActions/ISTimedActionQueue.lua
+            /shared/TimedActions/ISBaseTimedAction.lua
+      - name: Replay stock aim cancellation and foreign queue handoff
+        run: |
+          lua5.1 tests/stock_queue.lua .stock-aim
+          lua5.1 tests/stock_aim.lua .stock-aim

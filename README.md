@@ -19,7 +19,7 @@ AutoMindful uses client Lua for Build 42.22 and later. It has no server scripts.
 1. Choose a safe training spot. Deploy a complete yoga mat if the sandbox requires one.
 2. Right-click near your survivor and open Lifestyle's **Wellness** menu.
 3. While standing, open **Yoga**. While sitting on the ground, open **Meditate**.
-4. Choose **Open AutoMindful** for the window, or **Train yoga** or **Train meditation** for a skill loop. **Check supplies** opens the live report without interrupting training.
+4. Choose **Open AutoMindful** for the window, **Train yoga** or **Train meditation** for a skill loop, or **Meditate to Full Endurance** for one recovery session. **Check supplies** opens the live report without interrupting training.
 
 The original single-session Lifestyle action remains in the submenu. **Train both** is available in the AutoMindful window. Context menus follow Lifestyle's posture and availability rules instead of appearing everywhere by default.
 
@@ -88,6 +88,7 @@ Meditation needs sitting on the ground and cannot start above Lifestyle's boredo
 
 Low stamina does not block or interrupt meditation. In Train both, meditation can continue while stamina recovers for yoga. Yoga keeps its recovery break, with a visible stamina target. Fatigue that requires sleep remains a separate care condition.
 
+**Meditate to Full Endurance** is available in the training window and the Lifestyle meditation submenu. It reads the game's endurance stat and runs only normal meditation, even at Meditation level 10. It does not restore stamina itself, queue yoga, use supplies, or start a scouting trip. Selecting it at full endurance does nothing. It finishes when the game reports 100%; a missing stat, blocked meditation, critical hunger or thirst, or five observed minutes of meditation without a new endurance high stops it with a reason. Time waiting for someone else's action does not count.
 
 ## Configure access
 

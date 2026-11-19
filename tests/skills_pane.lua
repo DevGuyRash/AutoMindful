@@ -1,228 +1,170 @@
--- Skills UI contracts. With installed/mirrored media, also run unmodified render.
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
-local passed, now = 0, 1000
-local function check(name, fn) fn(); passed=passed+1; print("PASS "..name) end
-
-UIFont={Small="Small"}
-function getTextManager()
-    return {getFontHeight=function() return 14 end,
-        MeasureStringX=function(_,font,txt) assert(font==UIFont.Small); return #txt*6 end}
+-- Explicit Lua UI/player doubles. stock_skills_pane.lua reuses these boundaries
+-- but replaces the pane/bar implementation with untouched pinned B42 source.
+package.path="mods/AutoMindful/common/media/lua/client/?.lua;"..package.path
+local H={now=1000,players={},reads={},writes=0,passed=0}
+UIFont={Small="Small"}; Perks={None="None",Meditation="Meditation"}
+function getTimestampMs() return H.now end
+function getTextManager() return {getFontHeight=function()return 14 end,MeasureStringX=function(_,f,s)return #s*6 end} end
+function getText(k,...) if k=="IGUI_perks_Yoga" then return "Yoga" end;return k end
+function getTextOrNull(k) if k=="IGUI_perks_Yoga" then return "Yoga" end end
+function getSpecificPlayer(i) return H.players[i] end
+function getCore() return {getOptionFontSizeReal=function()return 6 end,getScreenHeight=function()return 1000 end,getGoodHighlitedColor=function()return {getR=function()return .2 end,getG=function()return 1 end,getB=function()return .2 end}end} end
+function getPerformance()return {getUIRenderFPS=function()return 60 end}end
+function getTexture(name)return {getWidth=function()return 10 end,getHeight=function()return 10 end,name=name}end
+function round(n)return n end
+xpSystemText={lvl="Level",unlocked="Unlocked",locked="Locked"}
+UIManager={getMillisSinceLastRender=function()return 17 end}
+Events={OnResolutionChange={Add=function()end},OnGameStart={Add=function()end}}
+HiddenSkills={getSkill=function(p,k) assert(k=="Yoga");H.reads[p]=(H.reads[p] or 0)+1;if p.throw then error("unreadable") end;return p.yoga end}
+ISPanel={}
+function ISPanel:derive(kind)local o={Type=kind};o.__index=o;setmetatable(o,{__index=self});return o end
+function ISPanel:new(x,y,w,h)local o={x=x,y=y,width=w,height=h,children={},draws={}};setmetatable(o,{__index=self});return o end
+for _,k in ipairs({"initialise","instantiate","noBackground","setAnchorRight","setAnchorBottom","addToUIManager","removeFromUIManager","setOwner","bringToTop"})do ISPanel[k]=function()end end
+function ISPanel:getX()return self.x end; function ISPanel:getY()return self.y end
+function ISPanel:getWidth()return self.width end;function ISPanel:getHeight()return self.height end
+function ISPanel:setX(x)self.x=x end;function ISPanel:setY(y)self.y=y end
+function ISPanel:setWidth(w)self.width=w end;function ISPanel:setHeight(h)self.height=h end
+function ISPanel:getAbsoluteX()return self.x end;function ISPanel:getAbsoluteY()return self.y end
+function ISPanel:isMouseOver()return false end;function ISPanel:getMouseX()return 0 end
+function ISPanel:setVisible(v)self.visible=v end;function ISPanel:isVisible()return self.visible~=false end
+ISPanel.isReallyVisible=ISPanel.isVisible;ISPanel.getIsVisible=ISPanel.isVisible
+function ISPanel:drawTextureScaled(...)end;function ISPanel:drawRect(...)end
+function ISPanel:drawRectBorder(...)self.border={...}end
+function ISPanel:drawTexture(...)end;function ISPanel:drawText(s,x,y)self.draws[#self.draws+1]={txt=s,x=x,y=y}end
+function ISPanel:setStencilRect()end;function ISPanel:clearStencilRect()end
+function ISPanel:addChild(c)c.parent=self;self.children[#self.children+1]=c end
+function ISPanel:removeChild(c)for i=#self.children,1,-1 do if self.children[i]==c then table.remove(self.children,i)end end end
+function ISPanel:getYScroll()return self.scroll or 0 end;function ISPanel:setYScroll(v)self.scroll=v end
+function ISPanel:setScrollHeight(v)self.scrollHeight=v end;function ISPanel:getScrollHeight()return self.scrollHeight end
+function ISPanel:setWidthAndParentWidth(v)self.width=v end;function ISPanel:setHeightAndParentHeight(v)self.height=v end
+ISToolTip=ISPanel:derive("ISToolTip")
+function ISToolTip:setDesiredPosition(x,y)self.x=x;self.y=y end
+ISPanelJoypad=ISPanel:derive("ISPanelJoypad")
+package.preload["ISUI/ISPanel"]=function()return ISPanel end
+package.preload["ISUI/ISPanelJoypad"]=function()return ISPanelJoypad end
+package.preload["ISUI/ISToolTip"]=function()return ISToolTip end
+function H.perk(id)
+ return {getId=function()return id end,getType=function()return id end,getName=function()return id end,
+ isPassiv=function()return true end,getXpForLevel=function()return 100 end,getTotalXpForLevel=function()return 100 end}
 end
-function getTimestampMs() return now end
-local players, reads = {}, {}
-function getSpecificPlayer(index) return players[index] end
-local function player(index,yoga)
-    local p={index=index, yoga=yoga}
-    function p:getPlayerNum() return self.index end
-    function p:getModData() error("Skills readout must not touch save/mod data") end
-    function p:getXp() return {getPerkBoost=function()return 0 end,getMultiplier=function()return 0 end} end
-    players[index]=p
-    return p
+function H.player(slot,yoga)
+ local p={slot=slot,yoga=yoga or {3,25,100}}
+ function p:getPlayerNum()return self.slot end
+ function p:getModData()error("UI must not write/read persistent gameplay data")end
+ function p:getPerkLevel(k)assert(k~="None","Synthetic Yoga must not query native None level");return 2 end
+ function p:LevelPerk()H.writes=H.writes+1;error("XP write")end
+ function p:getXp()return {getPerkBoost=function()return 0 end,getMultiplier=function()return 0 end,getXP=function()return 25 end,AddXP=function()H.writes=H.writes+1;error("XP write")end}end
+ H.players[slot]=p;return p
 end
-HiddenSkills={getSkill=function(p,kind)
-    assert(kind=="Yoga"); reads[p]=(reads[p] or 0)+1
-    if p.throw then error("Unavailable Lifestyle record") end
-    return p.yoga
-end}
-
-local function perk(id,label)
-    return {getId=function()return id end,getType=function()return id end,getName=function()return label or id end}
+function H.pane(p)
+ local w=ISPanel:new(0,0,460,180);setmetatable(w,{__index=ISCharacterInfo})
+ w.char=p;w.playerNum=p.slot;w.visible=true;w.scroll=-20;w.lastLevelUpTime=0;w.txtLen=60
+ w.sorted={H.perk("Wellness"),H.perk("Survival")}
+ w.perks={Wellness={H.perk("Meditation"),H.perk("Music")},Survival={H.perk("Trapping")}}
+ w.buttonList={ISPanel:new(11,0,20,20),ISPanel:new(11,0,20,20)};w.collapse={false,false};w.progressBars={};w.progressBarLoaded=false
+ return w
 end
-local med, yoga, exercise = perk("Meditation","Concentration lokale"), perk("Yoga","Yoga"), perk("Fitness")
-Perks={Meditation=med}
-local function button(x,y)
-    local b={x=x,y=y,width=20,height=20}
-    function b:getX() return self.x end
-    function b:getY() return self.y end
-    function b:getWidth() return self.width end
-    function b:getHeight() return self.height end
-    function b:setY(v) self.y=v end
-    return b
+local function row(w,name)local found;for _,d in ipairs(w.draws)do if d.txt==name then assert(not found,"duplicate label "..name);found=d end end;return found end
+local function bars(w)local found;for _,b in ipairs(w.progressBars)do if b.Type=="AutoMindfulYogaSkillBar" then assert(not found,"duplicate Yoga child");found=b end end;return found end
+function H.render(w)w.draws={};return ISCharacterInfo.render(w)end
+function H.check(n,f)f();H.passed=H.passed+1;print("PASS "..n)end
+function H.run()
+ package.preload["XpSystem/ISUI/ISSkillProgressBar"]=function()return ISSkillProgressBar end
+ local Skills=require "AutoMindful/SkillsPane";local prior=ISCharacterInfo.render;Skills.install();local wrapper=ISCharacterInfo.render
+ assert(wrapper~=prior);Skills.install();assert(wrapper==ISCharacterInfo.render)
+ H.check("native slot below Meditation shifts Music/category/canvas exactly one row",function()
+  local p=H.player(0);local plain=H.pane(p);prior(plain);local music,heading,height=row(plain,"Music"),row(plain,"Survival"),plain.scrollHeight
+  local w=H.pane(p);local list,perks,char,new=w.perks.Wellness,w.perks,w.char,ISSkillProgressBar.new
+  H.render(w);local m,y,n=row(w,"Meditation"),row(w,"Yoga"),row(w,"Music");local b=bars(w)
+  assert(y and b,"Expected real Yoga row/widget, not header/footer")
+  assert(y.x==m.x and y.y==m.y+20 and n.y==music.y+20 and row(w,"Survival").y==heading.y+20 and w.scrollHeight==height+20)
+  assert(b:getX()==w.progressBars[1]:getX() and b:getY()==w.progressBars[1]:getY()+20)
+  assert(w.char==char and w.perks==perks and w.perks.Wellness==list and #list==2 and ISSkillProgressBar.new==new)
+  local count=#w.children;H.render(w);assert(#w.children==count and #w.progressBars==4 and bars(w)==b,"Repeated render duplicated or replaced stable bars")
+ end)
+ H.check("collapsed, native Yoga, invalid/local-player data do not invent a duplicate row",function()
+  for _,kind in ipairs({"collapse","native","missing","foreign","invalid","hidden"})do
+   local p=H.player(0);local w=H.pane(p)
+   if kind=="collapse" then w.collapse[1]=true elseif kind=="native"then table.insert(w.perks.Wellness,H.perk("Yoga"))
+   elseif kind=="hidden"then w.visible=false elseif kind=="missing"then p.yoga=false elseif kind=="foreign"then H.player(1);w.playerNum=1 elseif kind=="invalid"then p.throw=true end
+   local list=w.perks.Wellness;H.render(w)
+   if kind=="native"then assert(row(w,"Yoga") and #w.progressBars==4)else assert(not row(w,"Yoga"),kind)end
+   assert(w.perks.Wellness==list)
+  end
+ end)
+ H.check("collapse and reopen rebuild preserves row and subsequent layout",function()
+  local w=H.pane(H.player(0));H.render(w);local height=w.scrollHeight
+  w.collapse[1]=true;w.reloadSkillBar=true;H.render(w);assert(not row(w,"Yoga") and not bars(w))
+  w.collapse[1]=false;w.reloadSkillBar=true;H.render(w);assert(row(w,"Yoga") and bars(w) and w.scrollHeight==height)
+ end)
+ H.check("split-player rows never query another survivor or mutate XP",function()
+  local p,q=H.player(0,{2,12,100}),H.player(1,{7,66,200});local a,b=H.pane(p),H.pane(q)
+  H.render(a);local before=H.reads[p];H.render(b);assert(H.reads[p]==before and H.reads[q])
+  local bar=bars(b);assert(bar);if bar.render then bar:render()end
+  assert(H.writes==0)
+ end)
+ H.check("live native Yoga and disappearing hidden data remove only our extra widget",function()
+  local p=H.player(0);local w=H.pane(p);H.render(w);assert(bars(w))
+  local list=w.perks.Wellness;table.insert(list,H.perk("Yoga"));H.now=H.now+251
+  H.render(w);assert(not bars(w) and row(w,"Yoga") and #w.progressBars==4 and w.perks.Wellness==list)
+  table.remove(list);w.reloadSkillBar=true;p.yoga=false;H.now=H.now+251;H.render(w)
+  assert(not row(w,"Yoga") and not bars(w) and #w.progressBars==3)
+  p.yoga={4,99,100};H.now=H.now+251;H.render(w);assert(bars(w) and #w.progressBars==4)
+ end)
+ H.check("localized Yoga expands all native bar columns consistently without retaining txtLen override",function()
+  local translation=getTextOrNull
+  getTextOrNull=function(k)if k=="IGUI_perks_Yoga"then return "Yoga translated extended title"end end
+  local w=H.pane(H.player(0));local width=w.txtLen;H.render(w)
+  assert(row(w,"Yoga translated extended title") and bars(w) and w.txtLen==width)
+  for _,b in ipairs(w.progressBars)do assert(b:getX()==w.progressBars[1]:getX())end
+  getTextOrNull=translation
+ end)
+ H.check("native exceptions restore original list, char and constructor",function()
+  local w=H.pane(H.player(0));local perks,list,char,new=w.perks,w.perks.Wellness,w.char,ISSkillProgressBar.new
+  w.drawText=function()error("expected native draw failure")end
+  local ok=pcall(H.render,w);assert(not ok,"Original renderer failure must propagate")
+  assert(w.perks==perks and w.perks.Wellness==list and w.char==char and ISSkillProgressBar.new==new)
+ end)
+ H.check("constructor failure after Yoga restores temporary overrides",function()
+  local w=H.pane(H.player(0));local perks,list,char,txt=w.perks,w.perks.Wellness,w.char,w.txtLen
+  local ctor=ISSkillProgressBar.new
+  local failing=function(self,x,y,width,height,slot,perk,parent)
+   if perk:getName()=="Music"then error("expected native constructor failure")end
+   return ctor(self,x,y,width,height,slot,perk,parent)
+  end
+  ISSkillProgressBar.new=failing
+  local ok=pcall(H.render,w)
+  assert(ISSkillProgressBar.new==failing,"Lost caller's constructor override on failure")
+  ISSkillProgressBar.new=ctor
+  assert(not ok and w.perks==perks and w.perks.Wellness==list and w.char==char and w.txtLen==txt)
+  H.render(w);assert(bars(w) and #w.progressBars==4 and #w.children==4,"Failed native rebuild leaked provisional children")
+ end)
+ if ISCharacterInfo.updateTooltipForJoypad then
+ H.check("stock joypad selects Yoga child and hover without native level changes",function()
+  local w=H.pane(H.player(0));H.render(w);w.joyfocus=true;w.joypadIndex=2
+  ISCharacterInfo.updateTooltipForJoypad(w);assert(w.barWithTooltip==bars(w));assert(w.barWithTooltip.message or w.barWithTooltip.tooltip)
+  w.joypadIndex=3;ISCharacterInfo.updateTooltipForJoypad(w);assert(w.barWithTooltip==w.progressBars[3]);assert(H.writes==0)
+ end)
+ end
+ print("SKILLS SLOT PASS "..H.passed.." (explicit UI/player doubles)")
 end
-local function pane(p,width,label)
-    local w={char=p,playerNum=p.index,width=width or 460,height=180,visible=true,scroll=-30,scrollHeight=250,
-        sorted={perk("Passive"),perk("Wellness",label or "Wellness"),perk("Survival")},
-        perks={Passive={exercise},Wellness={med},Survival={perk("Trapping")}},
-        buttonList={button(11,10),button(11,100),button(11,150)},collapse={false,false,false},
-        draws={},children={},progressBars={},progressBarLoaded=true,txtLen=42,lastLevelUpTime=0}
-    function w:isVisible() return self.visible end
-    w.getIsVisible,w.isReallyVisible=w.isVisible,w.isVisible
-    function w:getWidth() return self.width end
-    function w:getHeight() return self.height end
-    function w:getScrollHeight() return self.scrollHeight end
-    function w:getYScroll() return self.scroll end
-    function w:setYScroll(v) self.scroll=v end
-    function w:setScrollHeight(n) self.scrollHeight=n; self.scroll=math.max(self.scroll,-math.max(0,n-self.height)) end
-    function w:setStencilRect(...) self.stencil=true end
-    function w:clearStencilRect() self.stencil=false end
-    function w:drawTexture() end
-    function w:setWidthAndParentWidth(v) self.width=v end
-    function w:setHeightAndParentHeight(v) self.height=v end
-    function w:drawText(txt,x,y,_,_,_,_,font)
-        self.draws[#self.draws+1]={txt=txt,x=x,y=y,font=font}
-    end
-    function w:addChild() error("Yoga readout is not a widget") end
-    function w:removeChild() error("Yoga readout must not remove native widgets") end
-    return w
+if AutoMindfulSkillsHarnessOnly then return H end
+-- Portable stock-shaped render. The separate replay uses the exact B42 code.
+ISSkillProgressBar=ISPanel:derive("ISSkillProgressBar")
+function ISSkillProgressBar:removeTooltip()self.message=nil;if self.tooltip then self.tooltip:setVisible(false);self.tooltip:removeFromUIManager();self.tooltip=nil end end
+function ISSkillProgressBar:new(x,y,w,h,slot,perk,parent)local b=ISPanel.new(self,x,y,160,10);b.perk=perk;b.char=getSpecificPlayer(slot);b.level=b.char:getPerkLevel(perk:getType());return b end
+ISCharacterInfo=ISPanel:derive("ISCharacterInfo")
+function ISCharacterInfo:render()
+ if self.reloadSkillBar then for _,b in ipairs(self.progressBars)do self:removeChild(b)end;self.progressBars={};self.progressBarLoaded=false;self.reloadSkillBar=false end
+ local y=10
+ for i,parent in ipairs(self.sorted)do
+  self:drawText(parent:getName(),41,y+3);self.buttonList[i]:setY(y);y=y+20
+  if not self.collapse[i]then y=y+10;for _,perk in ipairs(self.perks[parent:getType()])do
+   self.char:getXp():getPerkBoost(perk:getType());self.char:getXp():getMultiplier(perk:getType())
+   self:drawText(perk:getName(),61,y+3)
+   if not self.progressBarLoaded then local b=ISSkillProgressBar:new(71+self.txtLen,y+5,0,0,self.playerNum,perk,self);b:initialise();self:addChild(b);table.insert(self.progressBars,b)end
+   y=y+20
+  end end;y=y+10
+ end;self:setScrollHeight(y+1);self.progressBarLoaded=true
 end
-local function yogaDraws(w)
-    local out={}
-    for _,d in ipairs(w.draws) do if d.txt:find("Yoga",1,true) then out[#out+1]=d end end
-    return out
-end
-local function render(w)
-    w.draws={}
-    return ISCharacterInfo.render(w,"sentinel")
-end
-local function displays(w,level,xp,required)
-    local rows, text = yogaDraws(w), {}
-    for _,d in ipairs(rows) do text[#text+1]=d.txt end
-    for _,d in ipairs(w.draws) do
-        if d.txt:find("XP",1,true) and not d.txt:find("Yoga",1,true) then text[#text+1]=d.txt end
-    end
-    text=table.concat(text," ")
-    assert(#rows==1, "Expected exactly one added labeled Yoga draw; got "..#rows.." ("..text..")")
-    assert(text:find(tostring(level),1,true) and text:find(tostring(xp),1,true)
-        and text:find(tostring(required),1,true) and text:find("XP",1,true),"Expected level/current/required XP: "..text)
-    return rows[1]
-end
-
-local a=player(0,{3,175,750})
-local b=player(1,{7,25,2000})
-local original=function(self,sentinel)
-    self:setScrollHeight(250)
-    self.buttonList[2]:setY(100)
-    self:drawText(self.sorted[2]:getName(),41,103,1,1,1,1,UIFont.Small)
-    return sentinel,nil,8
-end
-ISCharacterInfo={render=original}
-local Skills = require "AutoMindful/SkillsPane"
-Skills.install()
-local wrapped=ISCharacterInfo.render
-assert(wrapped~=original)
-Skills.install()
-assert(ISCharacterInfo.render==wrapped,"Repeated install must not stack render hooks")
-
-check("draws once on the existing Meditation group heading and preserves vanilla values",function()
-    local w=pane(a)
-    local first,second,third=render(w)
-    local d=displays(w,3,175,750)
-    assert(first=="sentinel" and second==nil and third==8)
-    assert(d.x >= 41+6*#"Wellness" and d.y>=100 and d.y<120,"Stay on the native heading after its title")
-    assert(#w.children==0 and #w.perks.Wellness==1 and #w.buttonList==3)
-    assert(w.width==460 and w.scrollHeight==250 and w.scroll==-30 and not w.stencil)
-    render(w); displays(w,3,175,750)
-end)
-
-check("reads, caches, and refreshes only the owning local survivor",function()
-    local wa,wb=pane(a),pane(b)
-    render(wa); displays(wa,3,175,750)
-    render(wb); displays(wb,7,25,2000)
-    local before=reads[b]
-    a.yoga={4,210,900}; now=now+250
-    render(wa); displays(wa,4,210,900)
-    assert(reads[b]==before)
-    local stale=pane(a); stale.playerNum=1
-    render(stale); assert(#yogaDraws(stale)==0)
-end)
-
-check("does not duplicate a native Yoga perk or draw when hidden or collapsed",function()
-    for _,reason in ipairs({"native","collapsed","invisible"}) do
-        local w=pane(a)
-        if reason=="native" then w.perks.Passive[#w.perks.Passive+1]=yoga
-        elseif reason=="collapsed" then w.collapse[2]=true
-        else w.visible=false end
-        render(w); assert(#yogaDraws(w)==0,reason)
-    end
-end)
-
-check("handles missing and unreadable game data without drawing invented XP",function()
-    local w=pane(a); w.perks.Wellness={}
-    render(w); assert(#yogaDraws(w)==0,"Without a visible Meditation group there is no body for the Yoga readout")
-    for _,data in ipairs({false,{},{"bad",175,750},{-1,175,750},{3,0,-1},{3,0/0,750}}) do
-        local p=player(4,data)
-        local v=pane(p); render(v); assert(#yogaDraws(v)==0)
-    end
-    local p=player(5,{3,175,750}); p.throw=true
-    local v=pane(p); render(v); assert(#yogaDraws(v)==0)
-end)
-
-check("a vanished or incomplete Lifestyle API clears a cached Yoga readout",function()
-    local w=pane(a)
-    local original=HiddenSkills
-    render(w); displays(w,4,210,900)
-    HiddenSkills=nil
-    render(w); assert(#yogaDraws(w)==0)
-    HiddenSkills={}
-    now=now+250
-    render(w); assert(#yogaDraws(w)==0)
-    HiddenSkills=original
-    render(w); displays(w,4,210,900)
-end)
-
-check("a regenerated native Yoga row wins without reinstalling the render hook",function()
-    local w=pane(a)
-    render(w); displays(w,4,210,900)
-    local registered = {}
-    Perks.Yoga=registered
-    local alias=perk("RegisteredWellnessSkill", "Yoga")
-    function alias:getType() return registered end
-    w.perks.Passive[#w.perks.Passive+1]=alias
-    now=now+250
-    render(w); assert(#yogaDraws(w)==0)
-    Skills.install()
-    assert(ISCharacterInfo.render==wrapped, "Rebuild must not add a second hook")
-    render(w); assert(#yogaDraws(w)==0 and w.perks.Passive[2]==alias)
-    Perks.Yoga=nil
-end)
-
-check("shows a named max state without a fictitious xp requirement",function()
-    local w=pane(player(6,{10,0,0}))
-    render(w)
-    local rows=yogaDraws(w)
-    assert(#rows==1 and rows[1].txt:find("MAX",1,true) and not rows[1].txt:find("/0",1,true))
-end)
-
-check("narrow localized heading uses a measured, stable scrollable footer",function()
-    local w=pane(a,165,"Translated heading that uses the entire row")
-    render(w)
-    local row=displays(w,4,210,900)
-    local extended=w.scrollHeight
-    assert(row.y>=250 and row.x>=0 and row.x+#row.txt*6<=w.width, "Yoga footer must not clip the label")
-    assert(extended>250 and w.width==165)
-    w.scroll=-math.min(extended-w.height,90)
-    local positioned=w.scroll
-    render(w); displays(w,4,210,900)
-    assert(w.scrollHeight==extended and w.scroll==positioned, "Repeated renders neither grow the footer nor lose the scroll position")
-    assert(#w.children==0 and #w.buttonList==3 and #w.perks.Wellness==1 and not w.stencil)
-    local impossible=pane(a,35,"Translated heading")
-    render(impossible)
-    assert(#yogaDraws(impossible)==0 and impossible.scrollHeight==250
-        and impossible.width==35 and not impossible.stencil,"Impossible layout must not clip, grow, or create controls")
-end)
-
-if loadUpstream or (arg and arg[1]) then
-    package.preload["ISUI/ISPanelJoypad"]=function()
-        ISPanelJoypad={}
-        function ISPanelJoypad:derive() return {} end
-    end
-    ISSkillProgressBar={updateAlpha=function() end}
-    Events={OnResolutionChange={Add=function() end}}
-    UIManager={getMillisSinceLastRender=function() return 17 end}
-    function getCore() return {getOptionFontSizeReal=function() return 6 end} end
-    local rel="client/XpSystem/ISUI/ISCharacterInfo.lua"
-    if loadUpstream then loadUpstream(rel) else assert(loadfile(arg[1].."/lua/"..rel))() end
-    local vanilla=ISCharacterInfo.render
-    Skills.install()
-    assert(ISCharacterInfo.render~=vanilla,"Install can bind when the declared stock class loads")
-    check("unmodified stock render owns vanilla XP rows and layout",function()
-        local w=pane(a)
-        render(w)
-        local d=displays(w,4,210,900)
-        local native=0
-        for _,draw in ipairs(w.draws) do if draw.txt==med:getName() then native=native+1 end end
-        assert(native==1 and d.y>=w.buttonList[2]:getY() and d.y<w.buttonList[2]:getY()+20)
-        assert(w.width==460 and #w.children==0 and #w.perks.Wellness==1 and not w.stencil)
-    end)
-end
-print("SKILLS PANE PASS "..passed.." cases; drawing and game boundary doubles are explicit")
+H.run()

@@ -81,6 +81,18 @@ local function removeFixtureItem(item)
     elseif item:getContainer() then item:getContainer():Remove(item) end
 end
 
+local function scoutTargetSquare(origin)
+    for _, delta in ipairs({{1,0},{-1,0},{0,1},{0,-1}}) do
+        local previous = origin
+        for step=1,6 do
+            local square = getCell():getGridSquare(origin:getX()+delta[1]*step, origin:getY()+delta[2]*step, origin:getZ())
+            if not square or not square:isFree(false) or not previous:canReachTo(square) then break end
+            previous = square
+            if step==6 then return square end
+        end
+    end
+end
+
 local scoutCase
 local function startScoutCase(player, mode)
     if mode ~= "book" and mode ~= "fast-empty" then return end
@@ -90,17 +102,7 @@ local function startScoutCase(player, mode)
     end
     if scoutCase then removeFixtureItem(scoutCase.item); scoutCase=nil end
     clearLiterature(player)
-    local target
-    for _, delta in ipairs({{1,0},{-1,0},{0,1},{0,-1}}) do
-        local previous = origin
-        for step=1,6 do
-            local square = getCell():getGridSquare(origin:getX()+delta[1]*step, origin:getY()+delta[2]*step, origin:getZ())
-            if not square or not square:isFree(false) or not previous:canReachTo(square) then break end
-            previous = square
-            if step==6 then target=square end
-        end
-        if target then break end
-    end
+    local target = scoutTargetSquare(origin)
     if not target then print("[AutoMindfulFixture] SCOUTCASE_PRECONDITION need six clear floor tiles"); return end
     local item = target:AddWorldInventoryItem(mode=="book" and "Base.Book" or "Base.Bag_Schoolbag", 0.4, 0.4, 0)
     if mode=="fast-empty" then item:getInventory():setExplored(false) end
@@ -119,6 +121,56 @@ local function startScoutCase(player, mode)
     scoutCase = {mode=mode, item=item, origin=origin}
     local started,message = Controller.start(player, "meditation", false)
     print("[AutoMindfulFixture] SCOUTCASE mode="..mode.." started="..tostring(started).." "..tostring(message))
+end
+
+local waterCase
+local function startWaterCase(player, mode)
+    if mode == "stop" and waterCase then
+        Controller.stop(player, "Finished the water journey fixture.")
+        removeFixtureItem(waterCase.item)
+        waterCase = nil
+        return
+    end
+    if mode ~= "finite" and mode ~= "mains" then return end
+    local status, origin = Controller.status(player), player:getSquare()
+    if status.active or status.pendingReturns > 0 then
+        print("[AutoMindfulFixture] WATERCASE_PRECONDITION need idle survivor and no loans"); return
+    end
+    if waterCase then removeFixtureItem(waterCase.item); waterCase = nil end
+    clearProvisions(player)
+    local item
+    if mode == "finite" then
+        local target = scoutTargetSquare(origin)
+        if not target then print("[AutoMindfulFixture] WATERCASE_PRECONDITION need six clear floor tiles"); return end
+        item = target:AddWorldInventoryItem("Base.Bucket", 0.4, 0.4, 0)
+        local water = fluid(item)
+        water:Empty()
+        water:addFluid(Fluid.Water, 5)
+    end
+    Options.setSearchNearby(true)
+    Nearby.invalidate(player)
+    local selected = Nearby.find(player, "water", origin, Options.searchRadius(), {}, true)
+    local source = selected and selected.object and selected.object:getMasterObject()
+    local adjacent = require "AutoMindful/WaterSources"
+    if adjacent.choose(player, {}) or not source or (mode == "finite" and source ~= item:getWorldItem())
+            or (mode == "mains" and (instanceof(source, "IsoWorldInventoryObject") or source:isTaintedWater())) then
+        removeFixtureItem(item)
+        print("[AutoMindfulFixture] WATERCASE_PRECONDITION need expected distant clean source and no adjacent water"); return
+    end
+    local stats = player:getStats()
+    for _, key in ipairs({"HUNGER","BOREDOM","FATIGUE","PANIC"}) do stats:set(CharacterStat[key], 0) end
+    stats:set(CharacterStat.ENDURANCE, 1)
+    stats:set(CharacterStat.THIRST, 0.25)
+    player:getNutrition():setCalories(1000)
+    local started, message = Controller.start(player, "meditation", false)
+    if started then
+        waterCase = {mode=mode, item=item, origin=origin, source=source, before=source:getFluidAmount()}
+        print("[AutoMindfulFixture] WATERCASE mode=" .. mode .. " started=true target=" .. source:getSquare():getX()
+            .. "," .. source:getSquare():getY() .. " amount=" .. waterCase.before)
+    else
+        removeFixtureItem(item)
+        print("[AutoMindfulFixture] WATERCASE_PRECONDITION " .. tostring(message))
+    end
 end
 
 local function setupFluidCase(player, mode)
@@ -329,6 +381,9 @@ Events.OnPlayerUpdate.Add(function(player)
             if action.Type == "ISTakeWaterAction" and action ~= lastWaterAction then
                 lastWaterAction = action
                 local object = action.waterObject
+                if waterCase and object == waterCase.source and player:getSquare() ~= waterCase.origin then
+                    waterCase.drinks = (waterCase.drinks or 0) + 1
+                end
                 local sprite = object and object:getSprite()
                 print("[AutoMindfulFixture] WATERACTION x=" .. object:getSquare():getX() .. " y=" .. object:getSquare():getY()
                     .. " sprite=" .. tostring(sprite and sprite:getName()))
@@ -348,6 +403,19 @@ Events.OnPlayerUpdate.Add(function(player)
     if player ~= getSpecificPlayer(0) or getTimestampMs() < nextReport then return end
     nextReport = getTimestampMs() + 1000
     local status = Controller.status(player)
+    if waterCase and not waterCase.reported and (status.phase == "meditation" or status.phase == "stopped") then
+        waterCase.reported = true
+        local amount = waterCase.source:getFluidAmount()
+        local thirst = player:getStats():get(CharacterStat.THIRST)
+        local atOrigin = player:getSquare() == waterCase.origin
+        local expectedReserve = waterCase.mode == "finite" and amount < waterCase.before
+            or waterCase.mode == "mains" and amount == waterCase.before
+        local passed = status.active and status.phase == "meditation" and atOrigin and waterCase.drinks == 1
+            and thirst <= 0.01 and expectedReserve
+        print("[AutoMindfulFixture] WATERCASE_RESULT mode=" .. waterCase.mode .. " pass=" .. tostring(passed)
+            .. " phase=" .. status.phase .. " atOrigin=" .. tostring(atOrigin) .. " drinks=" .. (waterCase.drinks or 0)
+            .. " thirst=" .. thirst .. " before=" .. waterCase.before .. " after=" .. amount)
+    end
     local levelText = tostring(status.meditation) .. "/" .. tostring(status.yoga)
     if scoutCase and scoutCase.mode=="fast-empty" and not scoutCase.sped and status.phase=="scouting" then
         scoutCase.sped=true; setGameSpeed(4)
@@ -380,6 +448,7 @@ Events.OnPlayerUpdate.Add(function(player)
                     .. " screen=" .. getCore():getScreenWidth() .. "x" .. getCore():getScreenHeight()
                     .. " position=" .. player:getX() .. "," .. player:getY())
             elseif command == "open" then AutoMindful.UI.open(player)
+            elseif command == "watercase" then startWaterCase(player, line:match("^%S+%s+(%S+)"))
             elseif command == "scoutcase" then startScoutCase(player, line:match("^%S+%s+(%S+)"))
             elseif command == "fluidcase" then setupFluidCase(player, line:match("^%S+%s+(%S+)") or "owned")
             elseif command == "fluidstate" then fixtureFluidState(player, "requested")

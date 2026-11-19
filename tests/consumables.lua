@@ -260,8 +260,9 @@ check("metabolic completion requires a covering plan and confirmed quantity", fu
 end)
 
 check("infinite water needs completion plus hydration, not a requested counter", function()
-    local world={getFluidAmount=function() return 10000 end,isWaterInfinite=function() return true end}
-    local goal={fullyCovered=true,world=world,expectedRemaining=9999.6,baselineNeed=.2}
+    local world={getFluidAmount=function() return 10000 end,getFluidCapacity=function() return 10000 end,
+        getUsesExternalWaterSource=function() return false end,getFluidContainer=function() return nil end}
+    local goal={fullyCovered=true,world=world,worldAmount=10000,expectedRemaining=9999.6,baselineNeed=.2}
     player.values.thirst=.0001
     assert(not C.goalSatisfied(player,nil,"water",goal,false), "Interrupted consumption is not completion")
     assert(C.goalSatisfied(player,nil,"water",goal,true))
@@ -269,6 +270,31 @@ check("infinite water needs completion plus hydration, not a requested counter",
     assert(not C.goalSatisfied(player,nil,"water",goal,true), "Completion alone does not prove hydration")
     player.values.thirst=.0001; goal.baselineNeed=.0001
     assert(not C.goalSatisfied(player,nil,"water",goal,true), "Unchanged thirst is not hydration")
+end)
+
+check("finite world water needs measured depletion, including a full external reservoir", function()
+    player.values.thirst=.0001
+    local world={amount=10}
+    function world:getFluidAmount() return self.amount end
+    function world:getFluidCapacity() return 10000 end
+    function world:getUsesExternalWaterSource() return self.external end
+    function world:getFluidContainer() return self.reservoir end
+    local goal={fullyCovered=true,world=world,worldAmount=10,expectedRemaining=9.6,baselineNeed=.2}
+    for _,amount in ipairs({10,9.9}) do
+        world.amount=amount
+        assert(not C.goalSatisfied(player,nil,"water",goal,true),"Unchanged or partial finite reserve")
+    end
+    world.amount=9.6
+    assert(C.goalSatisfied(player,nil,"water",goal,true))
+    goal.worldAmount,goal.expectedRemaining,world.amount=10000,9999.6,10000
+    world.external=true
+    assert(not C.goalSatisfied(player,nil,"water",goal,true),"Barrel-fed fixture is not mains")
+    world.external=false; world.kind="IsoWorldInventoryObject"
+    assert(not C.goalSatisfied(player,nil,"water",goal,true),"Full ground tank still needs depletion")
+    world.kind="IsoObject"; world.reservoir={getAmount=function() return 10000 end}
+    assert(not C.goalSatisfied(player,nil,"water",goal,true),"A metered tank at the advertised amount isn't mains")
+    world.amount=9999.6
+    assert(C.goalSatisfied(player,nil,"water",goal,true))
 end)
 
 check("safe milk restores either need without drinking the whole item", function()

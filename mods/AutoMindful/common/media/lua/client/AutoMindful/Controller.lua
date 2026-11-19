@@ -113,7 +113,8 @@ function Controller.stop(player, reason)
 end
 
 function Controller.setCollectNearby(player, enabled)
-    stateFor(player).collectNearby = enabled == true
+    local state = stateFor(player)
+    state.collectNearby = not state.endurance and enabled == true
 end
 
 local function ownAction(player, state, action)
@@ -1222,7 +1223,7 @@ function Controller.start(player, mode, collectNearby)
     if danger then return false, danger end
     if player:isAsleep() then return false, "Wait until the survivor wakes up." end
     local yoga = HiddenSkills.getSkill(player, "Yoga")
-    local state = {active = true, mode = mode, collectNearby = collectNearby == true, phase = "starting",
+    local state = {active = true, mode = mode, collectNearby = mode ~= "endurance" and collectNearby == true, phase = "starting",
         message = "Checking supplies and training requirements.", rejected = {}, careNeeds = {}, failures = 0, hoursWithoutXP = 0,
         observedGameHours = player:getHoursSurvived(), progressMeditation = player:getXp():getXP(Perks.Meditation),
         progressYogaLevel = yoga[1], progressYogaXP = yoga[2]}

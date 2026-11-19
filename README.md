@@ -44,11 +44,11 @@ Drag the window's bottom or right resize handle to make more room. Its size and 
 
 You can start with no food or water. Empty supply counts are warnings, not a start requirement. AutoMindful uses provisions when available and continues while the survivor's condition permits training. It stops for a genuine blocking condition rather than an empty inventory alone.
 
-**Use adjacent supplies** is separate from scouting. Turn it on if you want the survivor to use supplies within reach even with scouting off. It starts off disabled. Previewing nearby stock does not enable collection.
+**Use adjacent supplies** starts on for a survivor with no saved choice. When scouting is off, this still lets that survivor use supplies within reach, without walking away. A saved off choice stays off. Previewing nearby stock does not change either setting.
 
 ### Walk to supplies and return
 
-**Scout nearby for supplies** appears in both the **AutoMindful** training window and **Options > Mods > AutoMindful**. Both controls change the same saved setting. Scouting is on by default; an existing saved off choice stays off until you turn it on in either place. Under **Options > Mods**, **Nearby search radius (tiles)** defaults to **10** and can be set from 2 to 30. Scouting includes adjacent supplies and starts a trip only when carried or adjacent supplies cannot meet a training need.
+**Scout nearby for supplies** appears in both the **AutoMindful** training window and **Options > Mods > AutoMindful**. Both controls change the same saved setting. Scouting is on by default; an existing saved off choice stays off until you turn it on in either place. Under **Options > Mods**, **Nearby search radius (tiles)** defaults to **10** and can be set from 2 to 30. Scouting includes adjacent supplies and starts a trip only when carried or adjacent supplies cannot meet a training need. **Train both** does not send the survivor out for a supply run on startup.
 
 AutoMindful searches loaded squares on the same floor within a circular radius of the training spot, walks using native pathfinding, then rechecks normal adjacent access and safety before collecting or using supplies. Entertainment means eligible boredom-reducing literature. It returns borrowed items while still at the source, then walks back to the original training square before resuming. The live window and **Check supplies** use the same configured radius and source classification as care. Counts show known item contents, not guaranteed reachability. Uninspected or unconfirmed containers and unloaded parts of the area are reported separately, never presented as empty.
 

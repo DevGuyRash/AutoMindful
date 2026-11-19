@@ -99,7 +99,15 @@ local player = {data={}}
 function player:getModData() return self.data end
 function player:getPlayerNum() return 0 end
 function player:isDead() return false end
-function getSpecificPlayer(index) assert(index == 0); return player end
+local player2 = {data={}, getPlayerNum=function() return 1 end, isDead=player.isDead, getModData=player.getModData}
+function getSpecificPlayer(index) return ({[0]=player,[1]=player2})[index] end
+local textureLoads = {}
+function getTexture(path)
+    assert(path:match("^media/ui/AutoMindful/%a+%.png$"), "Icons must use their bundled texture namespace")
+    textureLoads[path] = (textureLoads[path] or 0)+1
+    return path
+end
+local function art(name) return "media/ui/AutoMindful/" .. name .. ".png" end
 
 PZAPI = {ModOptions={settings={}}}
 function PZAPI.ModOptions:getOptions(id) return self.settings[id] end
@@ -182,6 +190,12 @@ function ISContextMenu:getNew(parent)
 end
 function ISContextMenu:addSubMenu(option, submenu) option.subOption = submenu.subOptionNums end
 function ISContextMenu:getSubMenu(id) return menus[id] end
+function ISContextMenu:calcWidth()
+    local widest=0
+    for _,o in ipairs(self.options) do widest=math.max(widest,#o.name) end
+    return widest
+end
+function ISContextMenu:setWidth(w) self.width=w end
 
 local manualCall
 local meditation = {onAction=function(...) manualCall = {...}; return "native meditation" end}
@@ -270,6 +284,79 @@ Context.generalMenu(0, general, {}, false)
 assert(#general.options == 1, "The general context entry can be enabled")
 settings:getOption("generalContextMenu"):setValue(false)
 
+-- Each distinct command has a distinct silhouette, even when an upstream leaf supplies no art.
+local yogaMenu = ISContextMenu:new()
+local rawYoga = yogaMenu:addOption("Localized yoga", world, yoga.onAction, yoga, nil, 3,nil,5,nil,7,nil,9,10)
+local rawTip = ISToolTip:new()
+rawYoga.checkMark,rawYoga.toolTip=true,rawTip
+local otherLeaf=yogaMenu:addOption("Someone else's entry", world, function() end)
+Context.attach(yogaMenu, player)
+local function expectIcons(menu, names)
+    assert(#menu.options==#names,"An icon must not add a second action")
+    local seen={}
+    for i,name in ipairs(names) do
+        assert(menu.options[i].iconTexture==art(name), menu.options[i].name .. " has wrong or missing icon: " .. name)
+        assert(not seen[name],"No duplicated glyph for different actions in one menu");seen[name]=true
+    end
+end
+assert(rawYoga.iconTexture==art("Mat") and not otherLeaf.iconTexture)
+local yogaQuick=yogaMenu:getSubMenu(rawYoga.subOption)
+expectIcons(yogaQuick,{"Open","Yoga","Supplies","Once"})
+local once=yogaQuick.options[4]
+assert(once.checkMark and once.toolTip==rawTip and rawTip.contextMenu==yogaQuick)
+assert(once.onSelect(once.target)=="native yoga")
+assert(manualCall[1]==world and manualCall[2]==yoga and manualCall[3]==nil and manualCall[4]==3 and manualCall[11]==10,
+    "Original dispatch including nil holes and the tenth argument survives")
+assert(submenu.options[1].iconTexture==art("Open") and submenu.options[2].iconTexture==art("Endurance")
+    and submenu.options[3].iconTexture==art("Meditate") and submenu.options[4].iconTexture==art("Supplies")
+    and parent.iconTexture=="native meditation icon" and manual.iconTexture==parent.iconTexture)
+Context.attach(yogaMenu,player);expectIcons(yogaQuick,{"Open","Yoga","Supplies","Once"})
+
+local itemMenu=ISContextMenu:new();itemMenu.player=1
+local obj,originalItem={},{}
+local itemLeaf=itemMenu:addOption("Localized meditation",obj,meditation.onAction,meditation,player2)
+itemLeaf.itemForTexture=originalItem
+Context.attach(itemMenu,player2)
+local itemSub=itemMenu:getSubMenu(itemLeaf.subOption);local itemOnce=itemSub.options[#itemSub.options]
+assert(not itemLeaf.iconTexture and not itemOnce.iconTexture and itemLeaf.itemForTexture==originalItem and itemOnce.itemForTexture==originalItem,
+    "The renderer prefers iconTexture over itemForTexture: never shadow a native item icon")
+assert(itemSub.player==1 and itemSub.options[1].target==player2 and itemSub.options[2].target==player2)
+local swatch=itemMenu:addOption("Tinted native yoga",obj,yoga.onAction,yoga,player2)
+swatch.iconTexture,swatch.color="actual swatch",{r=.4,g=.7,b=.2}
+Context.attach(itemMenu,player2)
+local sw=itemMenu:getSubMenu(swatch.subOption).options[4]
+assert(sw.iconTexture==swatch.iconTexture and sw.color==swatch.color,"Preserve the native swatch and tint")
+local bare=ISContextMenu:new()
+local bareMed=bare:addOption("Bare meditation",world,meditation.onAction,meditation)
+Context.attach(bare,player);assert(bareMed.iconTexture==art("Bowl"))
+expectIcons(bare:getSubMenu(bareMed.subOption),{"Open","Endurance","Meditate","Supplies","Once"})
+
+local again,_,last=ZenWellnessContextMenu.doBuildMenu(0,context,world)
+assert(again=="native result" and last==3,"A repeated external builder retains its return values")
+local addedParent=context:getSubMenu(context.options[2].subOption).options[1]
+assert(not addedParent.subOption and addedParent.onSelect==meditation.onAction,"Repeat build: no second AutoMindful group, and upstream's own option is left intact")
+settings:getOption("generalContextMenu"):setValue(true)
+local root2=ISContextMenu:new();root2.player=1
+local foreign=root2:addOption("AutoMindful",player2,function() end)
+Context.generalMenu(1,root2,{},false);Context.generalMenu(1,root2,{},false)
+assert(#root2.options==2 and root2.options[1]==foreign and not foreign.iconTexture)
+assert(root2.options[2].iconTexture==art("Mindful") and root2.options[2].target==player2)
+Controller.state.active=true;Context.generalMenu(1,root2,{},false)
+assert(#root2.options==2 and root2.options[2].name=="AutoMindful (running)" and root2.width==#root2.options[2].name)
+Controller.state.active=false
+local reused=root2.options[2];root2.options={}  -- stock clear/alloc wipes pooled options before reuse
+for k in pairs(reused) do reused[k]=nil end
+reused.name="Pooled other action";root2.options[1]=reused
+Context.generalMenu(1,root2,{},false)
+assert(#root2.options==2 and root2.options[2]~=reused and not reused.iconTexture)
+local dry=ISContextMenu:new();Context.generalMenu(0,dry,{},true);assert(#dry.options==0)
+for _,n in ipairs({"Mindful","Open","Supplies","Meditate","Yoga","Endurance","Mat","Bowl","Once"}) do
+    assert(textureLoads[art(n)]==1,"Each available texture is looked up once: "..n)
+end
+local tut=ISContextMenu:new()
+function tut:addOption() return nil end -- stock tutorial suppresses a colliding label
+Context.generalMenu(0,tut,{},false);assert(#tut.options==0)
+settings:getOption("generalContextMenu"):setValue(false)
 local window = UI.open(player)
 local scout = window.scouting
 assert(search.name == scout.option and not scout:isSelected(1), "Both surfaces show the same saved setting and label")

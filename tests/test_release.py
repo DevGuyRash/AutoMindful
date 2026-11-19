@@ -82,6 +82,25 @@ class PreviewTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_context_menu_art_in_the_actual_archive(self):
+        with zipfile.ZipFile(self.archive) as package:
+            icons = {p for p in package.namelist() if p.endswith(".png")}
+            self.assertEqual(icons, {"Contents/" + name for name in build.MENU_ICONS})
+            images = set()
+            for name in icons:
+                data = package.read(name)
+                self.assertTrue(data.startswith(b"\x89PNG\r\n\x1a\n"))
+                self.assertEqual(struct.unpack(">IIBBBBB", data[16:29]), (32, 32, 8, 6, 0, 0, 0))
+                chunks, offset = [], 8
+                while offset < len(data):
+                    n, kind = struct.unpack_from(">I4s", data, offset)
+                    if kind == b"IDAT": chunks.append(data[offset+8:offset+8+n])
+                    offset += n + 12
+                raster = zlib.decompress(b"".join(chunks))
+                self.assertEqual(len(raster), 32 * (1 + 32 * 4))
+                images.add(raster)
+            self.assertEqual(len(images), 9, "Nine distinct RGBA glyphs, not copies with changed metadata")
+
     @classmethod
     def setUpClass(cls):
         cls.package_directory = tempfile.TemporaryDirectory(prefix="automindful-release-package-")

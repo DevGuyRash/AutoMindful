@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="288" height="32" viewBox="0 0 288 32">
+  <title>AutoMindful context-menu glyphs</title>
+  <!-- Original vector masters, on 32-unit cells. Render each cell at 32x32 RGBA. -->
+  <g stroke="#172c31" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8">
+    <!-- AutoMindful: layered lotus -->
+    <g transform="translate(0)">
+      <path fill="#6ac2b2" d="M15.5 25C8 25 4 20 2 12c6 0 10 3 14 8 4-5 9-8 14-8-1 8-7 13-14.5 13Z"/>
+      <path fill="#aadfd4" d="M16 24c-5-4-8-10 0-19 8 9 5 15 0 19Z"/>
+      <path d="M7 26h18" stroke="#efcc87" />
+    </g>
+    <!-- Open: panel/window with its side navigation -->
+    <g transform="translate(32)">
+      <rect x="3" y="5.5" width="26" height="21" rx="3.1" fill="#a8dcd0"/>
+      <path d="M3.5 12h25M12 12.5v13" fill="none"/>
+      <circle cx="7.5" cy="9" r="1" fill="#f8e1aa" stroke="none"/>
+      <path d="M15.5 17h8.5m-8.5 4h6" stroke="#477c78" stroke-width="1.8" />
+    </g>
+    <!-- Supplies: open crate -->
+    <g transform="translate(64)">
+      <path d="m4 13 12-4 12 4v11l-12 4L4 24Z" fill="#d2a164"/>
+      <path d="m4 13 12 4 12-4m-12 4v10" fill="none"/>
+      <path d="m3 8 10-3 3 4-12 4Zm13 1 4-5 10 4-2 5Z" fill="#f4cf90"/>
+      <path d="m19 20 6-2" fill="none" stroke="#f8deb0"/>
+    </g>
+    <!-- Train yoga: balanced tree pose -->
+    <g transform="translate(96)">
+      <path d="M9 3.8 5.5 10 11 16l3-2-4.8-4L12 5.5m10.9-1.7 3.6 6.2L21 16l-3-2 4.8-4L20 5.5" fill="#91d3c2"/>
+      <circle cx="16" cy="8.5" r="3.7" fill="#f8d29a"/>
+      <path d="M13 13.5h6l-.2 5.1 5 1.8.5 2.4-6.2 3-.9-2.2 3.4-1.9-4.1-.8-1.4 8h-3.4l1.7-10Z" fill="#83cbb8"/>
+    </g>
+    <!-- Train meditation: cross-legged silhouette -->
+    <g transform="translate(128)">
+      <circle cx="16" cy="7.2" r="4" fill="#f8d29a"/>
+      <path d="m11.5 14.6 2.3-2.1h4.4l2.3 2.1 3 5.7 4.1-.9 1.1 2.2-6.4 2-3.6-5 .2 3.3 5.5 1.8c1.7.6 2.3 1.8 1.5 3-1.6 2.7-8.9 2-9.9.8-1.4 1.2-8.4 1.9-9.9-.8-.8-1.2-.2-2.4 1.5-3l5.5-1.8.2-3.3-3.6 5-6.4-2 1.1-2.2 4.1.9Z" fill="#a5d9ca"/>
+    </g>
+    <!-- Full endurance: heart with an ECG notch -->
+    <g transform="translate(160)">
+      <path d="M16 28C12 24 2 18 2 11.5A7 7 0 0 1 16 9a7 7 0 0 1 14 2.5C30 18 20 25 16 28Z" fill="#e6a28b"/>
+      <path d="M5 16h5l3-5 3.5 10 3.5-7 2 2h5" fill="none" stroke="#fff0bd" stroke-width="2.1"/>
+    </g>
+    <!-- Manual once: one controlled press -->
+    <g transform="translate(192)">
+      <path fill="#ecc987" d="M8 4.7c-.9-.6-2 .1-2 1.3v20c0 1.2 1.2 1.7 2 1.2L23.2 17c.9-.6.9-1.6 0-2.2Z"/>
+      <rect x="25" y="5.1" width="3.8" height="21.8" rx="1.5" fill="#a3d8c5"/>
+    </g>
+    <!-- Yoga branch fallback: rolled mat -->
+    <g transform="translate(224)">
+      <path fill="#85c5bc" d="m3 15.5 13-8L29 13l-9 9-11-3Z"/>
+      <path fill="#bddfd1" d="M5.2 14.1c2.2-1.1 5.4.2 6.4 3.1 1.2 3.1.2 6.4-2.4 7.5-2.8 1.1-6-.3-7-3.4s.2-6.1 3-7.2Z"/>
+      <path d="M6.7 17.5c-2.6.3-2.4 4.6.4 4.6 2.6 0 1.8-2.9.2-2.6M16 19l8-6" stroke="#487c78" stroke-width="1.4" fill="none"/>
+    </g>
+    <!-- Meditation branch fallback: singing bowl and mallet -->
+    <g transform="translate(256)">
+      <path d="M3 16h26c-.4 5.5-4.1 10.3-13 10.3C7 26.3 3.5 21.5 3 16Z" fill="#d7ae78"/>
+      <ellipse cx="16" cy="15.5" rx="12.7" ry="3.5" fill="#f3dba9"/>
+      <path d="m14 14 10-9 2.3 2.8-10 8Z" fill="#8acbb9"/>
+      <path d="M10.5 28h11" stroke="#a6d3c6"/>
+    </g>
+  </g>
+</svg>

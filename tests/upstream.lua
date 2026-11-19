@@ -36,8 +36,19 @@ function ISBaseTimedAction:derive(name)
 end
 function ISBaseTimedAction:setActionAnim(name) self.animation=name end
 function ISBaseTimedAction:setOverrideHandModels() end
-function ISBaseTimedAction:perform() ISTimedActionQueue.getTimedActionQueue(self.character):removeFromQueue(self) end
-function ISBaseTimedAction:stop() ISTimedActionQueue.getTimedActionQueue(self.character).queue={} end
+function ISBaseTimedAction:begin()
+    self.action={setUseProgressBar=noop, forceStop=function() self:stop() end}
+    self.character.nativeHead=self.action
+end
+function ISBaseTimedAction:isStarted() return self.testStarted == true end
+function ISBaseTimedAction:perform()
+    if self.character.nativeHead==self.action then self.character.nativeHead=nil end
+    ISTimedActionQueue.getTimedActionQueue(self.character):onCompleted(self)
+end
+function ISBaseTimedAction:stop()
+    if self.character.nativeHead==self.action then self.character.nativeHead=nil end
+    ISTimedActionQueue.getTimedActionQueue(self.character):resetQueue()
+end
 function ISBaseTimedAction:forceStop() self:stop() end
 function ISBaseTimedAction:forceComplete() self:perform() end
 function ISBaseTimedAction:forceCancel() self.cancelled=true end
@@ -87,7 +98,6 @@ for tick=1,200000 do
     if a then
         if a.Type == "LSYogaAction" or a.Type == "LSMeditateAction" then
             if not a.testStarted then
-                a.action={setUseProgressBar=noop}
                 a:waitToStart()
                 a:start()
                 a.testStarted=true

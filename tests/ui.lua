@@ -102,13 +102,15 @@ function player:getPlayerNum() return 0 end
 function player:isDead() return false end
 local player2 = {data={}, getPlayerNum=function() return 1 end, isDead=player.isDead, getModData=player.getModData}
 function getSpecificPlayer(index) return ({[0]=player,[1]=player2})[index] end
-local textureLoads = {}
+local textureLoads, textureHandles = {}, {}
+function fileExists(path) return path:match("^media/ui/AutoMindful/%a+%.png$") ~= nil end
 function getTexture(path)
     assert(path:match("^media/ui/AutoMindful/%a+%.png$"), "Icons must use their bundled texture namespace")
     textureLoads[path] = (textureLoads[path] or 0)+1
-    return path
+    textureHandles[path] = textureHandles[path] or {path=path}
+    return textureHandles[path]
 end
-local function art(name) return "media/ui/AutoMindful/" .. name .. ".png" end
+local function art(name) return textureHandles["media/ui/AutoMindful/" .. name .. ".png"] end
 
 PZAPI = {ModOptions={settings={}}}
 function PZAPI.ModOptions:getOptions(id) return self.settings[id] end
@@ -362,7 +364,7 @@ Context.generalMenu(1,root2,{},false)
 assert(#root2.options==2 and root2.options[2]~=reused and not reused.iconTexture)
 local dry=ISContextMenu:new();Context.generalMenu(0,dry,{},true);assert(#dry.options==0)
 for _,n in ipairs({"Mindful","Open","Supplies","Meditate","Yoga","Endurance","Mat","Bowl","Once"}) do
-    assert(textureLoads[art(n)]==1,"Each available texture is looked up once: "..n)
+    assert(textureLoads[art(n).path]==1,"Each available texture is looked up once: "..n)
 end
 local tut=ISContextMenu:new()
 function tut:addOption() return nil end -- stock tutorial suppresses a colliding label
@@ -587,4 +589,82 @@ assert(not window:getIsVisible() and Controller.state.active and Controller.stop
 package.loaded.AutoMindful_Main = nil
 require "AutoMindful_Main"
 assert(#Events.OnKeyPressed.handlers == 1 and #Events.OnFillWorldObjectContextMenu.handlers == 1, "Reload does not duplicate input handlers")
-print("ui-contracts: PASS")
+-- Fresh Lua environment with no loose asset mount (the default client-only loader).
+-- Known symbolic names come from stock B42.22.2 UI/UI2 pack metadata, not another mod.
+do
+    local ls = {Open="Item_Clipboard", Supplies="Item_Backpack", Yoga="Item_Dumbbell",
+        Meditate="Item_Candle", Endurance="Moodle_Icon_Endurance", Once="ArrowRight",
+        Mat="Item_Bathtowel", Bowl="Item_Bowl", Mindful="FavoriteStar"}
+    local mounted, lookup, native, poisoned = {}, {}, {}, {}
+    local function path(key) return "media/ui/AutoMindful/"..key..".png" end
+    for _,key in pairs(ls) do native[key]={key=key} end
+    function fileExists(key) return mounted[key]~=nil end
+    function getTexture(key)
+        lookup[key]=(lookup[key] or 0)+1
+        if key:match("^media/") then
+            if not mounted[key] then poisoned[key]=true end
+            if poisoned[key] then return nil end
+            local t=mounted[key]
+            if t=="throw" then error("unavailable texture provider") end
+            return t
+        end
+        return native[key]
+    end
+    package.loaded["AutoMindful/ContextMenu"]=nil
+    local tested=require "AutoMindful/ContextMenu"
+    local function leaves(mode,who,verified)
+        local root=ISContextMenu:new();root.player=who:getPlayerNum()
+        local ref=mode=="yoga" and yoga or meditation
+        local top=root:addOption(mode,{},ref.onAction,ref,who)
+        if verified then top.itemForTexture=verified end
+        tested.attach(root,who);tested.attach(root,who)
+        local sub=root:getSubMenu(top.subOption)
+        assert(#root.options==1 and #sub.options==(mode=="yoga" and 4 or 5))
+        return root,top,sub
+    end
+    local function verifyKeys(sub,keys)
+        local distinct={}
+        for i,key in ipairs(keys) do
+            local texture=sub.options[i].iconTexture
+            assert(texture==native[ls[key]] and texture,"stock glyph required for "..key)
+            assert(not distinct[texture],"duplicate stock glyph");distinct[texture]=true
+        end
+    end
+    local ym,yt,ys=leaves("yoga",player2);verifyKeys(ys,{"Open","Yoga","Supplies","Once"})
+    assert(yt.iconTexture==native[ls.Mat] and ys.player==1)
+    local mm,mt,ms=leaves("meditation",player);verifyKeys(ms,{"Open","Endurance","Meditate","Supplies","Once"})
+    assert(mt.iconTexture==native[ls.Bowl] and ms.options[2].param1=="endurance")
+    local g=ISContextMenu:new();settings:getOption("generalContextMenu"):setValue(true)
+    tested.generalMenu(0,g,{},false);tested.generalMenu(0,g,{},false)
+    assert(#g.options==1 and g.options[1].iconTexture==native[ls.Mindful])
+    for key in pairs(ls) do assert(not poisoned[path(key)] and not lookup[path(key)],"Do not poison native negative cache with an unmounted path") end
+    -- Late legitimate mount in the same still-live pooled menu upgrades in place.
+    local previouslyForeign,customOpen,customRoot={},{key="branded Open"},{key="branded root"}
+    ys.options[3].iconTexture=previouslyForeign
+    mounted[path("Open")]=customOpen; mounted[path("Mindful")]=customRoot
+    tested.attach(ym,player2);tested.generalMenu(0,g,{},false)
+    assert(ys.options[1].iconTexture==customOpen and g.options[1].iconTexture==customRoot and #ys.options==4 and #g.options==1)
+    assert(ys.options[3].iconTexture==previouslyForeign,"Never overwrite newer upstream icons")
+    -- A late upstream item/tint also outranks our previous provisional art.
+    ys.options[4].itemForTexture={}; tested.attach(ym,player2)
+    assert(not ys.options[4].iconTexture and ys.options[4].itemForTexture~=nil)
+    local mis={getName=function() return "EngineErrorTexture" end}
+    mounted[path("Yoga")]=mis; mounted[path("Meditate")]={isFailure=function() return true end}
+    mounted[path("Endurance")]={isReady=function() return false end}
+    mounted[path("Mat")]="throw";mounted[path("Bowl")]={isDestroyed=function() return true end}
+    tested.attach(ym,player2);tested.attach(mm,player)
+    assert(ys.options[2].iconTexture==native[ls.Yoga] and yt.iconTexture==native[ls.Mat])
+    assert(ms.options[3].iconTexture==native[ls.Meditate] and ms.options[2].iconTexture==native[ls.Endurance] and mt.iconTexture==native[ls.Bowl])
+    native[ls.Yoga]=nil; tested.attach(ym,player2)
+    assert(not ys.options[2].iconTexture and ys.options[2].onSelect and ys.options[2].target==player2)
+    local customYoga={};mounted[path("Yoga")]=customYoga; tested.attach(ym,player2)
+    assert(ys.options[2].iconTexture==customYoga and #ys.options==4)
+    -- No VFS API/throwing probe: stock is safe and row callbacks still exist.
+    fileExists=function() error("no readable VFS") end
+    local realItem={};local _,_,readable=leaves("meditation",player2,realItem)
+    assert(readable.options[3].iconTexture==native[ls.Meditate] and not readable.options[5].iconTexture and readable.options[5].itemForTexture==realItem)
+    fileExists=nil; native[ls.Meditate]=mis
+    local _,_,degraded=leaves("meditation",player)
+    assert(not degraded.options[3].iconTexture and degraded.options[3].onSelect and #degraded.options==5)
+end
+print("ui-contracts: PASS (including native art, default unmounted stock icons, late mount and unavailable assets)")

@@ -21,7 +21,7 @@ AutoMindful uses client Lua for Build 42.22 and later. It has no server scripts.
 3. While standing, open **Yoga**. While sitting on the ground, open **Meditate**.
 4. Choose **Open AutoMindful** for the window, **Train yoga** or **Train meditation** for a skill loop, or **Meditate to Full Endurance** for one recovery session. **Check supplies** opens the live report without interrupting training.
 
-The menu uses a window for **Open**, a crate for **Check supplies**, a standing or seated figure for each skill, and a heart for **Full Endurance**. The manual **(once)** action keeps Lifestyle's artwork when available.
+A normal mod installation shows AutoMindful's artwork: a window for **Open**, a crate for **Check supplies**, a standing or seated figure for each skill and a heart for **Full Endurance**. A client-only loader that restores Lua without mounting loose images uses built-in game icons instead: clipboard, backpack, dumbbell, candle and endurance, respectively. You do not need a separate icon pack or a LuaBuddy profile edit. The manual **(once)** action keeps Lifestyle's artwork when available.
 
 The original single-session Lifestyle action remains in the submenu. **Train both** is available in the AutoMindful window. Context menus follow Lifestyle's posture and availability rules instead of appearing everywhere by default.
 

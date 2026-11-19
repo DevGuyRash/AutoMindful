@@ -32,6 +32,7 @@ jobs:
       - name: Replay stock menu and action lifecycles
         run: |
           lua5.1 tests/stock_queue.lua .stock-aim
+          lua5.1 tests/stock_queue.lua .stock-aim --kahlua-queue-lookup
           lua5.1 tests/stock_aim.lua .stock-aim
           lua5.1 tests/stock_pain.lua .stock-aim
           lua5.1 tests/stock_context_icons.lua .stock-aim

@@ -74,6 +74,8 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     if game:
         game = game.expanduser().resolve()
         checks.append(check(evidence, "stock-queue-handoff", [lua, "tests/stock_queue.lua", str(game / "media")]))
+        checks.append(check(evidence, "stock-queue-kahlua-lookup",
+                            [lua, "tests/stock_queue.lua", str(game / "media"), "--kahlua-queue-lookup"]))
         checks.append(check(evidence, "stock-native-aim-stop", [lua, "tests/stock_aim.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-context-icons", [lua, "tests/stock_context_icons.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-pain-action", [lua, "tests/stock_pain.lua", str(game / "media")]))

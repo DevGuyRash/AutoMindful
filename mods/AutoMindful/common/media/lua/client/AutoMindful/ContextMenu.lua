@@ -10,12 +10,51 @@ AutoMindful = AutoMindful or {}
 local Context = AutoMindful.ContextMenu or {}
 AutoMindful.ContextMenu = Context
 
-local textures = {}
+-- These symbols are in B42's ordinary UI texture packs, not other mods or a local profile.
+local stockIcons = {
+    Open="Item_Clipboard", Supplies="Item_Backpack", Yoga="Item_Dumbbell", Meditate="Item_Candle",
+    Endurance="Moodle_Icon_Endurance", Mat="Item_Bathtowel", Bowl="Item_Bowl",
+    Once="ArrowRight", Mindful="FavoriteStar",
+}
+local packaged = {}
+local function usable(t)
+    if not t then return false end
+    local ok, yes = pcall(function()
+        local name = t.getName and t:getName()
+        return name ~= "EngineErrorTexture" and name ~= "EngineErrorTexture.png"
+            and not (t.isFailure and t:isFailure()) and not (t.isDestroyed and t:isDestroyed())
+            and (not t.isReady or t:isReady())
+    end)
+    return ok and yes
+end
+local function lookup(key)
+    if not getTexture then return end
+    local ok, t = pcall(getTexture, key)
+    if ok and usable(t) then return t end
+end
+local function icon(name)
+    if usable(packaged[name]) then return packaged[name] end
+    packaged[name] = nil
+    local path = "media/ui/AutoMindful/" .. name .. ".png"
+    -- fileExists checks the game's VFS. Don't feed unmounted paths to the Java
+    -- texture miss cache. Never cache a fallback as the real branded texture.
+    if fileExists then
+        local ok, exists = pcall(fileExists, path)
+        if ok and exists then packaged[name] = lookup(path) end
+    end
+    return packaged[name] or lookup(stockIcons[name])
+end
 local function fillIcon(option, name)
-    -- A texture would mask an upstream inventory-item icon in B42's renderer.
-    if not option or option.iconTexture or option.itemForTexture or option.color or not getTexture then return end
-    textures[name] = textures[name] or getTexture("media/ui/AutoMindful/" .. name .. ".png")
-    option.iconTexture = textures[name]
+    if not option then return end
+    local ours = option.autoMindfulAssignedIcon
+    if option.itemForTexture or option.color or (option.iconTexture and option.iconTexture ~= ours) then
+        -- A later upstream item/tint/texture still owns the presentation.
+        if ours and option.iconTexture == ours then option.iconTexture = nil end
+        option.autoMindfulIconKey, option.autoMindfulAssignedIcon = nil, nil
+        return
+    end
+    local t = icon(name)
+    option.iconTexture, option.autoMindfulAssignedIcon, option.autoMindfulIconKey = t, t, name
 end
 
 local function tooltip(context, option, title, description)
@@ -97,6 +136,7 @@ function Context.attach(menu, player)
     local originals, pending = {}, {}
     local entries = ZenWellnessContextMenu.Options
     walk(menu, {}, function(parent, option)
+        if option.autoMindfulIconKey then fillIcon(option, option.autoMindfulIconKey) end
         if option.autoMindfulOriginal then
             originals[#originals+1] = option.autoMindfulOriginal
         elseif option.onSelect and option.onSelect ~= manualAction then
@@ -139,6 +179,7 @@ function Context.generalMenu(playerIndex, context, worldobjects, test)
     local label = status.active and "AutoMindful (running)" or "AutoMindful"
     for _, existing in ipairs(context.options) do
         if existing.autoMindfulGeneral and existing.target == player then
+            if existing.autoMindfulIconKey then fillIcon(existing, existing.autoMindfulIconKey) end
             if existing.name ~= label then
                 existing.name = label
                 context:setWidth(context:calcWidth())

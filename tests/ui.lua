@@ -4,6 +4,7 @@ for _, name in ipairs({"ISCollapsableWindow", "ISPanel", "ISButton", "ISTickBox"
 end
 package.loaded["PZAPI/ModOptions"] = true
 package.loaded["ISMeditation/ZenWellnessContextMenu"] = true
+package.loaded["XpSystem/ISUI/ISCharacterInfo"] = true
 
 local Widget = {}
 function Widget:derive(name) return setmetatable({Type=name, __index=self}, {__index=self}) end

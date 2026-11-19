@@ -1,6 +1,8 @@
 local UI = require "AutoMindful/UI"
 local Options = require "AutoMindful/Options"
 local Context = require "AutoMindful/ContextMenu"
+require "XpSystem/ISUI/ISCharacterInfo"
+require("AutoMindful/SkillsPane").install()
 
 local function keyPressed(key)
     if getCore():isDoingTextEntry() or (ISChat and ISChat.focused) then return end

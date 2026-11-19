@@ -8,7 +8,7 @@ Build the complete mod before running checks. Development commands use Python 3.
 python3 tools/verify.py
 ```
 
-The verification entry point builds the actual archive first, runs controller, supply, context/UI, consumable, world-water, fluid-transfer, and release-integrity contracts, and records results outside the repository. Portable contracts use explicit game-boundary doubles. They check scheduling, provenance, portions, refresh behavior, and recovery; they do not prove multiplayer acceptance, actual rendering, animations, or a full real-time game journey.
+The verification entry point builds the actual archive first, runs controller, supply, context/UI, consumable, world-water, fluid-transfer, and release-integrity contracts, and records results outside the repository. Portable contracts use explicit game-boundary doubles. They check scheduling, provenance, portions, refresh behavior, recovery, and terminal HUD card selection and progress; they do not prove multiplayer acceptance, actual rendering, animations, or a full real-time game journey.
 
 ## Check the game's interpreter and upstream source
 
@@ -42,6 +42,7 @@ Cover these user journeys before a release:
 - Check standing and ground-sitting Wellness submenus, the preserved manual action, quick training and supply actions, the active-only reopen entry, optional general entry, and configured shortcut. Inspect tooltips and the full footer at normal and short window heights.
 - Move into and out of stock range, transfer items manually, toggle collection during training, and confirm live counts and read-only check feedback. Start with no food or drink and ordinary needs; confirm that genuine critical or native action blockers still stop appropriately.
 - Start at zero skill and verify normal Lifestyle yoga and meditation actions, native XP, natural session completion, and automatic resumption.
+- With the AutoMindful window closed, stop a session and reach a level cap in a separate run. Each should show one noninteractive card in the correct player's viewport, with a stop reason or completion, elapsed time, and observed XP or levels. Check that clicks still reach the game and the card fades. Confirm that drinking, scouting, inventory pauses, and loan returns do not add another card.
 - Exercise boredom above 30, useful and exhausted literature, food, clean water, endurance, embarrassment, fatigue, sleep, waking, and a missing required mat.
 - Enable nearby collection and verify actual transfers from reachable storage. Keep another room and floor inaccessible. Leave manual queued actions intact when cancelling automation.
 - Borrow books and opening tools from separate sources. Inspect the original container IDs, returned remainders, identifiable empty containers, full or inaccessible sources, and native recursive carried-bag lookup. Confirm that inventory transfers pause/resume and actual movement shows its cancellation reason.

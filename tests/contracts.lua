@@ -24,7 +24,10 @@ CharacterStat = {HUNGER="HUNGER", THIRST="THIRST", BOREDOM="BOREDOM", ENDURANCE=
 CharacterTrait = {ILLITERATE="illiterate", DISCIPLINED="disciplined", COUCHPOTATO="couchpotato"}
 ItemTag = {UNINTERESTING="uninteresting", PICTUREBOOK="picturebook", PICTURE="picture"}
 MoodleType = {FOOD_EATEN="food", PAIN="pain", HUNGRY="hungry", THIRST="thirst"}
-Perks = {Meditation="Meditation", Fitness="Fitness", Nimble="Nimble"}
+Perks = {Meditation={
+    getXpForLevel=function() return 100 end,
+    getTotalXpForLevel=function(_, level) return level*100 end,
+}, Fitness="Fitness", Nimble="Nimble"}
 Fluid = {Water="Water"}
 SkillBook = {Cooking=true}
 SandboxVars = {Yoga={KeepBags=true}, Meditation={KeepBags=true}, LSMeditation={RemoveLevitation=false}}
@@ -33,6 +36,16 @@ for _, name in ipairs({"OnPlayerUpdate", "OnPlayerDeath", "OnGameStart"}) do Eve
 function getTimestampMs() return T.now end
 function getGameTime() return {getNightsSurvived=function() return T.nights end} end
 HaloTextHelper = {addBadText=function(player,text) player.halos[#player.halos+1]=text end}
+package.preload["AutoMindful/CompletionHUD"] = function()
+    PZActionCompletionHUD = {
+        show=function(slot, card)
+            assert(slot == T.player:getPlayerNum(), "Completion card must use the survivor's local slot")
+            T.player.cards[#T.player.cards+1] = card
+        end,
+        duration=function(seconds) return string.format("%ds", math.floor(seconds)) end,
+    }
+    return PZActionCompletionHUD
+end
 function isClient() return T.client end
 function getServerOptions() return {getBoolean=function(_, key) return key == "SleepNeeded" and T.sleepNeeded or key == "SleepAllowed" and T.sleepAllowed end} end
 function getText(key) return key end
@@ -158,7 +171,7 @@ function T.add(container, item)
 end
 function T.playerNew()
     local p = {inventory=T.container(), values={HUNGER=0.05, THIRST=0, BOREDOM=0, ENDURANCE=1, FATIGUE=0, PAIN=0, PANIC=0}, meditation=0, xp=0, yoga={0,0,100}, hours=10, calories=2000, read={}, printRead={}, history={}, traits={}}
-    p.halos={}
+    p.halos, p.cards = {}, {}
     p.inventoryPage={}
     p.lootPage={refreshBackpacks=function()
         p.refreshCount=(p.refreshCount or 0)+1
@@ -173,12 +186,12 @@ function T.playerNew()
     function p:getModData() return self.data end
     function p:getInventory() return self.inventory end
     function p:isLocalPlayer() return true end
-    function p:getPlayerNum() return 0 end
+    function p:getPlayerNum() return self.slot or 0 end
     function p:getStats() return {get=function(_, name) return p.values[name] or 0 end, getNumVisibleZombies=function() return p.zombies or 0 end, getNumChasingZombies=function() return 0 end, getNumVeryCloseZombies=function() return 0 end} end
     function p:getBodyDamage() return {getOverallBodyHealth=function() return 100 end, getNumPartsBleeding=function() return 0 end} end
     function p:getNutrition() return {getCalories=function() return p.calories end} end
     function p:getMoodles() return {getMoodleLevel=function(_, kind) return kind == "pain" and p.painMoodle or kind == "food" and p.foodMoodle or kind == "hungry" and p.hungerMoodle or kind == "thirst" and p.thirstMoodle or 0 end} end
-    function p:getPerkLevel(perk) return perk == "Meditation" and self.meditation or 0 end
+    function p:getPerkLevel(perk) return perk == Perks.Meditation and self.meditation or 0 end
     function p:getXp() return {getXP=function() return p.xp end} end
     function p:getHoursSurvived() return self.hours end
     function p:getLastHourSleeped() return 0 end
@@ -357,12 +370,44 @@ local function test(name, fn) fn(); passed=passed+1; print("PASS "..name) end
 local function hasHistory(p,kind) for _, entry in ipairs(p.history) do if entry == kind then return true end end return false end
 T.hasHistory = hasHistory
 
+test("one terminal meditation card uses observed XP, elapsed time, and the local survivor slot",function()
+    local p=T.playerNew(); p.slot=1; p.meditation=9; p.xp=912; p.sitting=true
+    assert(C.start(p,"meditation",false)); T.tick(p)
+    assert(#p.cards==0 and C.status(p).active, "A finished native action is not a finished AutoMindful session")
+    T.tick(p)
+    assert(C.status(p).phase=="complete" and #p.cards==1 and #p.halos==0)
+    local card=p.cards[1]
+    assert(card.brand=="AUTOMINDFUL" and card.theme=="mindful")
+    assert(card.title=="Meditation session complete" and card.detail=="2s  •  +1 Meditation XP")
+    C.update(p); C.stop(p)
+    assert(#p.cards==1, "Repeated terminal events must not generate another card")
+end)
+test("yoga level caps use level changes when XP is not recoverable",function()
+    local p=T.playerNew(); p.yoga={9,97,100}
+    assert(C.start(p,"yoga",false)); assert(T.run(p,5).phase=="complete")
+    assert(#p.cards==1 and p.cards[1].title=="Yoga session complete")
+    assert(p.cards[1].detail:find("Yoga level 9 → 10",1,true) and not p.cards[1].detail:find("XP",1,true))
+end)
+test("stopping does not invent XP and idle, rejected, or already-capped requests do not show cards",function()
+    local p=T.playerNew()
+    C.stop(p); assert(not C.start(p,"invalid",false)); C.update(p)
+    p.meditation=10
+    assert(C.start(p,"meditation",false)); T.tick(p)
+    assert(C.status(p).phase=="complete" and #p.cards==0)
+    p.meditation=0; p.sitting=true; p.noXP=true
+    assert(C.start(p,"meditation",false)); T.tick(p)
+    C.stop(p,"Stopped by you."); C.stop(p)
+    local card=p.cards[1]
+    assert(#p.cards==1 and #p.halos==0 and card.title=="Meditation session stopped")
+    assert(card.detail=="1s" and card.note=="Stopped by you.")
+end)
 test("both targets reach 10 with model provisions and native boundary actions",function()
     local p=T.playerNew(); p.values.BOREDOM=40; p.values.HUNGER=0.25; p.values.THIRST=0.25
     T.add(p.inventory,T.item("Food")); T.add(p.inventory,T.water())
     for i=1,20 do T.add(p.inventory,T.item("Literature")) end
     assert(C.start(p,"both",false)); local s=T.run(p)
     assert(s.phase == "complete" and s.meditation == 10 and s.yoga == 10)
+    assert(#p.cards==1 and p.cards[1].title=="Training session complete")
     assert(hasHistory(p,"read") and hasHistory(p,"eat") and hasHistory(p,"drink"))
 end)
 test("single targets stop at 10 and leave the other skill unchanged",function()
@@ -482,6 +527,7 @@ test("milk care finishes residual thirst from plain water before resuming",funct
     assert(drinks==1 and math.abs(water.remainingLiters-19.9)<.000001)
     assert(p.values.HUNGER==0 and p.values.THIRST==0 and hasHistory(p,"Meditation"))
     assert(math.abs(milk.fluid.amount-.7)<.000001,"Plain water should finish thirst after hunger is restored")
+    assert(#p.cards==0, "Drinking and resuming must not emit a terminal card")
     C.stop(p); sources.scan,sources.drink=scan,drink
 end)
 test("paired care remembers hunger even when milk restores thirst first",function()
@@ -674,7 +720,7 @@ test("inventory transfers pause and resume care without cancelling the training 
     transfer:perform()
     for i=1,6 do T.tick(p) end
     assert(C.status(p).active and hasHistory(p,"Meditation"),"care must resume after the manual inventory transfer")
-    assert(#p.halos==0,"allowed inventory work must not report cancellation")
+    assert(#p.cards==0 and #p.halos==0,"allowed inventory work must not report cancellation")
     C.stop(p)
 end)
 test("movement cancels once with a visible reason while brief context gestures do not",function()
@@ -684,7 +730,7 @@ test("movement cancels once with a visible reason while brief context gestures d
     assert(C.status(p).active)
     p.aiming=false; p.contextOpen=false
     p.moving=true; T.now=T.now+1000; C.update(p); C.update(p)
-    assert(not C.status(p).active and #p.halos==1 and p.halos[1]:find("moved",1,true))
+    assert(not C.status(p).active and #p.cards==1 and #p.halos==0 and p.cards[1].note:find("moved",1,true))
 end)
 test("live preparation reflects movement inventory changes and collection permission",function()
     local p=T.playerNew(); local shelf=T.container(5,0)
@@ -994,11 +1040,11 @@ test("movement during a partial pour returns both loans without consuming the pa
     bulk.fluid.amount=4.9; vessel.fluid.amount=.1
     vessel.fluid.hungerRate=bulk.fluid.hungerRate; vessel.fluid.components=bulk.fluid.components
     p.moving=true; T.tick(p,false)
-    assert(not C.status(p).active and p.halos[#p.halos]:find("moved",1,true))
+    assert(not C.status(p).active and #p.cards==1 and #p.halos==0 and p.cards[1].note:find("moved",1,true))
     p.moving=false
     for i=1,8 do T.tick(p) end
     assert(pantry:contains(bulk) and shelf:contains(vessel) and C.status(p).pendingReturns==0)
-    assert(math.abs(bulk.fluid.amount+vessel.fluid.amount-5)<.000001 and not hasHistory(p,"drink"))
+    assert(math.abs(bulk.fluid.amount+vessel.fluid.amount-5)<.000001 and not hasHistory(p,"drink") and #p.cards==1)
 end)
 test("native auto drinking between pour and controller confirmation counts as successful care",function()
     local p=T.playerNew(); p.values.THIRST=.2
@@ -1045,6 +1091,7 @@ test("nearby care walks, borrows, reads, returns the book and returns home befor
     assert(C.start(p,"meditation",false))
     for i=1,20 do T.tick(p); if hasHistory(p,"Meditation") then break end end
     assert(p:getSquare()==origin, "Training must resume at the original square")
+    assert(#p.cards==0, "The outing and return are part of the same session")
     assert(shelf:contains(book), "Borrowed literature goes back before the return trip")
     assert(hasHistory(p,"read") and hasHistory(p,"Meditation"))
     C.stop(p); roaming.enabled=false; nearbyTarget=nil

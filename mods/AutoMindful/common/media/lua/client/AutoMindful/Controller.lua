@@ -88,7 +88,7 @@ local function showSessionEnd(player, state)
     hud.show(player:getPlayerNum(), {
         brand="AUTOMINDFUL", theme="mindful",
         title=modeTitles[state.mode] .. (stopped and " session stopped" or " session complete"),
-        detail=table.concat(detail, "  •  "),
+        detail=table.concat(detail, " | "),
         status=state.endPhase, note=stopped and state.endMessage or nil,
     })
 end

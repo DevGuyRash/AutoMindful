@@ -9,7 +9,6 @@ local floor, min, max = math.floor, math.min, math.max
 local gold, sage = {0.92, 0.75, 0.43}, {0.67, 0.78, 0.60}
 local ink, muted = {0.97, 0.96, 0.92}, {0.81, 0.84, 0.78}
 local checkMark = {{-8,0,-3,5}, {-3,5,8,-7}}
-local stopMark = {{-6,0,6,0}}
 local mindfulMark = {{0,-10,0,-8}, {-3,-5,3,-5}, {3,-5,6,-2}, {6,-2,6,2},
     {6,2,3,5}, {3,5,-3,5}, {-3,5,-6,2}, {-6,2,-6,-2}, {-6,-2,-3,-5}, {-8,8,8,8}}
 
@@ -88,11 +87,17 @@ local function drawCard(num, card, age)
         local size = l.badge
         local bx, by = x+l.pad+3, y+floor((h-size)/2)
         sr:renderRect(bx, by, size, size, 0.20, 0.24, 0.20, a)
-        local lines = card.status == "stopped" and stopMark or (card.theme == "mindful" and mindfulMark or checkMark)
-        local cx, cy, scale = bx + size/2, by + size/2, size/32
-        for _, v in ipairs(lines) do
-            sr:renderline(nil, floor(cx+v[1]*scale), floor(cy+v[2]*scale),
-                floor(cx+v[3]*scale), floor(cy+v[4]*scale), color[1], color[2], color[3], a, max(2,scale*2))
+        if card.status == "stopped" then
+            local edge = max(6, floor(size * 0.375))
+            sr:renderRect(bx + floor((size-edge)/2), by + floor((size-edge)/2),
+                edge, edge, color[1], color[2], color[3], a)
+        else
+            local lines = card.theme == "mindful" and mindfulMark or checkMark
+            local cx, cy, scale = bx + size/2, by + size/2, size/32
+            for _, v in ipairs(lines) do
+                sr:renderline(nil, floor(cx+v[1]*scale), floor(cy+v[2]*scale),
+                    floor(cx+v[3]*scale), floor(cy+v[4]*scale), color[1], color[2], color[3], a, max(2,scale*2))
+            end
         end
     end
     local tx, ty = x+l.inset, y+l.pad

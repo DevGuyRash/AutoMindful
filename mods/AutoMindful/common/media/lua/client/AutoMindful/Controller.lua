@@ -569,7 +569,7 @@ local function supply(player, state, kind, onlyWorldWater)
         local queued = ownBatch(player, state, "drinking", "Drinking from a nearby clean-water source.", function()
             local needed = stat(player, "THIRST") * 2
             local amount = source.object:getFluidAmount()
-            state.supplyGoal = {fullyCovered=amount >= needed, world=source.object, baselineNeed=needed/2,
+            state.supplyGoal = {fullyCovered=amount >= needed, world=source.object, worldAmount=amount, baselineNeed=needed/2,
                 expectedRemaining=math.max(0, amount-needed)}
             local used, reason = WaterSources.drink(player, source)
             if not used then state.supplyMissingReason = reason end

@@ -511,7 +511,6 @@ test("milk care finishes residual thirst from plain water before resuming",funct
     local water={object={},remainingLiters=20,directDrink=true,
         description={remainingLiters=20,hungerEffect=0,thirstEffect=10,hungerRelief=0,thirstRelief=10,food=false,water=true,calories=0}}
     function water.object:getFluidAmount() return water.remainingLiters end
-    function water.object:isWaterInfinite() return false end
     local drinks=0
     sources.scan=function() return {water} end
     sources.drink=function(player)
@@ -590,7 +589,9 @@ test("infinite water completion uses hydration not constant advertised reserve",
     local water={object={},remainingLiters=10000,directDrink=true,
         description={remainingLiters=10000,hungerEffect=0,thirstEffect=5000,hungerRelief=0,thirstRelief=5000,food=false,water=true,calories=0}}
     function water.object:getFluidAmount() return 10000 end
-    function water.object:isWaterInfinite() return true end
+    function water.object:getFluidCapacity() return 10000 end
+    function water.object:getUsesExternalWaterSource() return false end
+    function water.object:getFluidContainer() return nil end
     local drinks=0
     sources.scan=function() return {water} end
     sources.drink=function(player)
@@ -1095,6 +1096,39 @@ test("nearby care walks, borrows, reads, returns the book and returns home befor
     assert(shelf:contains(book), "Borrowed literature goes back before the return trip")
     assert(hasHistory(p,"read") and hasHistory(p,"Meditation"))
     C.stop(p); roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("a single finite or mains drink on a scouting trip returns home and resumes meditation", function()
+    local sources=require "AutoMindful/WaterSources"
+    local scan, drink=sources.scan, sources.drink
+    roaming.enabled=true
+    for _,initial in ipairs({5,10000}) do
+        local p=T.playerNew(); p.values.THIRST=.25
+        local origin, target=p:getSquare(), T.square(6,0)
+        local reserve, drinks=initial, 0
+        local world={getFluidAmount=function() return reserve end,getFluidCapacity=function() return initial end,
+            getUsesExternalWaterSource=function() return false end,getFluidContainer=function() return nil end}
+        local water={object=world,remainingLiters=initial,directDrink=true,
+            description={remainingLiters=initial,hungerEffect=0,thirstEffect=initial/2,hungerRelief=0,
+                thirstRelief=initial/2,food=false,water=true,calories=0}}
+        nearbyTarget={square=target,key="water:6:0:0",object=world}
+        sources.scan=function() return p:getSquare():canReachTo(target) and {water} or {} end
+        sources.drink=function(player, source)
+            assert(source.object==world and player:getSquare()~=origin and player:getSquare():canReachTo(target))
+            ISTimedActionQueue.add(T.action(player,"world-drink",function()
+                if initial==5 then reserve=reserve-player.values.THIRST*2 end
+                drinks=drinks+1; player.values.THIRST=.0001
+            end))
+            return true
+        end
+        assert(C.start(p,"meditation",false))
+        for i=1,20 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+        assert(drinks==1 and reserve==(initial==5 and 4.5 or 10000))
+        assert(C.status(p).active and p:getSquare()==origin and hasHistory(p,"Meditation"))
+        C.stop(p)
+    end
+    sources.scan,sources.drink=scan,drink
+    roaming.enabled=false; nearbyTarget=nil
 end)
 
 test("blocked meditation uses owned literature before scouting unknown containers", function()

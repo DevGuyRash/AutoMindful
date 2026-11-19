@@ -91,3 +91,22 @@ handlers.OnGameStart(); paint(9050); assert(#drawn == 0)
 hud.show(3,card("LOOTBOX","Missing player",""))
 paint(9110); assert(#drawn == 0)
 print("PASS: resizes, dead slot cleanup, reconnect/world reset and click-through with no UI element")
+
+-- Stop is a filled square, not a font glyph or a one-pixel horizontal stroke.
+players[0]={}; width=640
+for _,fontSize in ipairs({16,21}) do
+    sm=fontSize
+    for _,brand in ipairs({"AUTOMINDFUL","LOOTBOX"}) do
+        handlers.OnGameStart()
+        hud.show(0,card(brand,"Session stopped","7m 56s | +91 Meditation XP","stopped"))
+        paint(now+160)
+        assert(find("7m 56s | +91 Meditation XP") and #strokes==0)
+        local badge,mark=blocks[5],blocks[6]
+        assert(badge and mark and badge.w==badge.h)
+        assert(mark.w==mark.h and mark.w>=6 and mark.w<badge.w)
+        assert(math.abs(mark.x+mark.w/2-(badge.x+badge.w/2))<=0.5)
+        assert(math.abs(mark.y+mark.h/2-(badge.y+badge.h/2))<=0.5)
+        assert(mark.a==1 and mark.r>badge.r and mark.g>badge.g and mark.b>badge.b)
+    end
+end
+print("PASS: stopped cards use centered filled squares at both tested font scales and ASCII detail")

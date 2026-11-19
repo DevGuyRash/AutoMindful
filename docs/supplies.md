@@ -1,6 +1,6 @@
 # Supply selection
 
-AutoMindful compares safe, usable portions for the survivor's current hunger and thirst. It uses the same rule for inventory, worn hydration equipment, permitted nearby items, and clean world-water sources. Nearby sources, empty vessels, and opening tools remain unavailable when adjacent collection is off.
+AutoMindful compares safe, usable portions for the survivor's current hunger and thirst. It uses the same rule for inventory, worn hydration equipment, permitted nearby items, and clean world-water sources. Both adjacent collection and scouting default on. If both are off, nearby sources, empty vessels, and opening tools remain unavailable.
 
 ## Choose useful restoration
 
@@ -35,7 +35,7 @@ This policy manages hunger and thirst. It does not optimize calories, body weigh
 
 ## Bulk liquids and empty vessels
 
-A safe liquid can supply hunger or thirst even when its container cannot be used for native portable drinking. AutoMindful pairs that source with a clean empty drinking vessel. It checks native transfer compatibility, capacity, ownership, and reach before queuing the game's measured fluid-transfer action. Carried-bag supplies are available without adjacent collection. Nearby vessels require that option, just like nearby food.
+A safe liquid can supply hunger or thirst even when its container cannot be used for native portable drinking. AutoMindful pairs that source with a clean empty drinking vessel. It checks native transfer compatibility, capacity, ownership, and reach before queuing the game's measured fluid-transfer action. Carried-bag supplies are available without adjacent collection. Nearby vessels require adjacent collection or scouting, just like nearby food.
 
 The portion calculation uses the amount that fits in the selected vessel. Source ranking still uses the source's full remaining reserve. A large source does not receive extra credit merely because a larger vessel is available. Transfer, pickup, opening, and return work contribute to the existing convenience comparison. Direct clean world-water drinking remains available without a vessel when the game supports it.
 

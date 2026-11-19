@@ -228,6 +228,11 @@ local Context = require "AutoMindful/ContextMenu"
 local settings = PZAPI.ModOptions:getOptions("AutoMindful")
 local search = settings:getOption("searchNearby")
 assert(Options.searchNearby() and Options.searchRadius() == 10, "Scouting starts on within a 10-tile radius")
+local freshBoth = UI.open(player2)
+assert(freshBoth.nearby:isSelected(1) and freshBoth.scouting:isSelected(1),
+    "Both supply controls start enabled on a fresh pane with unset defaults")
+freshBoth:close()
+UI.windows[1]=nil
 assert(not Options.generalMenu() and Options.windowKey() == 0, "Idle menus and hotkeys default to opt-in")
 search:setValue(false)
 package.loaded["AutoMindful/Options"] = nil
@@ -245,6 +250,11 @@ assert(submenu.options[1].name == "Open AutoMindful" and submenu.options[2].name
     and submenu.options[3].name == "Train meditation" and submenu.options[4].name == "Check supplies",
     "Open precedes the meditation-only endurance action and other quick actions")
 assert(submenu.options[3].toolTip.description:find("25 / 200 XP",1,true), "Quick-action tooltips include progress toward the next level")
+local trainQuick = submenu.options[3]
+assert(trainQuick.onSelect(trainQuick.target, trainQuick.param1))
+assert(Controller.state.mode == "meditation" and Controller.state.collectNearby == true and not Options.searchNearby(),
+    "A fresh quick action starts with adjacent supplies enabled independently of scouting")
+Controller.state.active = false
 local endurance = submenu.options[2]
 player.data.AutoMindfulPreferences = {collectNearby=true}
 assert(endurance.onSelect(endurance.target, endurance.param1))
@@ -361,6 +371,18 @@ settings:getOption("generalContextMenu"):setValue(false)
 local window = UI.open(player)
 local scout = window.scouting
 assert(search.name == scout.option and not scout:isSelected(1), "Both surfaces show the same saved setting and label")
+assert(window.nearby:isSelected(1), "A fresh pane enables adjacent supplies even if global scouting was saved off")
+window:onStart(window.starts[1])
+assert(Controller.state.collectNearby == true, "Starting from a fresh pane keeps the adjacent default")
+Controller.state.active = false
+window:refresh()
+window.nearby:click()
+assert(not window.nearby:isSelected(1) and player.data.AutoMindfulPreferences.collectNearby == false,
+    "Opting out explicitly persists false for this survivor")
+assert(trainQuick.onSelect(trainQuick.target, trainQuick.param1))
+assert(Controller.state.collectNearby == false, "Saved adjacent-off also applies to quick actions")
+Controller.state.active = false
+window:refresh()
 search.element = ISTickBox:new() -- native Mods page was constructed while scouting was off
 local saves = PZAPI.ModOptions.saves or 0
 scout:click()
@@ -375,8 +397,19 @@ PZAPI.ModOptions:save()
 now = now + 600; window:update()
 assert(not scout:isSelected(1) and PZAPI.ModOptions.savedSearch == false,
     "Applying a change in Mods updates an already-open training pane")
-window:close(); UI.open(player)
-assert(not scout:isSelected(1) and not Options.searchNearby(), "Reopening the pane never reapplies the default")
+window:close()
+assert(UI.open(player)==window and not scout:isSelected(1) and not window.nearby:isSelected(1),
+    "Reopening the same pane does not reapply either default")
+window:close()
+local saved = player.data.AutoMindfulPreferences
+UI.windows[0]=nil
+local previousWindow = window
+window=UI.open(player)
+scout=window.scouting
+assert(window~=previousWindow and player.data.AutoMindfulPreferences==saved
+    and saved.collectNearby==false and not window.nearby:isSelected(1)
+    and not scout:isSelected(1) and not Options.searchNearby(),
+    "Recreated pane respects both off choices with the existing survivor modData")
 local function assertFooterVisible(view)
     local footer
     for _, child in ipairs(view.children) do
@@ -401,6 +434,9 @@ core.getScreenHeight = function() return 480 end
 local shortPlayer = {data={}, getModData=player.getModData, getPlayerNum=function() return 1 end, isDead=player.isDead}
 local shortWindow = UI.open(shortPlayer)
 assertFooterVisible(shortWindow)
+assert(shortWindow.nearby:isSelected(1) and not shortWindow.scouting:isSelected(1)
+        and not window.nearby:isSelected(1),
+    "A fresh split survivor gets adjacent on; the existing survivor stays off and scouting off is global")
 assert(shortWindow.body.height > 0 and shortWindow.body:getScrollHeight() > shortWindow.body.height,
     "Short screens preserve the fixed controls and scroll the body")
 shortWindow:close()
@@ -408,9 +444,12 @@ UI.windows[1] = nil
 core.getScreenHeight = screenHeight
 assert(window.enduranceButton.enable and window.enduranceButton.mode == "endurance",
     "The window offers an enabled endurance job while idle")
+scout:click()
+assert(Options.searchNearby() and not window.nearby:isSelected(1), "Enabling global scouting does not enable this survivor's adjacent preference")
 window:onStart(window.enduranceButton)
 assert(Controller.state.mode == "endurance" and not Controller.state.collectNearby and not window.enduranceButton.enable,
     "The window starts endurance without supplies and disables the button during the active session")
+scout:click() -- Restore existing off preference for the remainder of the UI contracts.
 Controller.state.endurance = .999
 window:refresh()
 assert(window.activity.text:find("Recovering endurance (99%)", 1, true),

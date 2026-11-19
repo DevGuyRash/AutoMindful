@@ -235,14 +235,17 @@ function Consumables.goalSatisfied(player, item, kind, goal, completed)
     if need > Consumables.pairedNeedThreshold then return false end
     local remaining
     if goal.world then
-        -- Mains/infinite fixtures advertise a constant reserve. They have no
-        -- item-quantity receipt: require native completion AND observed hydration,
-        -- never completion alone or a requested waterUnit count.
-        if goal.world:isWaterInfinite() then
-            return completed == true and goal.baselineNeed
-                and need < goal.baselineNeed - Consumables.restoredThreshold
-        end
-        remaining = goal.world:getFluidAmount()
+        local world = goal.world
+        remaining = world:getFluidAmount()
+        if remaining <= goal.expectedRemaining + Consumables.restoredThreshold then return true end
+        -- Build 42 reports 10000 for both the amount and capacity of unmetered
+        -- water. A full ground vessel or barrel-fed fixture still needs a debit.
+        if completed ~= true or goal.worldAmount ~= 10000 or remaining ~= goal.worldAmount
+                or world:getFluidCapacity() ~= remaining or world:getUsesExternalWaterSource()
+                or instanceof(world, "IsoWorldInventoryObject") then return false end
+        local reservoir = world:getFluidContainer()
+        if reservoir and reservoir:getAmount() == remaining then return false end
+        return goal.baselineNeed and need < goal.baselineNeed - Consumables.restoredThreshold
     elseif not item or not item:getContainer() then remaining = 0
     elseif goal.fluid then
         local fluid = Fluids.container(item)

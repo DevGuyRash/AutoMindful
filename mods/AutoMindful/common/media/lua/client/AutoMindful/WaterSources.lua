@@ -85,7 +85,7 @@ function WaterSources.scan(player)
     return result
 end
 
-function WaterSources.choose(player, rejected)
+function WaterSources.choose(player, rejected, object)
     local best
     for _, source in ipairs(WaterSources.scan(player)) do
         local rejection = rejected[source.object]
@@ -93,7 +93,8 @@ function WaterSources.choose(player, rejected)
             rejected[source.object] = nil
             rejection = nil
         end
-        if source.directDrink and not rejection and (not best or source.remainingLiters > best.remainingLiters) then best = source end
+        if source.directDrink and not rejection and (not object or source.object == object)
+                and (not best or source.remainingLiters > best.remainingLiters) then best = source end
     end
     return best
 end

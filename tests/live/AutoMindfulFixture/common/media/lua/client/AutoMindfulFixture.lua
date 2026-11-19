@@ -123,7 +123,64 @@ local function startScoutCase(player, mode)
     print("[AutoMindfulFixture] SCOUTCASE mode="..mode.." started="..tostring(started).." "..tostring(message))
 end
 
-local waterCase
+local waterCase, waterProbe
+local function beginWaterCase(player, mode, item, origin, source)
+    local started, message = Controller.start(player, "meditation", false)
+    if started then
+        waterCase = {mode=mode, item=item, origin=origin, source=source, before=source:getFluidAmount()}
+        print("[AutoMindfulFixture] WATERCASE mode=" .. mode .. " started=true target=" .. source:getSquare():getX()
+            .. "," .. source:getSquare():getY() .. " amount=" .. waterCase.before)
+    else
+        removeFixtureItem(item)
+        print("[AutoMindfulFixture] WATERCASE_PRECONDITION " .. tostring(message))
+    end
+end
+
+local function mainsSource(source)
+    local reservoir = source:getFluidContainer()
+    return not instanceof(source, "IsoWorldInventoryObject") and not source:isTaintedWater()
+        and source:getFluidAmount() == 10000 and source:getFluidCapacity() == 10000
+        and not source:getUsesExternalWaterSource() and (not reservoir or reservoir:getAmount() ~= 10000)
+end
+
+local function waterPosition(square)
+    return square:getX() .. "," .. square:getY()
+end
+
+local function finishWaterProbe(player)
+    local probe = waterProbe
+    if not probe then return end
+    if player:hasTimedActions() then
+        if getTimestampMs() > probe.deadline then
+            waterProbe = nil
+            print("[AutoMindfulFixture] WATERCASE_PRECONDITION native preflight did not finish in 20 seconds")
+        end
+        return
+    end
+    local here = player:getSquare()
+    local supplies = require "AutoMindful/Supplies"
+    supplies.refreshNearby(player)
+    local choice = supplies.choose(player, "water", true, {})
+    if probe.walkingOut then
+        if here == probe.origin or here:getRoom() ~= probe.origin:getRoom()
+                or not choice or not choice.source or choice.source.object ~= probe.source then
+            waterProbe = nil
+            print("[AutoMindfulFixture] WATERCASE_PRECONDITION native walkAdjObject ended at " .. waterPosition(here)
+                .. " without the intended same-room mains drink"); return
+        end
+        print("[AutoMindfulFixture] WATERCASE_ROUTE native walkAdjObject usable endpoint=" .. waterPosition(here))
+        probe.walkingOut = false
+        ISTimedActionQueue.add(ISWalkToTimedAction:new(player, probe.origin))
+        return
+    end
+    waterProbe = nil
+    if here ~= probe.origin or choice then
+        print("[AutoMindfulFixture] WATERCASE_PRECONDITION native return missed origin or hydration is reachable there"); return
+    end
+    print("[AutoMindfulFixture] WATERCASE_ROUTE native return reached origin=" .. waterPosition(here))
+    beginWaterCase(player, "mains", nil, probe.origin, probe.source)
+end
+
 local function startWaterCase(player, mode)
     if mode == "stop" and waterCase then
         Controller.stop(player, "Finished the water journey fixture.")
@@ -133,7 +190,7 @@ local function startWaterCase(player, mode)
     end
     if mode ~= "finite" and mode ~= "mains" then return end
     local status, origin = Controller.status(player), player:getSquare()
-    if status.active or status.pendingReturns > 0 then
+    if status.active or status.pendingReturns > 0 or player:hasTimedActions() or waterProbe then
         print("[AutoMindfulFixture] WATERCASE_PRECONDITION need idle survivor and no loans"); return
     end
     if waterCase then removeFixtureItem(waterCase.item); waterCase = nil end
@@ -149,11 +206,11 @@ local function startWaterCase(player, mode)
     end
     Options.setSearchNearby(true)
     Nearby.invalidate(player)
-    local selected = Nearby.find(player, "water", origin, Options.searchRadius(), {}, true)
+    local selected = Nearby.find(player, "water", origin, Options.searchRadius(), {}, mode == "finite")
     local source = selected and selected.object and selected.object:getMasterObject()
     local adjacent = require "AutoMindful/WaterSources"
     if adjacent.choose(player, {}) or not source or (mode == "finite" and source ~= item:getWorldItem())
-            or (mode == "mains" and (instanceof(source, "IsoWorldInventoryObject") or source:isTaintedWater())) then
+            or (mode == "mains" and (not origin:getRoom() or not mainsSource(source))) then
         removeFixtureItem(item)
         print("[AutoMindfulFixture] WATERCASE_PRECONDITION need expected distant clean source and no adjacent water"); return
     end
@@ -162,15 +219,16 @@ local function startWaterCase(player, mode)
     stats:set(CharacterStat.ENDURANCE, 1)
     stats:set(CharacterStat.THIRST, 0.25)
     player:getNutrition():setCalories(1000)
-    local started, message = Controller.start(player, "meditation", false)
-    if started then
-        waterCase = {mode=mode, item=item, origin=origin, source=source, before=source:getFluidAmount()}
-        print("[AutoMindfulFixture] WATERCASE mode=" .. mode .. " started=true target=" .. source:getSquare():getX()
-            .. "," .. source:getSquare():getY() .. " amount=" .. waterCase.before)
-    else
-        removeFixtureItem(item)
-        print("[AutoMindfulFixture] WATERCASE_PRECONDITION " .. tostring(message))
+    if mode == "finite" then beginWaterCase(player, mode, item, origin, source); return end
+    local supplies = require "AutoMindful/Supplies"
+    supplies.refreshNearby(player)
+    if supplies.choose(player, "water", true, {}) or getGameSpeed() ~= 1
+            or not luautils.walkAdjObject(player, source, true, true) or not player:hasTimedActions() then
+        print("[AutoMindfulFixture] WATERCASE_PRECONDITION need normal speed, no competing hydration, and a native outbound walk"); return
     end
+    waterProbe = {origin=origin, source=source, walkingOut=true, deadline=getTimestampMs()+20000}
+    print("[AutoMindfulFixture] WATERCASE_ROUTE probing native walkAdjObject from=" .. waterPosition(origin)
+        .. " target=" .. waterPosition(source:getSquare()))
 end
 
 local function setupFluidCase(player, mode)
@@ -402,6 +460,7 @@ Events.OnPlayerUpdate.Add(function(player)
     end
     if player ~= getSpecificPlayer(0) or getTimestampMs() < nextReport then return end
     nextReport = getTimestampMs() + 1000
+    finishWaterProbe(player)
     local status = Controller.status(player)
     if waterCase and not waterCase.reported and (status.phase == "meditation" or status.phase == "stopped") then
         waterCase.reported = true
@@ -526,6 +585,20 @@ Events.OnPlayerUpdate.Add(function(player)
                                         .. " y=" .. object:getSquare():getY() .. " amount=" .. object:getFluidAmount()
                                         .. " tainted=" .. tostring(object:isTaintedWater())
                                         .. " sprite=" .. tostring(object:getSprite() and object:getSprite():getName()))
+                                    local sink = object:getSquare()
+                                    local room = sink:getRoom()
+                                    if room and mainsSource(object) then
+                                        for _, delta in ipairs({{1,0},{-1,0},{0,1},{0,-1}}) do
+                                            for step=2,4 do
+                                                local origin = getCell():getGridSquare(sink:getX()+delta[1]*step,
+                                                    sink:getY()+delta[2]*step, sink:getZ())
+                                                if origin and origin:getRoom() == room and origin:isFree(false) then
+                                                    print("[AutoMindfulFixture] WATERORIGIN candidate=" .. waterPosition(origin)
+                                                        .. " sink=" .. waterPosition(sink))
+                                                end
+                                            end
+                                        end
+                                    end
                                 end
                             end
                         end

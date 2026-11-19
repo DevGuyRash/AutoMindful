@@ -13,6 +13,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_PATTERN = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+MENU_ICONS = {"mods/AutoMindful/common/media/ui/AutoMindful/" + name + ".png"
+              for name in ("Mindful", "Open", "Supplies", "Yoga", "Meditate", "Endurance", "Once", "Mat", "Bowl")}
 
 
 def release_version(tag: str) -> str:
@@ -39,9 +41,11 @@ def package_files() -> dict[str, bytes]:
         relative = path.relative_to(ROOT).as_posix()
         if not relative.startswith("mods/AutoMindful/") or any(part.startswith(".") for part in path.relative_to(ROOT).parts):
             raise ValueError(f"Unexpected mod in package: {relative}")
-        if path.name != "mod.info" and not (path.suffix == ".lua" and "/media/lua/client/" in relative):
+        if path.name != "mod.info" and relative not in MENU_ICONS and not (path.suffix == ".lua" and "/media/lua/client/" in relative):
             raise ValueError(f"Unsupported package input: {relative}")
         result["Contents/" + relative] = path.read_bytes()
+    if any("Contents/" + icon not in result for icon in MENU_ICONS):
+        raise ValueError("Missing packaged AutoMindful menu icon")
     result["Contents/mods/AutoMindful/LICENSE"] = (ROOT / "LICENSE").read_bytes()
     return result
 

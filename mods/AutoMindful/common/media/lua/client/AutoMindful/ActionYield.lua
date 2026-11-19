@@ -14,7 +14,7 @@ function ActionYield.hasForeign(queue, owner)
     return false
 end
 
--- Only needed if a stop callback starts unrelated native work after stock clear.
+-- A Java-initiated stop drains the native head after the Lua callback returns.
 -- Don't start a foreign successor on top of that activity: native StartAction
 -- wipes the character's current Java stack. Stock tick must not reap our stopped
 -- Lua head as "bugged" while it waits. This hook belongs to this player only.
@@ -22,6 +22,7 @@ function ActionYield.finishHandoff(player)
     local timed = ISTimedActionQueue.getTimedActionQueue(player)
     local hold = timed.autoMindfulHandoff
     if not hold then return true end
+    if hold.inStop then return false end
     local unchanged = timed.queue[1] == hold.head and (not timed.current or timed.current == hold.head)
     if unchanged and not player:getCharacterActions():isEmpty() then return false end
     if timed.tick == hold.tick then timed.tick = hold.prior end
@@ -32,10 +33,30 @@ end
 
 local function keepWaiters() end
 
-function ActionYield.release(player, owner)
-    local timed = ISTimedActionQueue.getTimedActionQueue(player)
-    if not ActionYield.finishHandoff(player) then return false end
-    local queue, head = timed.queue, timed.queue[1]
+local function deferHandoff(player, timed, head)
+    if timed.autoMindfulHandoff then return timed.autoMindfulHandoff end
+    local previous = timed.tick
+    local hold = {head=head, prior=rawget(timed, "tick")}
+    hold.tick = function(self)
+        if ActionYield.finishHandoff(player) and previous then return previous(self) end
+    end
+    timed.autoMindfulHandoff, timed.tick = hold, hold.tick
+    return hold
+end
+
+local function preserveWaiters(timed, fn, ...)
+    -- Protect this player's actual queue only while stock stop/reset is on
+    -- the stack. Additions remain visible and explicit later clears still win.
+    local reset, clear = rawget(timed, "resetQueue"), rawget(timed, "clearQueue")
+    timed.resetQueue, timed.clearQueue = keepWaiters, keepWaiters
+    local ok, result = pcall(fn, ...)
+    if timed.resetQueue == keepWaiters then timed.resetQueue = reset end
+    if timed.clearQueue == keepWaiters then timed.clearQueue = clear end
+    return ok, result
+end
+
+local function removeOwnWaiters(timed, owner)
+    local queue = timed.queue
     for index = #queue, 2, -1 do
         local action = queue[index]
         if action.autoMindfulOwner == owner and not action:isStarted() then
@@ -43,6 +64,29 @@ function ActionYield.release(player, owner)
             action:forceCancel()
         end
     end
+end
+
+function ActionYield.nativeAimStop(player, owner, head, original, ...)
+    local timed = ISTimedActionQueue.getTimedActionQueue(player)
+    if timed.current ~= head or timed.queue[1] ~= head or timed:isCurrentActionAddingOtherActions() then
+        return original(head, ...)
+    end
+    -- Already in the native stop callback. Never recursively clear the Java
+    -- stack, nor begin a successor that its still-unwinding clear would erase.
+    local hold = deferHandoff(player, timed, head)
+    hold.inStop = true
+    local ok, result = preserveWaiters(timed, original, head, ...)
+    hold.inStop = nil
+    if timed.queue[1] == head and (not timed.current or timed.current == head) then removeOwnWaiters(timed, owner) end
+    if not ok then error(result) end
+    return result
+end
+
+function ActionYield.release(player, owner)
+    local timed = ISTimedActionQueue.getTimedActionQueue(player)
+    if not ActionYield.finishHandoff(player) then return false end
+    local queue, head = timed.queue, timed.queue[1]
+    removeOwnWaiters(timed, owner)
     if not head or head.autoMindfulOwner ~= owner then
         for _, action in ipairs(queue) do if action.autoMindfulOwner == owner then return false end end
         return true
@@ -51,23 +95,11 @@ function ActionYield.release(player, owner)
     -- Never stop an unidentified native action, even if Lua still lists our old head.
     if timed.current ~= head or timed:isCurrentActionAddingOtherActions() or (not native:isEmpty() and
             (native:size() ~= 1 or not head.action or not native:contains(head.action))) then return false end
-    -- Stock stop resets the Lua queue and then clears the Java stack. Suppress
-    -- only this player's two bulk wipes for that synchronous call. The real
-    -- queue stays visible, even to mods that append inside our stop callback.
-    local reset, clear = rawget(timed, "resetQueue"), rawget(timed, "clearQueue")
-    timed.resetQueue, timed.clearQueue = keepWaiters, keepWaiters
-    local ok, reason = pcall(ISTimedActionQueue.clear, player)
-    if timed.resetQueue == keepWaiters then timed.resetQueue = reset end
-    if timed.clearQueue == keepWaiters then timed.clearQueue = clear end
+    local ok, reason = preserveWaiters(timed, ISTimedActionQueue.clear, player)
     if not ok then error(reason) end
     if timed.queue[1] ~= head or (timed.current and timed.current ~= head) then return true end
     if not player:getCharacterActions():isEmpty() then
-        local previous = timed.tick
-        local hold = {head=head, prior=rawget(timed, "tick")}
-        hold.tick = function(self)
-            if ActionYield.finishHandoff(player) and previous then return previous(self) end
-        end
-        timed.autoMindfulHandoff, timed.tick = hold, hold.tick
+        deferHandoff(player, timed, head)
         return false
     end
     advanceAfterStop(timed, head)
@@ -83,6 +115,23 @@ function ActionYield.occupied(player, queue, owner)
     if not queue[1] then return ActionYield.nativeBusy(player) end
     local native = player:getCharacterActions()
     return not native:isEmpty() and (native:size() ~= 1 or not queue[1].action or not native:contains(queue[1].action))
+end
+
+local function visibleOptions(menu)
+    return menu and menu.options and menu.options[1] ~= nil and menu:isVisible()
+        and (not menu.isReallyVisible or menu:isReallyVisible())
+end
+
+function ActionYield.contextOpen(player)
+    local menu = getPlayerContextMenu and getPlayerContextMenu(player:getPlayerNum())
+    if visibleOptions(menu) then return true end
+    -- In single-menu mode the root can be hidden while a submenu is open.
+    if menu and menu.instanceMap and #menu.instanceMap > 0 and menu.isOptionSingleMenu and menu:isOptionSingleMenu() then
+        for _, child in ipairs(menu.instanceMap) do
+            if visibleOptions(child) then return true end
+        end
+    end
+    return false
 end
 
 -- Stock map reading ends its timed action before the map closes. Paper maps

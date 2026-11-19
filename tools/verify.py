@@ -55,6 +55,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
         command.append(str(reference_root))
     checks = [check(evidence, "portable-contracts", command)]
     for name, script in (("ui-contracts", "ui.lua"), ("progress-contracts", "progress.lua"),
+                         ("completion-hud-contracts", "completion_hud.lua"),
                          ("consumable-contracts", "consumables.lua"), ("supply-policy-contracts", "supply_policy.lua"),
                          ("water-source-contracts", "water_sources.lua"), ("fluid-transfer-contracts", "fluid_transfers.lua"),
                          ("nearby-contracts", "nearby.lua")):
@@ -81,6 +82,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                 env = {key: value for key, value in os.environ.items() if key not in {
                     "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "JAVA_OPTS", "CLASSPATH", "LD_PRELOAD"}}
                 for name, script in (("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"),
+                                     ("native-completion-hud-contracts", "completion_hud.lua"),
                                      ("native-progress-contracts", "progress.lua"), ("native-supply-policy-contracts", "supply_policy.lua"),
                                      ("native-consumable-contracts", "consumables.lua"),
                                      ("native-water-source-contracts", "water_sources.lua"),

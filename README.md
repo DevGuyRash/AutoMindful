@@ -74,7 +74,9 @@ Zomboid's separate automatic-drinking option can still use carried water before 
 
 ## Keep control of the loop
 
-**Stop training** cancels explicitly. Clear movement, sustained aiming, or another gameplay action taking control also cancels, with a short reason above the survivor. Looking at the window or context menu does not cancel. Inventory transfers can pause the automatic work and let it resume afterward.
+**Stop training** cancels explicitly. Clear movement, sustained aiming, or another gameplay action taking control also cancels. Looking at the window or context menu does not cancel. Inventory transfers can pause the automatic work and let it resume afterward.
+
+When training stops or reaches its target, a small click-through HUD card shows the elapsed session time and any measured progress, even if the AutoMindful window is closed. If Lifestyle's XP data cannot establish an exact gain across a level change, the card reports the level change instead. Care breaks and supply trips do not end the session. The card fades after about four seconds; reopen AutoMindful for the full stop reason or pending returns.
 
 Meditation needs sitting on the ground and cannot start above Lifestyle's boredom limit. Yoga needs standing and may require a complete two-tile mat. Native exhaustion, embarrassment, injuries, unsafe surroundings, and missing essentials can limit what the survivor can do. AutoMindful uses normal game time and XP rates; reaching both level caps can take many game days.
 

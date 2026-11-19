@@ -85,6 +85,36 @@ function ActionYield.occupied(player, queue, owner)
     return not native:isEmpty() and (native:size() ~= 1 or not queue[1].action or not native:contains(queue[1].action))
 end
 
+-- Stock map reading ends its timed action before the map closes. Paper maps
+-- are nonmodal windows, unlike a true blocking dialog. Neither the minimap
+-- nor an always-open inventory panel is evidence of a player taking over.
+function ActionYield.inspecting(player, state, now)
+    local index = player:getPlayerNum()
+    local world = ISWorldMap_instance
+    if world and world.playerNum == index and world:isVisible() then return true end
+    local modal = UIManager and UIManager.getModal and UIManager.getModal()
+    if modal and modal:isVisible() then
+        local panel = modal.getTable and modal:getTable()
+        if not panel or panel.playerNum == nil or panel.playerNum == index then return true end
+    end
+    if not UIManager or not UIManager.getUI then return false end
+    if state.windowChecked and now >= state.windowChecked and now - state.windowChecked < 250 then
+        return state.paperMapOpen
+    end
+    state.windowChecked, state.paperMapOpen = now, false
+    local elements = UIManager.getUI()
+    for i = 0, elements:size()-1 do
+        local element = elements:get(i)
+        local panel = element and element.getTable and element:getTable()
+        if panel and panel.Type == "ISMapWrapper" and panel.mapUI and panel.mapUI.playerNum == index
+                and not panel.isCollapsed and panel:isReallyVisible() then
+            state.paperMapOpen = true
+            break
+        end
+    end
+    return state.paperMapOpen
+end
+
 function ActionYield.rememberPosition(state, player)
     state.motionX, state.motionY, state.motionZ = player:getX(), player:getY(), player:getSquare():getZ()
 end

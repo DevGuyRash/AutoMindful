@@ -214,7 +214,7 @@ local function unsafeReason(player, state)
     if player:getVehicle() then return "Stopped because you entered a vehicle." end
     if not player:getSquare() then return "Stopped because the survivor has no loaded square." end
     if player:isRunning() or player:isSprinting() then return "Cancelled because you started running." end
-    if player:pressedCancelAction() then return "Cancelled by your input." end
+    if player:pressedCancelAction() and not (state and state.uiCancelHeld) then return "Cancelled by your input." end
     if player:isAttacking() then return "Stopped because you started attacking." end
     if state and state.active then
         if ActionYield.leftArea(state, player, excursionMotion(player, state)) then
@@ -226,7 +226,7 @@ local function unsafeReason(player, state)
     local menu = getPlayerContextMenu and getPlayerContextMenu(player:getPlayerNum())
     local inspecting = menu and menu:isVisible()
     if state then state.contextVisible = inspecting == true end
-    if (player:pressedAim() or player:isAiming()) and not inspecting then
+    if (player:isAiming() or (player:pressedAim() and not (state and state.inspectingUI))) and not inspecting then
         if not state then return "Stop aiming before starting training." end
         local now = getTimestampMs()
         if not state.aimStarted or now < state.aimStarted then state.aimStarted = now end
@@ -944,26 +944,50 @@ local function updateEndurance(player, state, now, quiet)
     return true
 end
 
+local function lostTrainingAction(state, queue)
+    if #queue > 0 or not state.pending or (state.phase ~= "meditation" and state.phase ~= "yoga") then return false end
+    for _, action in ipairs(state.pending) do
+        if action.autoMindfulStopped or not action.autoMindfulFinished then return true end
+    end
+    return false
+end
+
 function Controller.update(player)
     local state = states[player]
     if not state or not player:isLocalPlayer() then return end
     ActionYield.finishHandoff(player)
     if not state.active and #state.loans == 0 and not state.releasePending then return end
+    local now = getTimestampMs()
+    local queue = queueFor(player)
+    if state.uiQueueHead ~= queue[1] or (state.paperMapOpen and player:pressedCancelAction()) then
+        state.windowChecked = nil
+    end
+    state.uiQueueHead = queue[1]
+    local wasInspecting = state.inspectingUI
+    state.inspectingUI = ActionYield.inspecting(player, state, now)
+    if not player:pressedCancelAction() then state.uiCancelHeld = nil
+    elseif state.inspectingUI or wasInspecting then state.uiCancelHeld = true end
     local danger = unsafeReason(player, state)
     if danger then
         if state.active then Controller.stop(player, danger)
         elseif state.pending or state.releasePending then clearOwned(player, state) end
         return
     end
-    local now = getTimestampMs()
-    local queue = queueFor(player)
-    local busy = ActionYield.occupied(player, queue, state) or (state.active and player:pressedMovement(false))
+    local occupied = ActionYield.occupied(player, queue, state) or state.inspectingUI
+    local lost = state.active and lostTrainingAction(state, queue)
+    local busy = occupied or lost or (state.active and player:pressedMovement(false))
+    if occupied then state.unknownPauses, state.quietMs = nil, 750
+    elseif lost and not state.yielding then
+        state.unknownPauses = math.min(4, 1 + (state.unknownPauses or 0))
+        state.quietMs = math.min(5000, 750 * 2 ^ (state.unknownPauses - 1))
+    end
+    local quietMs = state.quietMs or 750
     if state.active then
         local ready, reason = available(player)
         if not ready then Controller.stop(player, reason); return end
         if state.endurance then
             local quiet = not busy and not state.releasePending and not player:isAsleep() and not state.aimStarted
-                and not state.contextVisible and (not state.yielding or (state.idleSince and now - state.idleSince >= 750))
+                and not state.contextVisible and (not state.yielding or (state.idleSince and now - state.idleSince >= quietMs))
             if updateEndurance(player, state, now, quiet) then return end
         end
     end
@@ -982,7 +1006,7 @@ function Controller.update(player)
     if state.yielding then
         if state.contextVisible then state.idleSince = nil; return end
         if not state.idleSince or now < state.idleSince then state.idleSince = now end
-        if now - state.idleSince < 750 then return end
+        if now - state.idleSince < quietMs then return end
         state.yielding, state.idleSince = nil, nil
         state.observedGameHours = player:getHoursSurvived()
         if state.active then setPhase(state, "resuming", "Checking your current needs and training spot.") end
@@ -1130,6 +1154,7 @@ function Controller.update(player)
     end
     local endedTraining = state.pending and (state.phase == "meditation" or state.phase == "yoga")
     if state.pending and finishPending(player, state, now) then return end
+    if endedTraining then state.unknownPauses, state.quietMs = nil, nil end
     if endedTraining and state.active and (state.endurance or not atSkillGoal(player, state)) then
         state.cycleUntil = now + 500
     end

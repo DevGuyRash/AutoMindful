@@ -71,6 +71,9 @@ player.values.ENDURANCE, player.values.HUNGER, player.values.THIRST, player.valu
 local water = T.add(player.inventory,T.water())
 local food = T.add(player.inventory,T.item("Food"))
 assert(Controller.start(player,"endurance",true))
+assert(Controller.status(player).collectNearby == false, "Endurance never takes regular supply permissions")
+Controller.setCollectNearby(player,true)
+assert(Controller.status(player).collectNearby == false, "Changing regular supply preferences cannot enable care on an endurance job")
 assert(not Controller.start(player,"meditation",false), "One endurance job cannot be replaced by another start")
 T.tick(player,false)
 assert(Controller.status(player).active and Controller.status(player).mode == "endurance"

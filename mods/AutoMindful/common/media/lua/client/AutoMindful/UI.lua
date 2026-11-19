@@ -33,6 +33,11 @@ local function preferences(player)
     return data.AutoMindfulPreferences
 end
 
+local function useAdjacent(player)
+    local saved = preferences(player).collectNearby
+    return saved == nil or saved == true
+end
+
 local function rich(text)
     local value = tostring(text or ""):gsub("<LINE>", "\n"):gsub("<BR>", "\n")
     value = value:gsub("<RGB:[^>]*>", ""):gsub("<RED>", ""):gsub("<GREEN>", ""):gsub("<WHITE>", "")
@@ -164,7 +169,7 @@ function UI:checkSupplies()
 end
 
 function UI.startTraining(player, mode)
-    local collect = mode ~= "endurance" and preferences(player).collectNearby == true
+    local collect = mode ~= "endurance" and useAdjacent(player)
     local started, message = Controller.start(player, mode, collect)
     local window = UI.windows[player:getPlayerNum()]
     if not started then window = UI.open(player) end
@@ -309,7 +314,7 @@ function UI:createChildren()
     self.nearby = ISTickBox:new(pad, y, width, row, "Adjacent supplies", self, UI.onNearbyChanged)
     self.nearby:initialise()
     self.nearby:addOption("Use adjacent supplies")
-    self.nearby:setSelected(1, preferences(self.player).collectNearby == true)
+    self.nearby:setSelected(1, useAdjacent(self.player))
     self.nearby.tooltip = "When scouting is off, allow borrowing from adjacent supplies without walking away. Scouting already includes adjacent supplies."
     self:addChild(self.nearby)
     y = y + row + 4

@@ -55,6 +55,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
         command.append(str(reference_root))
     checks = [check(evidence, "portable-contracts", command)]
     for name, script in (("ui-contracts", "ui.lua"), ("progress-contracts", "progress.lua"),
+                         ("skills-pane-contracts", "skills_pane.lua"),
                          ("completion-hud-contracts", "completion_hud.lua"),
                          ("endurance-journey-contracts", "endurance_journey.lua"),
                          ("consumable-contracts", "consumables.lua"), ("supply-policy-contracts", "supply_policy.lua"),
@@ -72,6 +73,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     if game:
         game = game.expanduser().resolve()
         checks.append(check(evidence, "stock-queue-handoff", [lua, "tests/stock_queue.lua", str(game / "media")]))
+        checks.append(check(evidence, "stock-skills-pane", [lua, "tests/skills_pane.lua", str(game / "media")]))
         java, jar = game / "jre64/bin/java", game / "projectzomboid.jar"
         compiler = shutil.which("javac")
         if not java.is_file() or not jar.is_file() or not compiler:
@@ -84,6 +86,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                 env = {key: value for key, value in os.environ.items() if key not in {
                     "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "JAVA_OPTS", "CLASSPATH", "LD_PRELOAD"}}
                 for name, script in (("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"),
+                                     ("native-skills-pane", "skills_pane.lua"),
                                      ("native-completion-hud-contracts", "completion_hud.lua"),
                                      ("native-endurance-journey-contracts", "endurance_journey.lua"),
                                      ("native-stock-queue-handoff", "stock_queue.lua"),
@@ -92,7 +95,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-water-source-contracts", "water_sources.lua"),
                                      ("native-fluid-transfer-contracts", "fluid_transfers.lua"),
                                      ("native-nearby-contracts", "nearby.lua")):
-                    suite_reference = game / "media" if script in ("water_sources.lua", "fluid_transfers.lua", "stock_queue.lua") else reference_root
+                    suite_reference = game / "media" if script in ("water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "skills_pane.lua") else reference_root
                     command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),
                                "KahluaCheck", str(ROOT), str(suite_reference) if suite_reference else "-", script]
                     checks.append(check(evidence, name, command, cwd=game, env=env))

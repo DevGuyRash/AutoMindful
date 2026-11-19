@@ -60,7 +60,13 @@ function instanceof(item, kind)
 end
 function getPlayerInventory() return T.player and T.player.inventoryPage end
 function getPlayerLoot() return T.player and T.player.lootPage end
-function getPlayerContextMenu() return T.player and {isVisible=function() return T.player.contextOpen or false end} end
+function getPlayerContextMenu()
+    local p=T.player
+    if not p then return nil end
+    local options=p.contextOptions or {{name="Inspect"}}
+    return {options=options,numOptions=#options+1,isVisible=function() return p.contextOpen or false end,
+        isReallyVisible=function() return p.contextOpen and not p.contextHidden or false end}
+end
 function getSpecificPlayer() return T.player end
 function T.list(items)
     return {size=function() return #items end, get=function(_, index) return items[index+1] end, isEmpty=function() return #items == 0 end, contains=function(_, value) for _, item in ipairs(items) do if item == value then return true end end return false end}
@@ -799,10 +805,10 @@ test("inventory transfers pause and resume care without cancelling the training 
 end)
 test("movement cancels once with a visible reason while brief context gestures do not",function()
     local p=T.playerNew(); assert(C.start(p,"yoga",false)); T.tick(p,false)
-    p.aiming=true; T.now=T.now+100; C.update(p)
+    p.aimInput=true; T.now=T.now+100; C.update(p)
     p.contextOpen=true; T.now=T.now+100; C.update(p)
     assert(C.status(p).active)
-    p.aiming=false; p.contextOpen=false
+    p.aimInput=false; p.contextOpen=false
     p.moving=true; p.x=p:getX()+3; T.now=T.now+1000; C.update(p); C.update(p)
     assert(not C.status(p).active and #p.cards==1 and #p.halos==0 and p.cards[1].note:find("moved",1,true))
 end)

@@ -13,7 +13,7 @@ jobs:
           python-version: '3.12'
       - run: sudo apt-get update && sudo apt-get install -y lua5.1
       - run: python3 tools/verify.py
-      - name: Check out pinned B42 queue lifecycle sources
+      - name: Check out pinned B42 queue and medication sources
         uses: actions/checkout@v4
         with:
           repository: Project-Zomboid-Community-Modding/ProjectZomboid-Vanilla-Lua
@@ -24,7 +24,10 @@ jobs:
           sparse-checkout: |
             /client/TimedActions/ISTimedActionQueue.lua
             /shared/TimedActions/ISBaseTimedAction.lua
-      - name: Replay stock aim cancellation and foreign queue handoff
+            /shared/TimedActions/ISTakePillAction.lua
+            /client/ISUI/ISInventoryPaneContextMenu.lua
+      - name: Replay stock action lifecycles
         run: |
           lua5.1 tests/stock_queue.lua .stock-aim
           lua5.1 tests/stock_aim.lua .stock-aim
+          lua5.1 tests/stock_pain.lua .stock-aim

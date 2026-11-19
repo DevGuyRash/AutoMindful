@@ -540,7 +540,18 @@ Controller.state.active = true
 window:refresh()
 assert(window.guidance.text:find(Controller.state.careNotice, 1, true), "An active care notice remains visible")
 Controller.state.careNotice = nil
+Controller.state.painNotice = "No usable stock Painkillers found."
+window:refresh()
+assert(window.guidance.text:find(Controller.state.painNotice, 1, true), "A pain-care blocker is visible in the pane")
+Controller.state.painNotice = nil
 window.ledger:prerender()
+local painRow, stockFooter
+for _, draw in ipairs(window.ledger.draws) do
+    if draw.text == "Painkillers" then painRow = draw.y end
+    if draw.text == "Care trips: enabled" or draw.text == "Adjacent only; care trips off" then stockFooter = draw.y end
+end
+assert(painRow and stockFooter and painRow + window.ledger.line < stockFooter,
+    "The painkiller count has its own readable row above the footer")
 local foodY
 for _, draw in ipairs(window.ledger.draws) do if draw.text == "Food" then foodY = draw.y end end
 local zero

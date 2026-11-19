@@ -60,7 +60,8 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                          ("endurance-journey-contracts", "endurance_journey.lua"),
                          ("consumable-contracts", "consumables.lua"), ("supply-policy-contracts", "supply_policy.lua"),
                          ("water-source-contracts", "water_sources.lua"), ("fluid-transfer-contracts", "fluid_transfers.lua"),
-                         ("nearby-contracts", "nearby.lua")):
+                         ("pain-policy", "pain_care.lua"), ("pain-supplies", "pain_supplies.lua"),
+                         ("pain-journey", "pain_journey.lua"), ("nearby-contracts", "nearby.lua")):
         suite = [lua, "tests/" + script]
         if game and script in ("water_sources.lua", "fluid_transfers.lua"):
             suite.append(str(game.expanduser().resolve() / "media"))
@@ -74,6 +75,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
         game = game.expanduser().resolve()
         checks.append(check(evidence, "stock-queue-handoff", [lua, "tests/stock_queue.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-native-aim-stop", [lua, "tests/stock_aim.lua", str(game / "media")]))
+        checks.append(check(evidence, "stock-pain-action", [lua, "tests/stock_pain.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-skills-pane", [lua, "tests/skills_pane.lua", str(game / "media")]))
         java, jar = game / "jre64/bin/java", game / "projectzomboid.jar"
         compiler = shutil.which("javac")
@@ -91,13 +93,15 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-completion-hud-contracts", "completion_hud.lua"),
                                      ("native-endurance-journey-contracts", "endurance_journey.lua"),
                                      ("native-stock-queue-handoff", "stock_queue.lua"),
-                                     ("native-stock-aim-stop", "stock_aim.lua"),
+                                     ("native-stock-aim-stop", "stock_aim.lua"), ("native-stock-pain-action", "stock_pain.lua"),
+                                     ("native-pain-policy", "pain_care.lua"), ("native-pain-supplies", "pain_supplies.lua"),
+                                     ("native-pain-journey", "pain_journey.lua"),
                                      ("native-progress-contracts", "progress.lua"), ("native-supply-policy-contracts", "supply_policy.lua"),
                                      ("native-consumable-contracts", "consumables.lua"),
                                      ("native-water-source-contracts", "water_sources.lua"),
                                      ("native-fluid-transfer-contracts", "fluid_transfers.lua"),
                                      ("native-nearby-contracts", "nearby.lua")):
-                    suite_reference = game / "media" if script in ("water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "stock_aim.lua", "skills_pane.lua") else reference_root
+                    suite_reference = game / "media" if script in ("water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "stock_aim.lua", "stock_pain.lua", "skills_pane.lua") else reference_root
                     command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),
                                "KahluaCheck", str(ROOT), str(suite_reference) if suite_reference else "-", script]
                     checks.append(check(evidence, name, command, cwd=game, env=env))

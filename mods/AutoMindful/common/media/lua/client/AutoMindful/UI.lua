@@ -90,6 +90,7 @@ local supplyRows = {
     {label="Food", field="food", nearby="nearbyFood", color=palette.meditation},
     {label="Hydration", field="water", nearby="nearbyWater", color=palette.water},
     {label="Literature", field="literature", nearby="nearbyLiterature", color=palette.yoga},
+    {label="Painkillers", field="pain", nearby="nearbyPain", color=palette.meditation},
 }
 function Ledger:prerender()
     Frame.prerender(self)
@@ -238,10 +239,11 @@ function UI:refresh()
     end
     if status.returnNotice then tips[#tips + 1] = colored(palette.yoga, status.returnNotice) end
     if status.active and status.careNotice then tips[#tips + 1] = colored(palette.yoga, status.careNotice) end
+    if status.active and status.painNotice then tips[#tips + 1] = colored(palette.yoga, status.painNotice) end
     if (status.pendingReturns or 0) > 0 then
         tips[#tips + 1] = colored(palette.yoga, tostring(status.pendingReturns) .. " borrowed item(s) awaiting return.")
     end
-    if not self.nearby:isSelected(1) and not self.report.walkingEnabled and ((self.report.nearbyFood or 0) + (self.report.nearbyWater or 0) + (self.report.nearbyLiterature or 0)) > 0 then
+    if not self.nearby:isSelected(1) and not self.report.walkingEnabled and ((self.report.nearbyFood or 0) + (self.report.nearbyWater or 0) + (self.report.nearbyLiterature or 0) + (self.report.nearbyPain or 0)) > 0 then
         tips[#tips + 1] = colored(palette.yoga, "Enable care trips to use distant stock, or adjacent supplies for reachable stock only.")
     end
     for _, warning in ipairs(self.report.warnings or {}) do
@@ -295,7 +297,7 @@ function UI:createChildren()
     progress:setHeight(skillY + 7)
     progress.skills = self.skills
     y = y + progress.height + 8
-    self.ledger = frame(self.body, Ledger, "Supplies", 0, y, contentWidth, line * 7 + 58)
+    self.ledger = frame(self.body, Ledger, "Supplies", 0, y, contentWidth, line * 8 + 64)
     self.ledger.line, self.ledger.window = line, self
     y = y + self.ledger.height + 8
     local guide = frame(self.body, Frame, "Preparation and returns", 0, y, contentWidth, line * 6 + 28)

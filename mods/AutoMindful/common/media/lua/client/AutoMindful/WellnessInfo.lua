@@ -4,7 +4,7 @@ local Facts = require "AutoMindful/WellnessFacts"
 local Info = {}
 local gap = " <LINE><LINE> "
 local lineGap = " <LINE> "
-local zenDuration
+local zenDuration, mindfulName
 
 local function safe(fn, ...)
     if type(fn) ~= "function" then return nil end
@@ -29,31 +29,85 @@ local function plain(raw)
     return raw:gsub("%b<>", ""):gsub("[<>%c]", ""):match("^%s*(.-)%s*$")
 end
 
-local function noteText(line, yogaRank, canDescribe)
+local function poseTarget(rank)
+    local current, previous = Facts.yoga[rank], Facts.yoga[rank - 1]
+    if not current or not previous or current[3] == previous[3] then return end
+    return "Targets " .. current[3] .. " poses per session (was " .. previous[3] .. "); linked poses can extend it"
+end
+
+local function actionLength(rank)
+    local current, previous = Facts.meditationLengths[rank], Facts.meditationLengths[rank - 1]
+    if not current or not previous or current == previous then return end
+    local more = (current - previous) * 100 / previous
+    local rounded = math.floor(more + 0.5)
+    local approximate = math.abs(more - rounded) > 0.01
+    return "An uninterrupted meditation session can run " .. (approximate and "about " or "")
+        .. rounded .. "% longer than at rank " .. (rank - 1)
+end
+
+local function unlockNote(rank)
+    local unlocks = Facts.meditationUnlocks
+    if rank == unlocks[1] then
+        return "Unlocks " .. mindfulName(1) .. ": reduces stress, panic and nicotine withdrawal"
+    elseif rank == unlocks[2] then
+        return "Meditate while " .. mindfulName(1) .. " is active to reach " .. mindfulName(2) .. ": also reduces pain and hunger"
+    elseif rank == unlocks[3] then
+        return "Meditate while " .. mindfulName(2) .. " is active to reach " .. mindfulName(3) .. ": also restores health"
+    end
+end
+
+local function noteText(line, skill, rank, canDescribe)
     if line:match("^[-+]+$") then return "" end
     local sign, label = line:match("^([+]+)%s+(.+)$")
     if not sign then sign, label = line:match("^(-+)%s+(.+)$") end
     local key = (label or line):lower()
     local higher = sign and sign:sub(1, 1) == "+"
-    if yogaRank and ((higher and key == "zen state duration") or
-        key == "unlocked zen state for a short time after performing yoga") then
-        local range = canDescribe() and zenDuration(yogaRank)
-        if range then return "Zen after successful Yoga: " .. range .. " in-game min" end
-        return higher and "Zen lasts longer" or line
+    if skill == "Yoga" then
+        if (higher and key == "zen state duration") or key == "unlocked zen state for a short time after performing yoga" then
+            local range = canDescribe() and zenDuration(rank)
+            if range then return "Zen lasts " .. range .. " after successful Yoga started at this rank" end
+            return higher and "Zen lasts longer after successfully finishing Yoga" or line
+        end
+        if higher and key == "pose sequence limit" then
+            return (canDescribe() and poseTarget(rank)) or "Each Yoga session targets more poses before it ends"
+        end
+        local group = key:match("^unlocked (%a+) level poses$")
+        if group and canDescribe() and Facts.yogaNewPoses[rank] and Facts.yoga[rank][1]:lower() == group then
+            return "Adds " .. Facts.yogaNewPoses[rank] .. " " .. group .. " poses to the Yoga rotation"
+        end
+        if key == "can teach yoga lessons" then return "Can teach Yoga to another survivor in multiplayer" end
+    elseif skill == "Meditation" then
+        if higher and key == "action duration" then
+            return (canDescribe() and actionLength(rank)) or "An uninterrupted meditation session can run longer"
+        end
+        if (key == "unlocked new techniques") and canDescribe() then
+            return actionLength(rank) or line
+        end
+        if (key == "mastered the ultimate technique" or
+            key == "new mindfulness level, improved state can be achieved by meditating while under the effects of the previous level" or
+            key == "unlocked mindfulness state, achieved during long meditative sessions, can grant a variety of bonuses")
+            and canDescribe() then
+            return unlockNote(rank) or line
+        end
+        if key == "xp rate is reduced by boredom" then return "High boredom reduces Meditation XP" end
+        if key == "can meditate while wearing backpack and bags" then return "Can start meditation without removing worn bags" end
+        if key == "can teach meditation lessons" then return "Can teach Meditation to another survivor in multiplayer" end
+        if sign and not higher and key == "neck pain rate" then return "Meditation can add less neck pain when it causes any" end
+        if sign and not higher and key == "boredom rate" then return "Meditation can add less boredom per effect tick" end
     end
-    if higher and key == "pose sequence limit" then
-        local row = yogaRank and canDescribe() and Facts.yoga[yogaRank]
-        return row and ("Nominal pose limit: " .. row[3]) or "Longer pose sequences"
-    end
-    if higher and key == "action duration" then return "Longer meditation sessions" end
-    if sign and not higher and key == "neck pain rate" then return "Neck pain builds more slowly" end
-    if sign and not higher and key == "boredom rate" then return "Boredom builds more slowly" end
     if sign then
         if #sign == 1 then return label .. (higher and " (increases)" or " (decreases)") end
         local emphasis = #sign == 2 and "further" or #sign == 3 and "stronger" or "strongest"
         return label .. " (" .. emphasis .. (higher and " increase)" or " decrease)")
     end
     return line
+end
+
+local function appendNote(lines, note)
+    if not note or #lines >= 4 then return end
+    local entry = "- " .. note
+    for _, line in ipairs(lines) do if line == entry then return end end
+    lines[#lines + 1] = entry
 end
 
 local function addNotes(lines, seen, text, decorate)
@@ -120,7 +174,7 @@ local function lessonActive(data, skill)
     return lesson and data.WasTaughtLast == skill and real(lesson.Value) and lesson.Value >= 0.2
 end
 
-local function mindfulName(index)
+mindfulName = function(index)
     local native = rawText("Moodles_MindfulState_L" .. index)
     return native and plain(native) or ({"Mindfulness","Strong Mindfulness","Perfect Mindfulness"})[index]
 end
@@ -140,27 +194,47 @@ local function durationFor(player, level)
     return row[disciplined and 2 or 1] * scale
 end
 
+local function readableTime(minutes)
+    if minutes < 60 then return minutes .. "m" end
+    local hours, rest = math.floor(minutes / 60), minutes % 60
+    return hours .. "h" .. (rest > 0 and (" " .. rest .. "m") or "")
+end
+
 zenDuration = function(rank)
     local row = real(rank) and rank > 0 and Facts.yoga[rank]
     local ticks = row and Facts.zenTicks[row[2]]
-    if ticks then return ((ticks - 1) * Facts.zenTickMinutes) .. "-" .. (ticks * Facts.zenTickMinutes) end
+    if ticks then
+        return "about " .. readableTime((ticks - 1) * Facts.zenTickMinutes) .. " to "
+            .. readableTime(ticks * Facts.zenTickMinutes) .. " in-game"
+    end
 end
 
 function Info.yogaTooltip(player, progress, rank)
+    if not real(rank) or rank % 1 ~= 0 or rank < 1 or rank > 10 then return "" end
     local verified
     local function canDescribe()
         if verified == nil then verified = supported() end
         return verified
     end
     local lines = rankNotes("Yoga", rank, nil, function(line)
-        return noteText(line, rank, canDescribe)
+        return noteText(line, "Yoga", rank, canDescribe)
     end)
-    -- Lifestyle has no localized note on some ranks. Keep a small source-
-    -- checked factual fallback, not an exact chance guess or a copied note.
-    local row = Facts.yoga[rank]
-    if #lines == 0 and row and canDescribe() then
-        lines[1] = "- " .. row[1] .. " poses; nominal sequence: " .. row[3]
-        if rank >= Facts.noFallRank then lines[2] = "- Avoids the native pose-fall roll" end
+    if canDescribe() then
+        local row, previous = Facts.yoga[rank], Facts.yoga[rank - 1]
+        if row and previous and row[2] > previous[2] then
+            appendNote(lines, "Successful poses ease more stress, pain and stiffness")
+        end
+        if #lines == 0 then
+            appendNote(lines, poseTarget(rank))
+            if #lines == 0 then
+                local cap, old = Facts.yogaCompletionCap[rank], Facts.yogaCompletionCap[rank - 1]
+                if cap and old and cap ~= old then
+                    appendNote(lines, "Completion bonus capped at " .. cap .. " XP before multipliers (was " .. old .. "); the actual bonus varies")
+                end
+            end
+        end
+        if rank == Facts.noFallRank then appendNote(lines, "Even the hardest pose-fall roll cannot trigger") end
+        if rank == 10 then appendNote(lines, "Stopping early no longer deducts Yoga XP or Zen") end
     end
     if not progress.capped then
         local multiplier = yogaSetting()
@@ -190,19 +264,26 @@ local function compactMeditation(bar, cell)
     end
     -- Only replace recognized stock description sections, not unrelated lines.
     if suffix ~= "" and suffix:sub(1, #lineGap) ~= lineGap and suffix:sub(1, #gap) ~= gap then return end
-    local lines = rankNotes("Meditation", rank, rankText)
-    if #lines == 0 then
-        if supported() then
-            for tier, unlock in ipairs(Facts.meditationUnlocks) do
-                if rank == unlock then
-                    lines[1] = "- " .. mindfulName(tier) .. " available through meditation"
-                    if tier == 1 then lines[2] = "- Worn bags can stay on" end
-                    break
-                end
+    local verified = supported()
+    local lines = rankNotes("Meditation", rank, rankText, function(line)
+        return noteText(line, "Meditation", rank, function() return verified end)
+    end)
+    if verified then
+        if #lines == 0 then appendNote(lines, unlockNote(rank)) end
+        if Facts.duration[rank] then
+            local current = durationFor(bar.char, rank)
+            local previous = durationFor(bar.char, rank - 1)
+            local scope = " with current settings"
+            if not current then
+                scope = " at standard settings"
+                current = Facts.duration[rank][1]
+                previous = Facts.duration[rank - 1] and Facts.duration[rank - 1][1]
             end
-        elseif native ~= key then
-            return -- no verified detail to replace the named upstream description
+            local before = previous and (" (was " .. previous .. ")") or ""
+            appendNote(lines, current .. " in-game min per Mindfulness tier" .. before .. scope)
         end
+    elseif #lines == 0 and native ~= key then
+        return -- no verified detail to replace the named upstream description
     end
     local effect = #lines > 0 and (gap .. table.concat(lines, lineGap)) or ""
     return message:sub(1, first - 1) .. effect .. suffix
@@ -266,9 +347,10 @@ function Info.guide(player, progress)
     end
     local yoga = {
         "Start standing. Successful poses reduce boredom, stress, pain and stiffness, and can award Yoga, Fitness and Nimble XP. Failed poses give no pose XP.",
-        "The pose pool grows as ranks rise: " .. table.concat(groups, ", ") .. ". Linked poses can extend a sequence.",
-        "At rank " .. Facts.noFallRank .. ", the checked version's native pose-fall roll can no longer trigger. Interruptions still matter.",
-        "A deployed mat can help and may be required by sandbox settings. Stopping early can remove earned Yoga XP.",
+        "The pose pool grows as ranks rise: " .. table.concat(groups, ", ") .. ". A linked pose can extend the target; a fall can end the sequence early.",
+        "Higher ranks make the same fall-prone pose safer. Harder poses and sandbox can change the odds. By rank " .. Facts.noFallRank .. ", even the hardest native roll cannot trigger.",
+        "Each successful pose and final rest eases boredom by the same amount at every rank. Stress, pain and stiffness relief get stronger with the Yoga pose tiers.",
+        "A deployed mat can help and may be required. Below rank 10, stopping after earning XP can take back Yoga XP and shorten an existing Zen. A failed pose itself earns no XP and does not grant new Zen.",
     }
     local setting = yogaSetting()
     if setting then yoga[#yoga + 1] = setting .. " (before pose, Zen or lesson effects)." end
@@ -281,7 +363,7 @@ function Info.guide(player, progress)
     local yogaRank = progress and progress.yoga and progress.yoga.level
     local zenPeriod = zenDuration(yogaRank)
     if zenPeriod then
-        zen[#zen + 1] = "Started at rank " .. yogaRank .. ": normally " .. zenPeriod .. " in-game min after successful Yoga."
+        zen[#zen + 1] = "Started at rank " .. yogaRank .. ": " .. zenPeriod .. " after successful Yoga."
     end
     local currentZen = moodle(data, "Zen")
     if currentZen and real(currentZen.Level) and currentZen.Level > 0 then zen[#zen + 1] = "Zen is active." end
@@ -298,7 +380,7 @@ function Info.guide(player, progress)
         {title="Meditation", lines={
             "Use the normal floor-seated action. It reduces stress; boredom and neck pain can build, especially early on. Boredom above 30 prevents starting.",
             "Rank " .. unlocks[1] .. " keeps worn bags on; separate heavy-item rules still apply. Disciplined helps you reach Mindfulness sooner and extends its duration. Couch Potato makes meditation less effective.",
-            "Rank hover keeps the actual stock XP and perk boost. More focus and less aversion can improve results; training doesn't set a fixed XP rate.",
+            "Rank hover keeps the actual stock XP and perk boost. Higher ranks extend some action limits and can add less boredom per effect update. Focus, traits, current mood and settings change the amount; this is separate from Mindfulness duration.",
         }},
         {title="Mindfulness", lines=lines},
         {title="Yoga", lines=yoga},

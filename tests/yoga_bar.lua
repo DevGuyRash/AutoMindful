@@ -166,7 +166,7 @@ data.WasTaughtLast="Meditation"
 expect(0,"Yoga Level 1 <LINE> 3 / 12 XP <LINE><LINE> - Begins a short Zen state <LINE> Yoga XP setting: x1.75")
 data.WasTaughtLast="Yoga"
 SandboxVars.Yoga.YogaXPMultiplier=1
-expect(1,"Yoga Level 2 <LINE> Locked <LINE><LINE> - Beginner poses; nominal sequence: 3 <LINE> Yoga lesson boost active")
+expect(1,"Yoga Level 2 <LINE> Locked <LINE><LINE> - Targets 3 poses per session (was 2); linked poses can extend it <LINE> Yoga lesson boost active")
 data.LSMoodles.WasTaughtSkill.Value=.19
 checkedVersion="unverified"
 SandboxVars.Yoga.YogaXPMultiplier=.5

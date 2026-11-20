@@ -108,4 +108,116 @@ assert(matching.h==11 and matching.w==130 and matching.cellStride==13,"Use adjac
 neighbor.getWidth=function() return 100 end
 local fallback=Bar:new(12,80,0,0,1,nil,pane,neighbor)
 assert(fallback.h==15 and fallback.w==190 and fallback.cellStride==19,"Reject undersized native geometry and use current formula")
+
+-- Tooltips use the hovered rank's source text, not the attained level or a hand-maintained table.
+local locale = {
+    UI_LSHS_Yoga_1 = "Setup flavor, not an effect. <LINE> o Begins a short Zen state <LINE>",
+    UI_LSHS_Yoga_3 = "<RGB:1,1,1>o Intermediate poses <LINE> o Longer Zen <LINE> o Intermediate poses <LINE><IMAGE:ignored.png>",
+    UI_LSHS_Yoga4 = "More poses",
+    UI_LSHS_Yoga_7 = "UI_LSHS_Yoga_7", -- older environments can return a key for missing text
+    UI_LSHS_Yoga_9 = "   ",
+    UI_LSHS_Yoga_General = "Do not repeat generic rank hints",
+    UI_LSHS_Yoga_10_mp = "o Teach Yoga",
+}
+function getTextOrNull(key) return locale[key] end
+local multiplayer=false
+function isClient() return multiplayer end
+local data={WasTaughtLast="Yoga",LSMoodles={WasTaughtSkill={Value=.19}}}
+local modReads=0
+function survivor:hasModData() return true end
+function survivor:getModData() modReads=modReads+1; return data end
+function other:hasModData() return false end
+function other:getModData() error("Must not initialize missing player data") end
+local checkedVersion="unverified"
+function getModInfoByID(id)
+    assert(id=="LifestyleHobbies")
+    return {getModVersion=function() return checkedVersion end}
+end
+HiddenSkills={getSkill=function(p,id) assert(id=="Yoga"); calls[p]=(calls[p] or 0)+1; return samples[p] end}
+bar.viewDescriptor=nil
+pane.char, samples[survivor] = survivor, {0,3,12}
+local function expect(cell,text)
+    local before=calls[pane.char] or 0
+    bar:updateTooltip(cell)
+    assert(calls[pane.char]==before+1, "Hover must not add another HiddenSkills read")
+    assert(bar.message == text,"wanted ["..text.."] but got ["..tostring(bar.message).."]")
+end
+
+SandboxVars={Yoga={YogaXPMultiplier=1}}
+expect(0,"Yoga Level 1 <LINE> 3 / 12 XP <LINE><LINE> - Begins a short Zen state")
+expect(2,"Yoga Level 3 <LINE> Locked <LINE><LINE> - Intermediate poses <LINE> - Longer Zen")
+expect(3,"Yoga Level 4 <LINE> Locked <LINE><LINE> - More poses")
+expect(4,"Yoga Level 5 <LINE> Locked")
+expect(6,"Yoga Level 7 <LINE> Locked")
+expect(8,"Yoga Level 9 <LINE> Locked")
+expect(9,"Yoga Level 10 <LINE> Locked")
+multiplayer=true
+expect(9,"Yoga Level 10 <LINE> Locked <LINE><LINE> - Teach Yoga")
+SandboxVars.Yoga.YogaXPMultiplier=1.75
+expect(9,"Yoga Level 10 <LINE> Locked <LINE><LINE> - Teach Yoga <LINE> Yoga XP setting: x1.75")
+expect(1,"Yoga Level 2 <LINE> Locked <LINE><LINE> Yoga XP setting: x1.75")
+data.LSMoodles.WasTaughtSkill.Value=.2
+checkedVersion="0.4.0.3"
+expect(0,"Yoga Level 1 <LINE> 3 / 12 XP <LINE><LINE> - Begins a short Zen state <LINE> Yoga XP setting: x1.75 <LINE> Yoga lesson boost active")
+checkedVersion="0.4.9"
+expect(0,"Yoga Level 1 <LINE> 3 / 12 XP <LINE><LINE> - Begins a short Zen state <LINE> Yoga XP setting: x1.75")
+checkedVersion="0.4.0.3"
+data.WasTaughtLast="Meditation"
+expect(0,"Yoga Level 1 <LINE> 3 / 12 XP <LINE><LINE> - Begins a short Zen state <LINE> Yoga XP setting: x1.75")
+data.WasTaughtLast="Yoga"
+SandboxVars.Yoga.YogaXPMultiplier=1
+expect(1,"Yoga Level 2 <LINE> Locked <LINE><LINE> - Beginner poses; nominal sequence: 3 <LINE> Yoga lesson boost active")
+data.LSMoodles.WasTaughtSkill.Value=.19
+checkedVersion="unverified"
+SandboxVars.Yoga.YogaXPMultiplier=.5
+expect(1,"Yoga Level 2 <LINE> Locked <LINE><LINE> Yoga XP setting: x0.5")
+local readBefore=modReads
+pane.char=other
+expect(9,"Yoga Level 10 <LINE> Unlocked <LINE> MAX <LINE><LINE> - Teach Yoga")
+expect(2,"Yoga Level 3 <LINE> Unlocked <LINE><LINE> - Intermediate poses <LINE> - Longer Zen")
+assert(modReads==readBefore,"Capped or different survivor must not read the prior survivor's data")
+
+pane.char=survivor
+samples[survivor]={9,81,9000}
+expect(9,"Yoga Level 10 <LINE> 81 / 9000 XP <LINE><LINE> - Teach Yoga <LINE> Yoga XP setting: x0.5")
+for _,invalid in ipairs({{},false,0,-1,"1.5",math.huge,0/0}) do
+    SandboxVars.Yoga.YogaXPMultiplier=invalid
+    expect(6,"Yoga Level 7 <LINE> Unlocked")
+end
+SandboxVars=nil
+expect(9,"Yoga Level 10 <LINE> 81 / 9000 XP <LINE><LINE> - Teach Yoga")
+locale.UI_LSHS_Yoga_5="o Newly translated effect" -- never cache missing rank text
+expect(4,"Yoga Level 5 <LINE> Unlocked <LINE><LINE> - Newly translated effect")
+getTextOrNull=function() error("Optional provider temporarily unavailable") end
+expect(4,"Yoga Level 5 <LINE> Unlocked")
+assert(data.WasTaughtLast=="Yoga" and data.LSMoodles.WasTaughtSkill.Value==.19)
+
+-- Use stock doLayout's interface as a double: next visible frame must use the
+-- new description's dimensions, not the previous short tooltip's size.
+local makeTip = ISToolTip.new
+function ISToolTip:new(...)
+    local tip = makeTip(self, ...)
+    function tip:doLayout()
+        local large = self.description:find("Long translated note",1,true)
+        self.w, self.h = large and 140 or 75, large and 70 or 22
+    end
+    function tip:getWidth() return self.w or 0 end
+    function tip:getHeight() return self.h or 0 end
+    return tip
+end
+local oldCore = getCore
+function getCore()
+    local base=oldCore()
+    base.getScreenWidth=function() return 220 end
+    return base
+end
+bar:removeTooltip()
+bar.x,bar.y,bar.hovered=185,66,true
+locale.UI_LSHS_Yoga_4="Long translated note <LINE> Extra detail"
+function getTextOrNull(key) return locale[key] end
+bar.mouseX=65;bar:onMouseMove();bar:render()
+assert(bar.tooltip.x<=145 and bar.tooltip.y+bar.tooltip:getHeight()<=106)
+bar.mouseX=39;bar:onMouseMove();bar:render()
+assert(bar.tooltip.x==80 and bar.tooltip.y==0 and bar.tooltip:getHeight()==70,
+    "The first long-tooltip placement uses the newly measured width and height")
 print("yoga-bar: PASS (read-only Yoga sample, ten native cells, hover, joypad, max/unavailable, late assets)")

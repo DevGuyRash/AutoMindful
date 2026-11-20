@@ -56,6 +56,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     checks = [check(evidence, "portable-contracts", command)]
     for name, script in (("ui-contracts", "ui.lua"), ("progress-contracts", "progress.lua"),
                          ("skills-pane-contracts", "skills_pane.lua"), ("yoga-bar-contracts", "yoga_bar.lua"),
+                         ("wellness-guide-contracts", "wellness.lua"),
                          ("completion-hud-contracts", "completion_hud.lua"),
                          ("endurance-journey-contracts", "endurance_journey.lua"),
                          ("consumable-contracts", "consumables.lua"), ("supply-policy-contracts", "supply_policy.lua"),
@@ -93,6 +94,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                     "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "JAVA_OPTS", "CLASSPATH", "LD_PRELOAD"}}
                 for name, script in (("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"),
                                      ("native-skills-pane", "skills_pane.lua"), ("native-yoga-bar", "yoga_bar.lua"),
+                                     ("native-wellness-guide", "wellness.lua"),
                                      ("native-stock-skills-pane", "stock_skills_pane.lua"),
                                      ("native-stock-context-icons", "stock_context_icons.lua"),
                                      ("native-completion-hud-contracts", "completion_hud.lua"),

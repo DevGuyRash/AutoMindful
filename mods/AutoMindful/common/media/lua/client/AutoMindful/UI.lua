@@ -8,6 +8,7 @@ require "ISUI/ISProgressBar"
 local Controller = require "AutoMindful/Controller"
 local Options = require "AutoMindful/Options"
 local Progress = require "AutoMindful/Progress"
+local Wellness = require "AutoMindful/WellnessInfo"
 
 AutoMindful = AutoMindful or {}
 local UI = ISCollapsableWindow:derive("AutoMindfulWindow")
@@ -194,6 +195,49 @@ function UI:onStop()
     self:refresh()
 end
 
+local function positionGuideButton(button, frame, line)
+    local labelWidth = getTextManager():MeasureStringX(UIFont.Small, button.guideLabel)
+    local width = math.min(frame.width * 0.5, math.max(74, labelWidth + 16))
+    button:setWidth(width)
+    button:setHeight(math.max(20, line + 4))
+    button:setX(frame.width - width - 10)
+end
+
+local function addGuideButton(frame, label, window, y)
+    local button = ISButton:new(0, y, 88, 22, label, window, UI.toggleSkillGuide)
+    button.guideLabel = label
+    button.tooltip = label == "Skill Guide"
+        and "Lifestyle rank effects, Mindfulness and Zen. Opening the guide does not stop training."
+        or "Back to activity, progress and supplies."
+    button:initialise()
+    frame:addChild(button)
+    return button
+end
+
+function UI:refreshSkillGuide()
+    local lines = {}
+    for _, section in ipairs(Wellness.guide(self.player, self.status and self.status.progress)) do
+        if #section.lines > 0 then
+            if #lines > 0 then lines[#lines + 1] = "<LINE>" end
+            lines[#lines + 1] = colored(palette.meditation, section.title)
+            for _, value in ipairs(section.lines) do lines[#lines + 1] = colored(palette.text, value) end
+        end
+    end
+    setText(self.wellnessText, table.concat(lines, " <LINE> "))
+end
+
+function UI:toggleSkillGuide()
+    local open = not self.wellnessOpen
+    if open then self.trainingScroll = self.body:getYScroll()
+    else self.wellnessScroll = self.body:getYScroll() end
+    self.wellnessOpen = open
+    for _, panel in ipairs({self.activityFrame, self.progressFrame, self.ledger, self.guideFrame}) do panel:setVisible(not open) end
+    self.wellnessFrame:setVisible(open)
+    if open then self:refreshSkillGuide() end
+    self:layout()
+    self.body:setYScroll((open and self.wellnessScroll or self.trainingScroll) or 0)
+end
+
 function UI:refresh()
     local status = Controller.status(self.player)
     self.scouting:setSelected(1, Options.searchNearby())
@@ -258,6 +302,7 @@ function UI:refresh()
     local literatureHelp = unread and string.format("Literature in inventory: %d unread, %d eligible rereads. ", unread, rereads or 0) or ""
     self.ledger.tooltip = "Known contents within the configured radius refresh while you move or change inventory. Uninspected/unconfirmed containers are reported separately; Check supplies never walks or remotely generates loot. Hydration includes safe drinks and hydrating food; one item can count in both food and hydration. " .. literatureHelp
         .. "Training can start with no supplies. Missing stock becomes a stop only when the survivor's condition actually requires it. Unread literature is preferred, then eligible rereads. Recently read material can be unavailable until the game's cooldown ends. Nearby supplies are used only when collection is enabled."
+    if self.wellnessOpen then self:refreshSkillGuide() end
     self:layout()
 end
 
@@ -305,6 +350,13 @@ function UI:createChildren()
     self.guidance = textPanel(guide, 12, line + 18, contentWidth - 24, guide.height - line - 23, true)
     self.guidance.marginTop, self.guidance.marginBottom = 0, 0
     self.body:setScrollHeight(y + guide.height + 4)
+    self.skillGuideButton = addGuideButton(progress, "Skill Guide", self, 5)
+    self.wellnessFrame = frame(self.body, Frame, "Skill Guide", 0, 0, contentWidth, 1)
+    self.wellnessBack = addGuideButton(self.wellnessFrame, "Back", self, 5)
+    self.wellnessText = textPanel(self.wellnessFrame, 12, line + 23, contentWidth - 24, 1, false)
+    self.wellnessText.marginTop, self.wellnessText.marginBottom = 0, 0
+    self.wellnessText.blockMouseWheel = true -- route wheel input to the outer guide scroll body
+    self.wellnessFrame:setVisible(false)
     y = self.body:getBottom() + 6
     self.scouting = ISTickBox:new(pad, y, width, row, Options.scoutingLabel, self, UI.onScoutingChanged)
     self.scouting:initialise()
@@ -387,7 +439,19 @@ function UI:layout()
     self.guideFrame:setY(self.ledger:getBottom() + 8)
     self.guidance:setHeight(math.min(line * 6, math.max(line * 2, self.guidance:getScrollHeight())) + 2)
     self.guideFrame:setHeight(line + 24 + self.guidance.height)
-    self.body:setScrollHeight(self.guideFrame:getBottom() + 4)
+    positionGuideButton(self.skillGuideButton, self.progressFrame, line)
+    self.wellnessFrame:setWidth(contentWidth)
+    positionGuideButton(self.wellnessBack, self.wellnessFrame, line)
+    if self.wellnessOpen then
+        self.wellnessText:setWidth(contentWidth - 24)
+        self.wellnessText:setY(line + 23)
+        if self.wellnessText.text then self.wellnessText:paginate() end
+        self.wellnessText:setHeight(self.wellnessText:getScrollHeight() + 4)
+        self.wellnessFrame:setHeight(self.wellnessText:getBottom() + 8)
+        self.body:setScrollHeight(self.wellnessFrame:getBottom() + 4)
+    else
+        self.body:setScrollHeight(self.guideFrame:getBottom() + 4)
+    end
     y = self.body:getBottom() + 6
     self.scouting:setY(y)
     self.scouting:setWidth(width)
@@ -432,6 +496,7 @@ function UI:update()
 end
 
 function UI:close()
+    if self.wellnessOpen then self:toggleSkillGuide() end
     self:savePreferences()
     self.progressObserved = false
     for _, skill in ipairs(self.skills) do skill.flash, skill.sample = nil, nil end

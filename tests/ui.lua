@@ -48,6 +48,10 @@ function ISCollapsableWindow:update() end
 function ISCollapsableWindow:onResize() end
 function ISCollapsableWindow:titleBarHeight() return 24 end
 ISButton = Widget:derive("ISButton")
+function ISButton:new(x,y,w,h,name,target,callback)
+    local o=Widget.new(self,x,y,w,h);o.name,o.target,o.callback=name,target,callback;return o
+end
+function ISButton:click() if self.callback then return self.callback(self.target,self) end end
 ISTickBox = Widget:derive("ISTickBox")
 function ISTickBox:new(x, y, width, height, _, target, callback)
     local box = Widget.new(self, x, y, width, height)
@@ -431,11 +435,40 @@ local function assertFooterVisible(view)
     end
 end
 assertFooterVisible(window)
+
+local guideChildren = #window.body.children
+local progressScroll = -17
+window.body:setYScroll(progressScroll)
+local stopsBefore = Controller.stops
+window.skillGuideButton:click()
+assert(window.wellnessOpen and window.wellnessFrame.visible and not window.progressFrame.visible
+    and not window.ledger.visible and window.stopButton.visible and window.wellnessText.blockMouseWheel
+    and window.wellnessText.text:find("Skill details",1,true), "Guide switches the scroll body, not the fixed controls")
+assert(Controller.stops==stopsBefore and #window.body.children==guideChildren)
+window.body:setYScroll(-23)
+window.wellnessBack:click()
+assert(not window.wellnessOpen and not window.wellnessFrame.visible and window.progressFrame.visible
+    and window.body:getYScroll()==progressScroll, "Back restores the training scroll position")
+window.skillGuideButton:click()
+assert(window.body:getYScroll()==-23 and #window.body.children==guideChildren, "Reopening restores the help scroll without duplicate children")
+window.wellnessBack:click()
 local screenHeight = core.getScreenHeight
 core.getScreenHeight = function() return 480 end
 local shortPlayer = {data={}, getModData=player.getModData, getPlayerNum=function() return 1 end, isDead=player.isDead}
 local shortWindow = UI.open(shortPlayer)
 assertFooterVisible(shortWindow)
+
+do
+    local x,y=shortWindow.scouting.x,shortWindow.scouting.y
+    local children=#shortWindow.body.children
+    shortWindow.skillGuideButton:click()
+    assert(shortWindow.body.width>0 and shortWindow.wellnessText.width>0 and shortWindow.scouting.x==x
+        and shortWindow.scouting.y==y and shortWindow.wellnessFrame.visible, "Guide leaves compact fixed controls in place")
+    shortWindow:setWidth(415);shortWindow:onResize()
+    assert(shortWindow.wellnessBack.x+shortWindow.wellnessBack.width<=shortWindow.wellnessFrame.width)
+    shortWindow:close()
+    assert(not shortWindow.wellnessOpen and #shortWindow.body.children==children and not shortWindow:getIsVisible())
+end
 assert(shortWindow.nearby:isSelected(1) and not shortWindow.scouting:isSelected(1)
         and not window.nearby:isSelected(1),
     "A fresh split survivor gets adjacent on; the existing survivor stays off and scouting off is global")

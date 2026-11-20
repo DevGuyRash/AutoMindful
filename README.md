@@ -27,6 +27,8 @@ The original single-session Lifestyle action remains in the submenu. **Train bot
 
 On the character's **Skills** tab, expand **Lifestyle**. **Yoga** sits directly below **Meditation**, with ten rank boxes like the other skills. Hover over the current box or select the row with a controller to see your Yoga XP toward the next rank. The row reads Lifestyle's progress; it doesn't register a perk, grant XP, or add a second row if Lifestyle already shows Yoga.
 
+Hover a Yoga or Meditation rank to see its available benefits as well as progress or lock status. AutoMindful uses Lifestyle's rank descriptions rather than a second set of translated tooltips. Where verified, a vague Yoga note shows a concrete pose limit or a normal in-game Zen duration instead. Open **Skill Guide** under **Progress** for more about Mindfulness, Zen and lessons. You can browse it without ending training.
+
 During a running session, **AutoMindful (running)** lets you reopen the window even while Lifestyle hides its normal menu for timed actions. Closing the window or pressing Escape hides it without cancelling training. Loading a save or rejoining a server does not start the loop automatically.
 
 ## Use the live window

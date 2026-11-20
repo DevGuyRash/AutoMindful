@@ -90,9 +90,9 @@ assert(first==class.updateTooltip)
 local bar={perk=perk}
 local a,b=class.updateTooltip(bar,2,"tag")
 assert(a==7 and b=="tag" and calls==1)
-assert(bar.message=="Rank 3 <LINE> Locked <LINE><LINE> - First tier <LINE> - Worn bags can stay on <LINE> XP Boost: +75%")
+assert(bar.message=="Rank 3 <LINE> Locked <LINE><LINE> - First tier <LINE> - Worn bags can stay on <LINE> - 10 in-game min per Mindfulness tier at standard settings <LINE> XP Boost: +75%")
 class.updateTooltip(bar,6)
-assert(bar.message=="Rank 7 <LINE> Locked <LINE> XP Boost: +75%")
+assert(bar.message=="Rank 7 <LINE> Locked <LINE><LINE> - 60 in-game min per Mindfulness tier (was 30) at standard settings <LINE> XP Boost: +75%")
 mp=true
 class.updateTooltip(bar,9)
 has(bar.message,"- Master technique <LINE> - Teach meditation")
@@ -107,7 +107,7 @@ class.updateTooltip(bar,2)
 assert(bar.message==bar.custom)
 bar.custom=nil
 class.updateTooltip(bar,5)
-has(bar.message,"Localized Strong available through meditation")
+has(bar.message,"Meditate while Mindfulness is active to reach Localized Strong")
 version="unverified";class.updateTooltip(bar,5)
 has(bar.message,"GENERIC <LINE> repeats every rank")
 version="0.4.0.3"
@@ -142,49 +142,82 @@ for _, oursFirst in ipairs({true,false}) do
 end
 
 local details=Info.yogaTooltip(player,{capped=false},5)
-has(details,"Intermediate poses; nominal sequence: 4");has(details,"Yoga XP setting: x0.75")
+has(details,"Completion bonus capped at 75 XP before multipliers (was 50)");has(details,"Yoga XP setting: x0.75")
 details=Info.yogaTooltip(player,{capped=true},10)
-has(details,"Avoids the native pose-fall roll");lacks(details,"XP setting");lacks(details,"lesson boost")
+has(details,"Stopping early no longer deducts Yoga XP or Zen");lacks(details,"XP setting");lacks(details,"lesson boost")
 version="unknown"
 details=Info.yogaTooltip(player,{capped=false},5)
 lacks(details,"poses");lacks(details,"lesson boost")
 -- Exact post-success duration only replaces known provider wording.
 version="0.4.0.3"
 local zenNotes={
-    [1]={"Unlocked Zen state for a short time after performing yoga","20-30"},
-    [3]={"+ Zen state duration","140-150"},
-    [6]={"++ Zen state duration","270-280"},
-    [9]={"+++ Zen state duration","390-400"},
+    [1]={"Unlocked Zen state for a short time after performing yoga","20m to 30m"},
+    [3]={"+ Zen state duration","2h 20m to 2h 30m"},
+    [6]={"++ Zen state duration","4h 30m to 4h 40m"},
+    [9]={"+++ Zen state duration","6h 30m to 6h 40m"},
 }
 for rank,row in pairs(zenNotes) do
     locale["UI_LSHS_Yoga_"..rank]="o "..row[1].." <LINE> o + pose sequence limit"
     local tip=Info.yogaTooltip(player,{capped=false},rank)
-    has(tip,"Zen after successful Yoga: "..row[2].." in-game min")
-    has(tip,"Nominal pose limit: ")
+    has(tip,"Zen lasts about "..row[2].." in-game after successful Yoga started at this rank")
     lacks(tip,"- +")
 end
-has(guide(player,6,5),"Started at rank 5: normally 140-150 in-game min")
-has(guide(player,6,10),"Started at rank 10: normally 390-400 in-game min")
+has(guide(player,6,5),"Started at rank 5: about 2h 20m to 2h 30m in-game")
+has(guide(player,6,10),"Started at rank 10: about 6h 30m to 6h 40m in-game")
 lacks(guide(player,6,0),"Started at rank 0")
 SandboxVars.Yoga.StrengthMultiplier=4
-has(Info.yogaTooltip(player,{capped=false},6),"270-280 in-game min")
+has(Info.yogaTooltip(player,{capped=false},6),"4h 30m to 4h 40m in-game")
 locale.UI_LSHS_Yoga_6="o ++ Plus de concentration <LINE> o --- fatigue <LINE> o +++"
 details=Info.yogaTooltip(player,{capped=false},6)
 has(details,"Plus de concentration (further increase)")
 has(details,"fatigue (stronger decrease)")
 lacks(details,"- +")
-lacks(details,"270-280")
+lacks(details,"4h 30m")
 version="unknown"
 locale.UI_LSHS_Yoga_6="o +++ Zen state duration <LINE> o + pose sequence limit"
 details=Info.yogaTooltip(player,{capped=false},6)
 has(details,"Zen lasts longer")
-has(details,"Longer pose sequences")
-lacks(details,"270-280")
+has(details,"Each Yoga session targets more poses before it ends")
+lacks(details,"4h 30m")
 locale.UI_LSPerk_Meditation_2="o + action duration <LINE> o -- neck pain rate <LINE> o - boredom rate"
 bar.perk=perk
 class.updateTooltip(bar,1)
-has(bar.message,"Longer meditation sessions");has(bar.message,"Neck pain builds more slowly")
-has(bar.message,"Boredom builds more slowly");has(bar.message,"XP Boost: +75%")
+has(bar.message,"An uninterrupted meditation session can run longer");has(bar.message,"Meditation can add less neck pain when it causes any")
+has(bar.message,"Meditation can add less boredom per effect tick");has(bar.message,"XP Boost: +75%")
 lacks(bar.message,"- +");lacks(bar.message,"- --")
+-- Real wording, no animation euphemisms or race claims; compare stock
+-- uninterrupted action limits and actual world units only for a tier.
+version="0.4.0.3";mp=true
+bar.char=player
+SandboxVars.Meditation.MindfulnessDuration=2
+locale.UI_LSPerk_Meditation_4="o Unlocked new techniques <LINE> o -- neck pain rate <LINE> o ++ action duration <LINE> o -- boredom rate"
+locale.UI_LSPerk_Meditation_8="o Unlocked new techniques"
+locale.UI_LSPerk_Meditation_10="o Mastered the ultimate technique <LINE> o New Mindfulness level, improved state can be achieved by meditating while under the effects of the previous level <LINE> o ++++ action duration"
+locale.UI_LSPerk_Meditation_10_mp="o Can teach meditation lessons"
+class.updateTooltip(bar,1)
+has(bar.message, "40% longer than at rank 1")
+class.updateTooltip(bar,3)
+has(bar.message, "about 186% longer than at rank 3")
+has(bar.message, "28 in-game min per Mindfulness tier (was 20) with current settings")
+has(bar.message, "Meditation can add less boredom per effect tick")
+lacks(bar.message, "new techniques");lacks(bar.message,"- ++")
+class.updateTooltip(bar,7)
+has(bar.message, "about 67% longer than at rank 7")
+class.updateTooltip(bar,9)
+has(bar.message,"Meditate while Localized Strong is active to reach Perfect Mindfulness: also restores health")
+has(bar.message,"50% longer than at rank 9")
+has(bar.message,"Can teach Meditation to another survivor in multiplayer")
+has(bar.message,"260 in-game min per Mindfulness tier (was 180) with current settings")
+has(bar.message,"XP Boost: +75%")
+locale.UI_LSHS_Yoga_6="o Unlocked advanced level poses <LINE> o + pose sequence limit <LINE> o ++ Zen state duration"
+details=Info.yogaTooltip(player,{capped=false},6)
+has(details, "Adds 7 advanced poses to the Yoga rotation")
+has(details, "Targets 6 poses per session (was 4); linked poses can extend it")
+has(details, "Successful poses ease more stress, pain and stiffness")
+has(details, "Zen lasts about 4h 30m to 4h 40m in-game after successful Yoga started at this rank")
+locale.UI_LSHS_Yoga_8="o +++ pose sequence limit"
+details=Info.yogaTooltip(player,{capped=false},8)
+has(details, "Targets 8 poses per session (was 6)")
+has(details, "Even the hardest pose-fall roll cannot trigger")
 assert(data.LSMoodles.MindfulState.Value==.4 and data.MindfulnessMinutes==9 and data.LSMoodles.WasTaughtSkill.Value==.2)
 print("wellness: PASS (source notes, scoped native tooltip, per-tier minutes, safe owning player, unknown provider)")

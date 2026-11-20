@@ -1,6 +1,7 @@
 require "XpSystem/ISUI/ISSkillProgressBar"
 require "ISUI/ISToolTip"
 local Progress = require "AutoMindful/Progress"
+local Wellness = require "AutoMindful/WellnessInfo"
 
 local YogaSkillBar = ISSkillProgressBar:derive("AutoMindfulYogaSkillBar")
 AutoMindful = AutoMindful or {}
@@ -64,15 +65,19 @@ end
 function YogaSkillBar:describe(cell)
     local p = self.progress
     local words = xpSystemText or {}
-    local title = self:getName() .. " " .. (words.lvl or "Level") .. " " .. (cell + 1)
+    local rank = cell + 1
+    local title = self:getName() .. " " .. (words.lvl or "Level") .. " " .. rank
     if not p then return title .. " <LINE> XP unavailable" end
+    local state
     if cell < p.level then
-        local message = title .. " <LINE> " .. (words.unlocked or "Unlocked")
-        return p.capped and cell == cellCount - 1 and message .. " <LINE> MAX" or message
+        state = words.unlocked or "Unlocked"
+        if p.capped and cell == cellCount - 1 then state = state .. " <LINE> MAX" end
     elseif cell == p.level then
-        return title .. " <LINE> " .. getText("IGUI_XP_tooltipxp", Progress.number(p.current), Progress.number(p.required))
+        state = getText("IGUI_XP_tooltipxp", Progress.number(p.current), Progress.number(p.required))
+    else
+        state = words.locked or "Locked"
     end
-    return title .. " <LINE> " .. (words.locked or "Locked")
+    return title .. " <LINE> " .. state .. Wellness.yogaTooltip(self.parent.char, p, rank)
 end
 
 function YogaSkillBar:updateTooltip(cell)
@@ -120,14 +125,24 @@ function YogaSkillBar:render()
         self.tooltip:addToUIManager()
         self.tooltip:setOwner(self)
     end
-    self.tooltip.description = self.message
-    local x = self:getAbsoluteX()
-    local y = self:getAbsoluteY() + self:getHeight() + (selected and 1 or 8)
-    if selected and y + self.tooltip:getHeight() > getCore():getScreenHeight() then
-        y = self:getAbsoluteY() - self.tooltip:getHeight() - 1
+    local tip, core = self.tooltip, getCore()
+    if tip.description ~= self.message then
+        tip.description = self.message
+        -- Stock uses an exact type check for its own bar. Measure a changed
+        -- description now so the very first longer Yoga tooltip can fit.
+        if tip.doLayout then tip:doLayout() end
     end
-    self.tooltip.followMouse = not selected
-    self.tooltip:setDesiredPosition(x, y)
+    local x, rowTop = self:getAbsoluteX(), self:getAbsoluteY()
+    local pad, height = selected and 1 or 8, tip:getHeight()
+    local y = rowTop + self:getHeight() + pad
+    local screenHeight = core:getScreenHeight()
+    if y + height > screenHeight then y = rowTop - height - pad end
+    y = math.max(0, math.min(y, screenHeight - height))
+    if core.getScreenWidth and tip.getWidth then
+        x = math.max(0, math.min(x, core:getScreenWidth() - tip:getWidth()))
+    end
+    tip.followMouse = not selected
+    tip:setDesiredPosition(x, y)
 end
 
 -- Both stock click and joypad A are deliberately inert for a hidden Yoga rank.

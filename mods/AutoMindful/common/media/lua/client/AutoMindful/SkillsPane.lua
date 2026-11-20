@@ -132,6 +132,7 @@ function Skills.install()
     local class = ISCharacterInfo
     if not class or not class.render or Skills.hookedClass == class then return end
     local yogaBar = require "AutoMindful/YogaSkillBar"
+    require("AutoMindful/WellnessInfo").installMeditationTooltip(ISSkillProgressBar)
     local original = class.render
     class.render = function(pane, ...) return render(pane, original, yogaBar, ...) end
     Skills.hookedClass = class

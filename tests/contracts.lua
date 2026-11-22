@@ -9,7 +9,7 @@ end
 package.preload["Vehicles/TimedActions/ISPathFindAction"] = function() return true end
 package.preload["TimedActions/WalkToTimedAction"] = function() return true end
 local roaming = {enabled=false, radius=10}
-package.loaded["AutoMindful/Options"] = {searchNearby=function() return roaming.enabled end,
+package.loaded["AutoMindful/Options"] = {cyclePolicy=function() return "alternate" end,searchNearby=function() return roaming.enabled end,
     searchRadius=function() return roaming.radius end}
 local nearbyTarget, nearbyArea
 package.loaded["AutoMindful/Nearby"] = {find=function(_, _, _, _, rejected)
@@ -35,7 +35,7 @@ Fluid = {Water="Water"}
 SkillBook = {Cooking=true}
 SandboxVars = {Yoga={KeepBags=true}, Meditation={KeepBags=true}, LSMeditation={RemoveLevitation=false}}
 Events = {}
-for _, name in ipairs({"OnPlayerUpdate", "OnPlayerDeath", "OnGameStart"}) do Events[name] = {Add=function(callback) Events[name].callback=callback end} end
+for _, name in ipairs({"OnPlayerUpdate", "OnPlayerDeath", "OnGameStart", "OnTickEvenPaused"}) do Events[name] = {Add=function(callback) Events[name].callback=callback end} end
 function getTimestampMs() return T.now end
 function getGameTime() return {getNightsSurvived=function() return T.nights end} end
 HaloTextHelper = {addBadText=function(player,text) player.halos[#player.halos+1]=text end}
@@ -178,8 +178,21 @@ function T.add(container, item)
     end
     return item
 end
+-- The native cell resolves coordinates, not the previous IsoGridSquare
+-- userdata. Keep mock worlds independent, even though most fixtures use 0,0,0.
+local function squareKey(x,y,z) return x .. ":" .. y .. ":" .. z end
+function T.loadSquare(player, square)
+    player.loadedSquares[squareKey(square:getX(),square:getY(),square:getZ())] = square
+end
+function getCell()
+    return {getGridSquare=function(_,x,y,z)
+        return T.player and T.player.loadedSquares[squareKey(x,y,z)]
+    end}
+end
 function T.playerNew()
     local p = {inventory=T.container(), values={HUNGER=0.05, THIRST=0, BOREDOM=0, ENDURANCE=1, FATIGUE=0, PAIN=0, PANIC=0}, meditation=0, xp=0, yoga={0,0,100}, hours=10, calories=2000, read={}, printRead={}, history={}, traits={}}
+    p.loadedSquares = {}
+    T.loadSquare(p,p.inventory:getSourceGrid())
     p.halos, p.cards = {}, {}
     p.inventoryPage={}
     p.lootPage={refreshBackpacks=function()
@@ -246,7 +259,7 @@ function T.playerNew()
     function p:isOnFire() return false end
     function p:getVehicle() return nil end
     function p:isPlayerMoving() return self.moving or false end
-    function p:pressedMovement() return self.movementInput or false end
+    function p:pressedMovement(ignoreAnimationBlock) return self.movementInput or (ignoreAnimationBlock and self.rawMovementInput) or false end
     function p:pressedCancelAction() return self.cancelInput or false end
     function p:isAiming() return self.aiming or false end
     function p:pressedAim() return self.aimInput or false end
@@ -398,10 +411,19 @@ ISDropWorldItemAction = {new=function(_,p,item,square)
 end}
 
 HiddenSkills = {getSkill=function(p) return p.yoga end, getLevel=function(p) return p.yoga[1] end}
+-- Display-name stand-ins for the two upstream practice classes.
+LSMeditateAction, LSYogaAction = {Type="Meditation"}, {Type="Yoga"}
 ZenWellnessContextMenu = {Options={}}
 for _, kind in ipairs({"Yoga", "Meditation"}) do
     ZenWellnessContextMenu.Options[kind] = {
-        canPerform=function(p) if kind == "Yoga" then return p.yogaBlocked ~= nil, p.yogaBlocked end return p.values.BOREDOM > 30, "bored" end,
+        canPerform=function(p)
+            if kind == "Yoga" then
+                if p.yogaBlocked then return true,p.yogaBlocked end
+                if p.nativeYogaLimit and p.values.ENDURANCE <= p.nativeYogaLimit then return true,getText("Tooltip_Action_Exhausted") end
+                return false
+            end
+            return p.values.BOREDOM > (p.nativeMeditationBoredomLimit or 30), " <RED>" .. getText("ContextMenu_Meditate_Bored")
+        end,
         onAction=function(_, _, p)
             ISTimedActionQueue.add(T.action(p,kind,function()
                 if not p.noXP then if kind == "Meditation" then p.meditation=math.min(10,p.meditation+1); p.xp=p.xp+1 else p.yoga[1]=math.min(10,p.yoga[1]+1); p.yoga[2]=p.yoga[2]+1 end end
@@ -495,7 +517,7 @@ test("single targets stop at 10 and leave the other skill unchanged",function()
 end)
 test("low stamina allows meditation and does not interrupt its running action",function()
     for _,mode in ipairs({"meditation","both"}) do
-        local p=T.playerNew(); p.values.ENDURANCE=.1
+        local p=T.playerNew(); p.values.ENDURANCE=.1; p.nativeYogaLimit=.6
         assert(C.start(p,mode,false)); T.tick(p,false); T.tick(p,false)
         local action=ISTimedActionQueue.getTimedActionQueue(p).queue[1]
         assert(action and action.Type=="Meditation" and C.status(p).phase=="meditation")
@@ -506,23 +528,58 @@ test("low stamina allows meditation and does not interrupt its running action",f
         C.stop(p)
     end
 end)
-test("yoga retains its stamina recovery target without blocking meditation",function()
-    local p=T.playerNew(); p.values.ENDURANCE=.1
+test("yoga honors each Lifestyle stamina mode without the former extra 85 percent admission minimum",function()
+    for _,rule in ipairs({{.8,.81},{.6,.61},{.3,.31},{false,.08}}) do
+        local p=T.playerNew(); p.nativeYogaLimit=rule[1]; p.values.ENDURANCE=rule[2]
+        p.values.PAIN=55; p.values.STRESS=1; p.values.BOREDOM=65
+        assert(C.start(p,"yoga",false)); T.tick(p,false)
+        local q=ISTimedActionQueue.getTimedActionQueue(p)
+        assert(q.queue[1] and q.queue[1].Type=="Yoga", "Do not invent an exhaustion/pain/stress/boredom requirement")
+        C.stop(p)
+    end
+end)
+test("yoga rests at the actual Lifestyle threshold and starts once the gate opens",function()
+    local p=T.playerNew(); p.values.ENDURANCE=.6; p.nativeYogaLimit=.6
     assert(C.start(p,"yoga",false)); T.tick(p,false); T.tick(p,false)
-    assert(C.status(p).active and C.status(p).phase=="resting" and C.status(p).message:find("95%%"))
+    assert(C.status(p).active and C.status(p).phase=="resting" and C.status(p).message:find("Lifestyle",1,true))
     assert(not hasHistory(p,"Yoga") and not hasHistory(p,"Meditation"))
-    p.values.ENDURANCE=.9; T.tick(p,false)
-    assert(C.status(p).phase=="resting" and not hasHistory(p,"Yoga"))
-    p.values.ENDURANCE=.96; T.tick(p); T.tick(p,false)
+    p.values.ENDURANCE=.61; T.tick(p); T.tick(p,false)
     assert(C.status(p).active and hasHistory(p,"Yoga") and not hasHistory(p,"Meditation"))
     C.stop(p)
 end)
+test("low stamina does not cut off permitted yoga; critical thirst still takes priority",function()
+    local p=T.playerNew(); p.nativeYogaLimit=.6
+    assert(C.start(p,"yoga",false)); T.tick(p,false)
+    local q=ISTimedActionQueue.getTimedActionQueue(p)
+    local yoga=q.queue[1]; assert(yoga and yoga.Type=="Yoga")
+    p.values.ENDURANCE=.03
+    for _=1,3 do T.tick(p,false) end
+    assert(q.queue[1]==yoga and C.status(p).phase=="yoga" and not yoga.stopped)
+    p.values.THIRST=.9; p.thirstMoodle=4; T.tick(p,false)
+    assert(C.status(p).phase=="care" and yoga.stopped)
+    T.tick(p,false)
+    assert(not C.status(p).active and C.status(p).message:find("Dying of Thirst",1,true))
+end)
+test("Lifestyle mat and embarrassment requirements still govern yoga",function()
+    for _,reason in ipairs({"Tooltip_Yoga_MissingMat","ContextMenu_Embarrassed"}) do
+        local p=T.playerNew(); p.yogaBlocked=getText(reason)
+        assert(C.start(p,"yoga",false)); T.tick(p,false); T.tick(p,false)
+        assert(not hasHistory(p,"Yoga"))
+        if reason=="Tooltip_Yoga_MissingMat" then
+            assert(not C.status(p).active and C.status(p).message==getText(reason))
+        else
+            assert(C.status(p).active and C.status(p).phase=="recovering")
+            p.yogaBlocked=nil; T.tick(p); T.tick(p,false)
+            assert(C.status(p).active and hasHistory(p,"Yoga")); C.stop(p)
+        end
+    end
+end)
 test("both mode can recover for yoga when boredom and stamina block both activities",function()
-    local p=T.playerNew(); p.values.ENDURANCE=.1; p.values.BOREDOM=40
+    local p=T.playerNew(); p.values.ENDURANCE=.1; p.values.BOREDOM=40; p.nativeYogaLimit=.6
     assert(C.start(p,"both",false)); T.tick(p,false); T.tick(p,false)
     assert(C.status(p).active and C.status(p).phase=="resting")
     assert(not hasHistory(p,"Yoga") and not hasHistory(p,"Meditation"))
-    p.values.ENDURANCE=.96; T.tick(p); T.tick(p,false)
+    p.values.ENDURANCE=.61; T.tick(p); T.tick(p,false)
     assert(C.status(p).active and hasHistory(p,"Yoga"))
     C.stop(p)
 end)
@@ -555,18 +612,33 @@ test("native maximum hunger and thirst moodles stop only when that critical need
         assert(C.status(p).message:find(kind=="food" and "Starving to Death" or "Dying of Thirst",1,true))
     end
 end)
-test("without literature the native meditation boredom limit remains authoritative",function()
+test("boredom alone cannot cut short an already admitted meditation; native re-entry still blocks",function()
     local p=T.playerNew(); p.values.BOREDOM=20; p.yogaBlocked="mat"
     assert(C.start(p,"meditation",false)); T.tick(p,false); T.tick(p,false)
-    assert(C.status(p).active and hasHistory(p,"Meditation"))
-    p.values.BOREDOM=31; T.tick(p,false); T.tick(p,false)
-    assert(not C.status(p).active and C.status(p).message:find("above 30 boredom",1,true))
+    local q=ISTimedActionQueue.getTimedActionQueue(p)
+    local action=q.queue[1]; assert(action and action.Type=="Meditation")
+    p.values.BOREDOM=31
+    for _=1,3 do T.tick(p,false) end
+    assert(C.status(p).active and q.queue[1]==action and not action.stopped)
+    action:perform(); T.tick(p,false); T.tick(p,false)
+    assert(not C.status(p).active and C.status(p).message:find("boredom is too high",1,true), "Only block the next admission")
+end)
+test("configured upstream meditation limit drives Both fallback rather than a copied constant",function()
+    local p=T.playerNew(); p.values.BOREDOM=32; p.nativeMeditationBoredomLimit=45
+    assert(C.start(p,"meditation",false)); T.tick(p,false); T.tick(p,false)
+    local q=ISTimedActionQueue.getTimedActionQueue(p)
+    assert(q.queue[1] and q.queue[1].Type=="Meditation", "Do not duplicate an upstream boredom number")
+    C.stop(p)
+    p=T.playerNew(); p.values.BOREDOM=19; p.nativeMeditationBoredomLimit=18
+    assert(C.start(p,"both",false)); T.tick(p,false)
+    assert(hasHistory(p,"Yoga") and not hasHistory(p,"Meditation"), "Native boredom blocker may trigger Yoga fallback at a different threshold")
+    C.stop(p)
 end)
 test("meditation only stops at its blocker instead of training available yoga",function()
     for _,boredom in ipairs({20,40}) do
         local p=T.playerNew(); p.values.BOREDOM=boredom
         assert(C.start(p,"meditation",false)); local status=T.run(p)
-        assert(not status.active and status.phase=="stopped" and status.message:find("above 30 boredom",1,true))
+        assert(not status.active and status.phase=="stopped" and status.message:find("boredom is too high",1,true))
         assert(not hasHistory(p,"Yoga") and p.yoga[1]==0,"Selecting meditation must never train yoga")
         if boredom==20 then assert(hasHistory(p,"Meditation")) end
     end
@@ -803,7 +875,7 @@ test("inventory transfers pause and resume care without cancelling the training 
     assert(#p.cards==0 and #p.halos==0,"allowed inventory work must not report cancellation")
     C.stop(p)
 end)
-test("movement cancels once with a visible reason while brief context gestures do not",function()
+test("unexplained displacement cancels once with a visible reason while context gestures do not",function()
     local p=T.playerNew(); assert(C.start(p,"yoga",false)); T.tick(p,false)
     p.aimInput=true; T.now=T.now+100; C.update(p)
     p.contextOpen=true; T.now=T.now+100; C.update(p)
@@ -1142,7 +1214,7 @@ test("contamination after pouring returns the filled vessel without drinking or 
     assert(C.status(p).pendingReturns==0)
     C.stop(p)
 end)
-test("movement during a partial pour returns both loans without consuming the partial contents",function()
+test("an intentional run during a partial pour returns both loans without consuming the partial contents",function()
     local p=T.playerNew(); p.values.HUNGER=.2
     local pantry,shelf=T.container(1,0),T.container(0,1)
     local bulk=T.add(pantry,T.water({capacity=5,hunger=-.5})); bulk.fluid.amount=5
@@ -1152,9 +1224,9 @@ test("movement during a partial pour returns both loans without consuming the pa
     assert(C.status(p).phase=="transferring")
     bulk.fluid.amount=4.9; vessel.fluid.amount=.1
     vessel.fluid.hungerRate=bulk.fluid.hungerRate; vessel.fluid.components=bulk.fluid.components
-    p.moving=true; p.movementInput=true; p.x=p:getX()+3; T.tick(p,false)
-    assert(not C.status(p).active and #p.cards==1 and #p.halos==0 and p.cards[1].note:find("moved",1,true))
-    p.moving=false
+    p.running=true; p.rawMovementInput=true; p.x=p:getX()+3; T.tick(p,false)
+    assert(not C.status(p).active and #p.cards==1 and #p.halos==0 and p.cards[1].note:find("running",1,true))
+    p.running=false; p.rawMovementInput=false
     for i=1,8 do T.tick(p) end
     assert(pantry:contains(bulk) and shelf:contains(vessel) and C.status(p).pendingReturns==0)
     assert(math.abs(bulk.fluid.amount+vessel.fluid.amount-5)<.000001 and not hasHistory(p,"drink") and #p.cards==1)
@@ -1184,7 +1256,13 @@ ISWalkToTimedAction = {new=function(_, p, square)
     local action = T.action(p, "ISWalkToTimedAction", function()
         if not p.pathBlocked then p.square = square end
     end)
+    action.location = square
     function action:isValid() return walkSpeed <= 2 end -- native Build 42 walk contract
+    function action:start()
+        if p.pathProbe then
+            p.pathProbe:pathToLocation(square:getX(), square:getY(), square:getZ())
+        end
+    end
     return action
 end}
 luautils = luautils or {}
@@ -1367,7 +1445,12 @@ test("blocked homeward path stops instead of training away from origin", functio
         T.tick(p,false)
         local q=ISTimedActionQueue.getTimedActionQueue(p).queue
         if q[1] then
-            if q[1].Type=="ISWalkToTimedAction" and hasHistory(p,"read") then p.pathBlocked=true end
+            if q[1].Type=="ISWalkToTimedAction" and hasHistory(p,"read") then
+                -- Stock reports successful completion, but the survivor is
+                -- on the wrong adjacent tile. Only exact arrival may resume.
+                p.pathBlocked=true
+                p.square=T.square(1,0)
+            end
             q[1]:perform()
         end
         if not C.status(p).active then break end
@@ -1377,23 +1460,383 @@ test("blocked homeward path stops instead of training away from origin", functio
     roaming.enabled=false; nearbyTarget=nil
 end)
 
-test("native homebound path failure reports the game rejection, not manual movement, and never trains away", function()
+local function walkCount(p)
+    local count=0
+    for _,kind in ipairs(p.history) do if kind=="ISWalkToTimedAction" then count=count+1 end end
+    return count
+end
+
+local function nextAction(p)
+    return ISTimedActionQueue.getTimedActionQueue(p).queue[1]
+end
+
+local function beginBookReturn(configure)
     roaming.enabled=true
     local p=T.playerNew(); p.values.BOREDOM=40
-    local shelf=T.container(6,0); T.add(shelf,T.item("Literature")); p.available={shelf}
-    nearbyTarget={square=shelf.square,key="book"}
+    local anchor=T.square(2,3,1); p.square=anchor; T.loadSquare(p,anchor)
+    if configure then configure(p,anchor) end
+    local shelf=T.container(8,3); shelf.square=T.square(8,3,1)
+    local book=T.add(shelf,T.item("Literature")); p.available={shelf}
+    nearbyTarget={square=shelf.square,key="home-retry-book"}
     assert(C.start(p,"meditation",false))
     for i=1,20 do
         T.tick(p,false)
-        local a=ISTimedActionQueue.getTimedActionQueue(p).queue[1]
-        if a and a.Type=="ISWalkToTimedAction" and hasHistory(p,"read") then
-            a.result=BehaviorResult.Failed; a:stop(); p.moving=true; T.tick(p,false)
-            break
-        elseif a then a:perform() end
+        local head=nextAction(p)
+        if head and head.Type=="ISWalkToTimedAction" and hasHistory(p,"read") then
+            assert(shelf:contains(book) and C.status(p).pendingReturns==0,
+                "The book loan must already be settled before walking home")
+            assert(head.location==anchor and p:getSquare()~=anchor and walkCount(p)==2)
+            return p,anchor,shelf,book,head
+        elseif head then head:perform() end
     end
-    assert(not C.status(p).active and C.status(p).message:find("no path back",1,true))
-    assert(not hasHistory(p,"Meditation") and #ISTimedActionQueue.getTimedActionQueue(p).queue==0)
+    error("Scout never read, returned, and started walking home")
+end
+
+local function failHome(walk)
+    walk.result=BehaviorResult.Failed
+    walk:stop()
+end
+
+local function stopBookTest(p)
+    if C.status(p).active then C.stop(p) end
     roaming.enabled=false; nearbyTarget=nil
+end
+
+test("one genuine native failure retries only the fresh exact training XYZ after settling",function()
+    local p,anchor,shelf,book,walk=beginBookReturn()
+    failHome(walk)
+    p.moving=true
+    T.now=T.now+749; C.update(p)
+    assert(C.status(p).active and not nextAction(p) and walkCount(p)==2 and #p.cards==0,
+        "The first native path failure must neither stop nor requeue before 750ms")
+    p.moving=false
+    local fresh=T.square(2,3,1)
+    T.loadSquare(p,fresh)
+    anchor.x=901 -- the old native object no longer describes the saved anchor
+    T.tick(p,false)
+    local retry=nextAction(p)
+    assert(retry and retry.Type=="ISWalkToTimedAction" and retry.location==fresh and walkCount(p)==3,
+        "Re-resolve the original XYZ, never reuse stale userdata or walk to an adjacent tile")
+    assert(not hasHistory(p,"Meditation"))
+    -- The observed reading already satisfied this bout of boredom. The
+    -- mock's stock target remains static, unlike a newly filtered live scan.
+    p.values.BOREDOM=10
+    retry:perform()
+    for i=1,6 do T.tick(p,false); if hasHistory(p,"Meditation") then break end end
+    assert(p:getSquare()==fresh and hasHistory(p,"Meditation") and #p.cards==0 and shelf:contains(book))
+    local reads=0
+    for _,kind in ipairs(p.history) do if kind=="read" then reads=reads+1 end end
+    assert(reads==1 and C.status(p).pendingReturns==0, "Home recovery must not re-scout or replay the book")
+    stopBookTest(p)
+end)
+
+-- Simulate the exact stock native start contract: integer pathToLocation
+-- sets an X/Y tile center; setting floats before update changes that target.
+-- No pathfinder or collision geometry is claimed by this controller double.
+local function probeHomePosition(p, anchor, options)
+    local getX, getY, getZ = p.getX, p.getY, p.getZ
+    local function onTile(self) return self:getSquare() == anchor end
+    function p:getX() if onTile(self) then return 2 + (options.x or 0.29) end; return getX(self) end
+    function p:getY() if onTile(self) then return 3 + (options.y or 0.68) end; return getY(self) end
+    function p:getZ() if onTile(self) then return 1 + (options.elevation or 0) end; return getZ(self) end
+    p.sitting = options.seated == true
+    p.furniture = options.furniture == true
+    local probe = {calls={}, homeCenters=0}
+    p.pathProbe = probe
+    function p:getPathFindBehavior2() return self.pathProbe end
+    function probe:pathToLocation(x,y,z)
+        if x == 2 and y == 3 and z == 1 then self.homeCenters = self.homeCenters + 1 end
+        self.x, self.y, self.z = x + 0.5, y + 0.5, z
+        if self.homeCenters == 3 and options.changed then self.x = self.x + 0.15 end
+        if self.homeCenters == 3 and options.retired then
+            -- A reentrant start hook ended this head, but the path object's
+            -- target fields still happen to match the requested tile center.
+            local q=ISTimedActionQueue.getTimedActionQueue(p)
+            q:resetQueue(); p.nativeHead=nil
+        end
+        self.calls[#self.calls+1] = {"stock",x,y,z}
+    end
+    if not options.absent then
+        function probe:pathToLocationF(x,y,z)
+            self.x, self.y, self.z = x,y,z
+            self.calls[#self.calls+1] = {"precise",x,y,z}
+        end
+    end
+    function probe:getTargetX() return self.x end
+    function probe:getTargetY() return self.y end
+    function probe:getTargetZ() return self.z end
+end
+
+local function settledRetry(p)
+    for i=1,6 do if nextAction(p) then break end; T.tick(p,false) end
+    local walk = nextAction(p)
+    assert(walk and walk.Type=="ISWalkToTimedAction")
+    return walk
+end
+
+test("the last home attempt targets the saved on-tile ground position after foreign work",function()
+    local p,anchor,shelf,book,walk=beginBookReturn(function(player,square)
+        probeHomePosition(player,square,{seated=true})
+    end)
+    local probe=p.pathProbe
+    assert(probe.homeCenters==1 and probe.x==2.5 and probe.y==3.5 and probe.z==1)
+    failHome(walk)
+    walk=settledRetry(p)
+    assert(probe.homeCenters==2 and probe.x==2.5 and probe.y==3.5 and probe.z==1)
+    failHome(walk)
+    local foreign=T.action(p,"OtherNativeWork")
+    ISTimedActionQueue.add(foreign); T.tick(p,false)
+    assert(nextAction(p)==foreign and probe.homeCenters==2 and #p.cards==0)
+    foreign:perform()
+    local fresh=T.square(2,3,1); T.loadSquare(p,fresh)
+    -- The earlier book did satisfy all remaining reading need.
+    p.values.BOREDOM=10
+    walk=settledRetry(p)
+    assert(walk.location==fresh and walkCount(p)==4 and probe.homeCenters==3)
+    local called=probe.calls[#probe.calls]
+    assert(called[1]=="precise" and called[2]==2.29 and called[3]==3.68 and called[4]==1,
+        "The final retry should use only the original saved same-tile point")
+    assert(probe.x==2.29 and probe.y==3.68 and probe.z==1)
+    walk:perform()
+    for i=1,6 do T.tick(p,false); if hasHistory(p,"Meditation") then break end end
+    local reads=0
+    for _,kind in ipairs(p.history) do if kind=="read" then reads=reads+1 end end
+    assert(p:getSquare()==fresh and hasHistory(p,"Meditation") and #p.cards==0
+        and reads==1 and shelf:contains(book) and C.status(p).pendingReturns==0)
+    stopBookTest(p)
+end)
+
+test("unsupported, unsafe or superseded ground coordinates keep the normal three home attempts",function()
+    for _,options in ipairs({{absent=true},{changed=true},{elevation=0.2},{x=-0.01},{x=0},{x=0.5,y=0.5},{furniture=true}}) do
+        local p,_,_,_,walk=beginBookReturn(function(player,square) probeHomePosition(player,square,options) end)
+        for i=1,3 do
+            if i>1 then walk=settledRetry(p) end
+            failHome(walk)
+        end
+        for i=1,7 do T.tick(p,false) end
+        assert(p.pathProbe.homeCenters==3 and p.pathProbe.calls[#p.pathProbe.calls][1]=="stock")
+        assert(not C.status(p).active and walkCount(p)==4 and #p.cards==1 and not nextAction(p))
+        stopBookTest(p)
+    end
+end)
+
+test("a reentrantly retired stock head cannot retarget a matching shared native path",function()
+    local p,_,_,_,walk=beginBookReturn(function(player,square) probeHomePosition(player,square,{retired=true}) end)
+    failHome(walk)
+    failHome(settledRetry(p))
+    for i=1,6 do T.tick(p,false) end
+    local last=p.pathProbe.calls[#p.pathProbe.calls]
+    assert(p.pathProbe.homeCenters==3 and last[1]=="stock" and not nextAction(p))
+    assert(not C.status(p).active and #p.cards==1)
+    stopBookTest(p)
+end)
+
+test("a genuine saved-point failure remains the third and last attempt",function()
+    local p,_,_,_,walk=beginBookReturn(function(player,square) probeHomePosition(player,square,{}) end)
+    for i=1,3 do
+        if i>1 then walk=settledRetry(p) end
+        failHome(walk)
+    end
+    for i=1,7 do T.tick(p,false) end
+    assert(p.pathProbe.calls[#p.pathProbe.calls][1]=="precise","Final failure must be the precise attempt")
+    assert(not C.status(p).active and walkCount(p)==4 and #p.cards==1 and not nextAction(p))
+    stopBookTest(p)
+end)
+
+test("native path-only return retries stop on the third failed walk",function()
+    local p,_,shelf,book,walk=beginBookReturn()
+    for attempt=1,3 do
+        assert(walk and walk.Type=="ISWalkToTimedAction" and walkCount(p)==attempt+1)
+        failHome(walk)
+        T.tick(p,false)
+        if attempt<3 then
+            assert(C.status(p).active and #p.cards==0)
+            for i=1,4 do if nextAction(p) then break end; T.tick(p,false) end
+            walk=nextAction(p)
+        end
+    end
+    for i=1,8 do T.tick(p,false) end
+    assert(not C.status(p).active and not nextAction(p) and walkCount(p)==4 and #p.cards==1)
+    assert(C.status(p).message:lower():find("path",1,true) and not hasHistory(p,"Meditation") and shelf:contains(book))
+    stopBookTest(p)
+end)
+
+test("foreign activity pauses the home retry without consuming or resetting its retry budget",function()
+    local p,_,_,_,walk=beginBookReturn()
+    failHome(walk)
+    local seen={}
+    local foreground=T.action(p,"ForeignWorkout",function() seen[#seen+1]="workout" end)
+    local nextForeign=T.action(p,"ForeignDrink",function() seen[#seen+1]="drink" end)
+    -- Both actions arrive in the same native event window as the failed walk.
+    ISTimedActionQueue.add(foreground); ISTimedActionQueue.add(nextForeign)
+    for i=1,3 do T.tick(p,false) end
+    assert(C.status(p).active and walkCount(p)==2 and #p.cards==0 and nextAction(p)==foreground)
+    assert(not foreground.stopped and not nextForeign.begins and not nextForeign.stopped)
+    foreground:perform(); T.tick(p,false)
+    assert(nextAction(p)==nextForeign and walkCount(p)==2)
+    nextForeign:perform()
+    assert(table.concat(seen,",")=="workout,drink")
+    for attempt=2,3 do
+        for i=1,6 do if nextAction(p) then break end; T.tick(p,false) end
+        walk=nextAction(p)
+        assert(walk and walk.Type=="ISWalkToTimedAction" and walkCount(p)==attempt+1)
+        failHome(walk); T.tick(p,false)
+    end
+    for i=1,6 do T.tick(p,false) end
+    assert(not C.status(p).active and walkCount(p)==4 and not nextAction(p) and not hasHistory(p,"Meditation"))
+    stopBookTest(p)
+end)
+
+test("a native owned walk failure does not clear queued foreign successors while Java unwinds",function()
+    local p,_,_,_,walk=beginBookReturn()
+    local seen={}
+    local first=T.action(p,"ForeignWorkout",function() seen[#seen+1]="workout" end)
+    local second=T.action(p,"ForeignDrink",function() seen[#seen+1]="drink" end)
+    ISTimedActionQueue.add(first); ISTimedActionQueue.add(second)
+    -- Leave the native handle live after the Lua stop callback returns.
+    p.nativeAdditional={walk.action}
+    failHome(walk)
+    assert(not first.begins and not second.begins and not first.cancelled and not second.cancelled)
+    T.tick(p,false)
+    assert(walkCount(p)==2 and not first.begins and not second.begins)
+    p.nativeAdditional={}
+    for i=1,3 do if nextAction(p)==first then break end; T.tick(p,false) end
+    assert(nextAction(p)==first and first.begins==1 and not second.begins)
+    first:perform()
+    assert(nextAction(p)==second and second.begins==1)
+    second:perform()
+    assert(table.concat(seen,",")=="workout,drink")
+    for i=1,6 do if nextAction(p) then break end; T.tick(p,false) end
+    assert(C.status(p).active and walkCount(p)==3 and nextAction(p).Type=="ISWalkToTimedAction")
+    stopBookTest(p)
+end)
+
+test("an unacknowledged stopped native return gives stock queue handling back without forcing a foreign action",function()
+    local p,_,_,_,walk=beginBookReturn()
+    local q=ISTimedActionQueue.getTimedActionQueue(p)
+    local previous=q.tick
+    local foreign=T.action(p,"ForeignDrink",function() error("Waiter ran while native action was live") end)
+    ISTimedActionQueue.add(foreign)
+    p.nativeAdditional={walk.action}
+    failHome(walk)
+    assert(q.tick~=previous and q.autoMindfulHandoff)
+    for i=1,6 do T.tick(p,false) end
+    assert(C.status(p).message:find("did not settle",1,true) and not C.status(p).active and #p.cards==1)
+    assert(q.tick==previous and not q.autoMindfulHandoff and q.queue[1]==walk and q.queue[2]==foreign
+        and not foreign.begins and not foreign.cancelled and walkCount(p)==2)
+    p.nativeAdditional={}
+    stopBookTest(p)
+end)
+
+test("a return retry does not spin on an unconfirmed busy flag or override disabled scouting",function()
+    for _,condition in ipairs({"stale native busy","disabled scouting"}) do
+        local p,_,_,_,walk=beginBookReturn()
+        failHome(walk)
+        T.now=T.now+300; C.update(p)
+        assert(C.status(p).active and walkCount(p)==2)
+        if condition=="stale native busy" then
+            p.hasTimedActions=function() return true end -- no foreign Lua/native handle
+            T.tick(p,false)
+            assert(C.status(p).active and walkCount(p)==2, "Wait briefly for stale busy state")
+        else
+            roaming.enabled=false
+        end
+        for i=1,10 do T.tick(p,false) end
+        assert(not C.status(p).active and walkCount(p)==2 and #p.cards==1 and not nextAction(p)
+            and not hasHistory(p,"Meditation"))
+        stopBookTest(p)
+    end
+end)
+
+test("failed return never retargets or retries if the exact origin unloads, changes floor, or becomes forbidden",function()
+    local oldCell,oldSafe,oldClient=getCell,SafeHouse,T.client
+    local ok,reason=pcall(function()
+        for _,fault in ipairs({"unloaded","different coordinate","different floor","access denied"}) do
+            local p,_,_,_,walk=beginBookReturn()
+            failHome(walk)
+            local resolved=0
+            local replacement=T.square(fault=="different coordinate" and 3 or 2,3,fault=="different floor" and 0 or 1)
+            getCell=function() return {getGridSquare=function(_,x,y,z)
+                assert(x==2 and y==3 and z==1,"Home recovery may query only the original coordinates")
+                resolved=resolved+1
+                if fault~="unloaded" then return replacement end
+            end} end
+            T.client=true
+            SafeHouse={isSafehouseAllowInteract=function() return fault~="access denied" end,
+                isSafehouseAllowLoot=function() return true end}
+            for i=1,8 do T.tick(p,false) end
+            assert(resolved>0 and not C.status(p).active and walkCount(p)==2 and not nextAction(p)
+                and not hasHistory(p,"Meditation"))
+            getCell,SafeHouse,T.client=oldCell,oldSafe,oldClient
+            stopBookTest(p)
+        end
+    end)
+    getCell,SafeHouse,T.client=oldCell,oldSafe,oldClient
+    assert(ok,reason)
+end)
+
+test("manual controls and danger cancel home retry without a new walk",function()
+    local interrupts={
+        function(p) C.stop(p,"Stop") end,
+        function(p) p.cancelInput=true end,
+        function(p) p.aiming=true end,
+        function(p) p.sprinting=true; p.rawMovementInput=true end,
+        function(p) p.zombies=1 end,
+        function(p) p.square=T.square(7,3,0) end,
+    }
+    for _,interrupt in ipairs(interrupts) do
+        local p,_,_,_,walk=beginBookReturn()
+        failHome(walk)
+        T.now=T.now+300; C.update(p)
+        assert(C.status(p).active and walkCount(p)==2)
+        interrupt(p)
+        for i=1,6 do T.tick(p,false) end
+        assert(not C.status(p).active and walkCount(p)==2 and #p.cards==1
+            and not nextAction(p) and not hasHistory(p,"Meditation"))
+        stopBookTest(p)
+    end
+end)
+
+test("a native return failure with only a stale sprint flag still gets its bounded retry",function()
+    local p,origin,_,_,walk=beginBookReturn()
+    p.sprinting=true
+    failHome(walk)
+    T.now=T.now+800; C.update(p)
+    p.sprinting=false
+    local fresh=settledRetry(p)
+    assert(fresh~=walk and walkCount(p)==3 and C.status(p).active and #p.cards==0)
+    p.values.BOREDOM=0
+    fresh:perform()
+    for _=1,6 do T.tick(p,false); if C.status(p).phase=="meditation" then break end end
+    assert(C.status(p).active and C.status(p).phase=="meditation" and p:getSquare()==origin)
+    stopBookTest(p)
+end)
+
+test("transient deliberate input in the native home stop is not mistaken for a retryable failure",function()
+    for _,key in ipairs({"aiming","cancelInput","sprinting"}) do
+        local p,_,_,_,walk=beginBookReturn()
+        p[key]=true; p.rawMovementInput=key=="sprinting"
+        failHome(walk)
+        p[key]=false; p.rawMovementInput=false
+        for i=1,7 do T.tick(p,false) end
+        assert(not C.status(p).active and walkCount(p)==2 and #p.cards==1
+            and not nextAction(p) and not hasHistory(p,"Meditation"))
+        stopBookTest(p)
+    end
+end)
+
+test("walking that interrupts a native return abandons the old route without disarming",function()
+    local p,origin,_,_,walk=beginBookReturn()
+    local here=T.square(6,0)
+    p.movementInput=true
+    failHome(walk)
+    p.square=here
+    p.movementInput=false -- input released before AutoMindful's next poll
+    p.values.BOREDOM=0
+    for i=1,10 do T.tick(p,false); if hasHistory(p,"Meditation") then break end end
+    assert(C.status(p).active and p:getSquare()==here and here~=origin and walkCount(p)==2
+        and hasHistory(p,"Meditation"),"Resume at the new position instead of walking back")
+    stopBookTest(p)
 end)
 
 test("radius preview shows known distant stock and unknown containers without walking", function()
@@ -1605,6 +2048,9 @@ end)
 
 local cooperative = loadTest and loadTest("cooperative_actions.lua") or assert(loadfile("tests/cooperative_actions.lua"))()
 cooperative(T, C, test, function(target) nearbyTarget=target; roaming.enabled=target~=nil end)
+
+local resume = loadTest and loadTest("training_resume.lua") or assert(loadfile("tests/training_resume.lua"))()
+resume(T, C, test)
 
 print("CONTRACTS PASS "..passed.." cases; game boundaries are explicit doubles, not gameplay evidence")
 if not loadTest then function loadTest(name) return assert(loadfile("tests/"..name))() end end

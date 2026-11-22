@@ -12,7 +12,11 @@ table.wipe=function(t) for k in pairs(t) do t[k]=nil end end
 Events={OnTick={Add=function()end}}
 for _,name in ipairs({"ClimbThroughWindowState","ClimbOverFenceState","ClimbOverWallState","ClimbState","ClimbDownState","CloseWindowState","OpenWindowState","ForceOpenState"}) do _G[name]={instance=function() return {} end} end
 ISLogSystem={logAction=function()end}
-LuaTimedActionNew={new=function(lua) return {lua=lua, isStarted=function()return true end, getJobDelta=function() return 0 end, hasStalled=function() return false end} end}
+LuaTimedActionNew={new=function(lua)
+    return {lua=lua,isStarted=function() return true end,getJobDelta=function() return 0 end,hasStalled=function() return false end,
+        setPathfinding=function() end,setAllowedWhileDraggingCorpses=function() end,
+        forceStop=function(self) self.lua:stop() end}
+end}
 local function stock(path)
     if loadUpstream then loadUpstream(path)
     else assert(loadfile(assert(arg[1], "Pass the game media path") .. "/lua/" .. path))() end
@@ -133,3 +137,63 @@ p.native=nil; q:tick()
 assert(tickCalls==1 and first.starts==1 and q.current==first and p.native==first.action)
 checkBinding(q, "tick", instanceTick)
 print("stock queue restores real per-instance hooks, including an explicit copy of a class method PASS")
+
+-- Run the real stock walk update/forceStop/base queue plus the exact path
+-- marker that Controller supplies. The Java path result and handle drain
+-- are explicit doubles; where the character moves is not tested here.
+package.preload["TimedActions/ISBaseTimedAction"]=function() return ISBaseTimedAction end
+stock("client/TimedActions/WalkToTimedAction.lua")
+BehaviorResult={Failed="Failed"}
+local elapsed=0
+function getTimestampMs() return elapsed end
+function getGameSpeed() return 1 end
+local function failedHome()
+    local p=player()
+    function p:getVehicle() return nil end
+    function p:setPath2(path) self.path=path end
+    local route={pathToLocation=function(_,x,y,z) assert(x==2 and y==3 and z==1) end,
+        update=function() return BehaviorResult.Failed end,
+        cancel=function() p.cancelledRoute=true end}
+    function p:getPathFindBehavior2() return route end
+    local location={getX=function() return 2 end,getY=function() return 3 end,getZ=function() return 1 end}
+    local walk=ISWalkToTimedAction:new(p,location); walk.autoMindfulOwner=owner
+    local original=walk.stop
+    function walk:stop()
+        assert(self.result==BehaviorResult.Failed)
+        self.autoMindfulHandoffTimeout=5000
+        Y.nativeStop(p,owner,self,original)
+    end
+    local first,second=action(p,"ForeignWorkout"),action(p,"ForeignDrink")
+    add(walk); add(first); add(second)
+    local q=ISTimedActionQueue.getTimedActionQueue(p)
+    local expectTick=q.tick
+    walk:update()
+    assert(p.cancelledRoute and q.autoMindfulHandoff and q.tick~=expectTick)
+    assert(q.queue[1]==walk and q.queue[2]==first and q.queue[3]==second and p.native==walk.action)
+    assert(not first.starts and not second.starts and not first.cancels and not second.cancels)
+    return p,q,walk,first,second,expectTick
+end
+
+local walk
+p,q,walk,first,second=failedHome()
+elapsed=4999; q:tick()
+assert(q.current==walk and not first.starts)
+p.native=nil; q:tick()
+assert(first.starts==1 and q.current==first and q.queue[2]==second and not second.starts)
+checkBinding(q,"tick")
+p.native=nil; first:perform()
+assert(second.starts==1 and q.current==second)
+p.native=nil; second:perform()
+assert(#q.queue==0 and not q.current)
+print("stock failed walk preserves next actions and hands off in order after native drain PASS")
+
+elapsed=0
+local expectTick
+p,q,walk,first,second,expectTick=failedHome()
+elapsed=5000; q:tick()
+assert(q.tick==expectTick and not q.autoMindfulHandoff and walk.autoMindfulNativeHandoffExpired)
+assert(q.queue[1]==walk and q.queue[2]==first and q.queue[3]==second and p.native==walk.action)
+assert(Y.release(p,owner) and p.native==walk.action and not first.starts and not second.starts)
+assert(not first.cancels and not second.cancels)
+checkBinding(q,"tick")
+print("stock failed walk timeout relinquishes queue without clearing an unresolved native handle PASS")

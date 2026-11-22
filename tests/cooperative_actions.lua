@@ -166,6 +166,101 @@ return function(T, C, test, scoutTarget)
         for i=1,8 do T.tick(p,false) end
         assert(not C.status(p).active and #p.cards==1 and #queue(p)==0)
     end)
+    local function boredomBreak(p)
+        p.values.BOREDOM=40
+        T.tick(p,false)
+        assert(C.status(p).active and C.status(p).phase=="care", "First request a care break from owned meditation")
+    end
+    local function careTick(p, elapsed)
+        T.now=T.now+(elapsed or 1)
+        C.update(p)
+        return C.status(p)
+    end
+    test("a bare animation flag after an intentional boredom break cannot leave training armed",function()
+        for _,recovers in ipairs({false,true}) do
+            local p,owned=began()
+            T.add(p.inventory,T.item("Literature",{boredom=-30,data={literatureTitle="CareFixture"}}))
+            owned.onStop=function() p.bareCareFlag=true end
+            function p:hasTimedActions() return self.bareCareFlag or not self:getCharacterActions():isEmpty() end
+            boredomBreak(p)
+            assert(owned.stopped and #queue(p)==0 and p:getCharacterActions():isEmpty())
+            local status=careTick(p)
+            assert(status.active and status.careWaiting and status.message:find("animation",1,true))
+            assert(careTick(p,4999).active and #queue(p)==0 and #p.cards==0)
+            if recovers then
+                p.bareCareFlag=nil
+                for _=1,4 do T.tick(p,false); if queue(p)[1] then break end end
+                assert(C.status(p).active and not C.status(p).careWaiting and queue(p)[1].Type=="read" and #p.cards==0)
+                queue(p)[1]:perform()
+                for _=1,3 do T.tick(p,false) end
+                assert(C.status(p).active and C.status(p).phase=="meditation")
+                C.stop(p)
+            else
+                status=careTick(p)
+                assert(not status.active and status.phase=="stopped" and status.message:find("without a current action",1,true)
+                    and #p.cards==1 and #queue(p)==0 and p:hasTimedActions())
+                for _=1,10 do T.tick(p,false) end
+                assert(not C.status(p).active and #p.cards==1)
+                p.bareCareFlag=nil; p.values.BOREDOM=0
+                assert(C.start(p,"meditation",false)); T.tick(p,false)
+                assert(C.status(p).phase=="meditation")
+                C.stop(p)
+            end
+        end
+    end)
+    test("a real context menu clearly pauses boredom care and closing it resumes normal reading",function()
+        local p,owned=began()
+        T.add(p.inventory,T.item("Literature",{boredom=-30,data={literatureTitle="CareFixture"}}))
+        p.contextOpen=true
+        boredomBreak(p)
+        for _=1,3 do
+            local status=careTick(p,60000)
+            assert(status.active and status.careWaiting and status.message:find("context menu",1,true))
+            assert(#queue(p)==0 and #p.cards==0 and owned.stopped)
+        end
+        p.contextOpen=false; T.tick(p,false)
+        assert(C.status(p).phase=="reading" and not C.status(p).careWaiting and queue(p)[1].Type=="read")
+        C.stop(p)
+    end)
+    test("an orphaned owned release is bounded only with no active action or open menu",function()
+        for _,condition in ipairs({"orphan","native","foreign","context"}) do
+            local p,owned=began()
+            T.add(p.inventory,T.item("Literature",{boredom=-30,data={literatureTitle="CareFixture"}}))
+            local q=ISTimedActionQueue.getTimedActionQueue(p)
+            -- Reproduce the defensive release refusal: owned Lua head remains,
+            -- but no matching current pointer or active Java action exists.
+            q.current=nil; p.nativeHead=nil
+            boredomBreak(p)
+            local foreign,native
+            if condition=="native" then native={}; p.nativeHead=native
+            elseif condition=="foreign" then foreign=T.action(p,"ForeignWorkout"); ISTimedActionQueue.add(foreign)
+            elseif condition=="context" then p.contextOpen=true end
+            local status=careTick(p)
+            assert(status.active and status.careWaiting and #p.cards==0)
+            assert(careTick(p,4999).active)
+            status=careTick(p)
+            assert(queue(p)[1]==owned and not owned.stopped and not owned.cancelled and not owned.forceStopped)
+            if condition=="orphan" then
+                assert(not status.active and status.phase=="stopped" and status.message:find("could not release",1,true) and #p.cards==1)
+                for _=1,3 do T.tick(p,false) end
+                assert(#p.cards==1 and queue(p)[1]==owned and not owned.forceStopped)
+            else
+                assert(status.active and status.careWaiting and #p.cards==0 and p.nativeHead==native)
+                assert(careTick(p,60000).active)
+                if foreign then untouched(foreign); assert(queue(p)[2]==foreign and not foreign.begins) end
+                if native then assert(p:getCharacterActions():contains(native)) end
+                p.contextOpen=false
+                if native then p.nativeHead=nil end
+                -- Let stock retire the stale owned entry. Any genuine successor then begins normally.
+                q:onCompleted(owned)
+                if foreign then assert(p.nativeHead==foreign.action); untouched(foreign); foreign:perform() end
+                p.values.BOREDOM=0
+                for _=1,5 do T.tick(p,false); if C.status(p).phase=="meditation" then break end end
+                assert(C.status(p).phase=="meditation" and #p.cards==0 and not C.status(p).careWaiting)
+                C.stop(p)
+            end
+        end
+    end)
     test("a live Java-only handle after training loss still yields for many minutes",function()
         local p=began()
         ISTimedActionQueue.clear(p)
@@ -429,12 +524,12 @@ return function(T, C, test, scoutTarget)
         assert(queue(p)[1]==foreign and #queue(p)==1); untouched(foreign)
         foreign:perform(); resumed(p)
     end)
-    test("small successive movement cannot reset the displacement reference forever",function()
+    test("observed ordinary walking reanchors without disturbing foreign work",function()
         local p=began(); local foreign=T.action(p,"ISFitnessAction")
         ISTimedActionQueue.add(foreign); T.tick(p,false)
-        for i=1,3 do p.x=p:getX()+.4; p.moving=true; p.movementInput=true; T.tick(p,false); assert(C.status(p).active) end
-        p.x=p:getX()+.4; T.tick(p,false)
-        assert(not C.status(p).active and #p.cards==1); untouched(foreign)
+        for i=1,6 do p.x=p:getX()+.4; p.moving=true; p.movementInput=true; T.tick(p,false); assert(C.status(p).active) end
+        untouched(foreign)
+        p.moving=false; p.movementInput=false; foreign:perform(); resumed(p)
     end)
     test("error hard stop leaves foreign work alone and resets on explicit restart",function()
         local p=began(); local foreign=T.action(p,"ISFitnessAction")
@@ -504,10 +599,10 @@ return function(T, C, test, scoutTarget)
     end)
     test("significant displacement floor changes jogging and danger end a yielded session",function()
         for _,change in ipairs({
-            function(p) p.x=p:getX()+3; p.moving=true; p.movementInput=true end,
+            function(p) p.x=p:getX()+3 end,
             function(p) p.square=T.square(0,0,1) end,
-            function(p) p.running=true; p.moving=true end,
-            function(p) p.sprinting=true; p.moving=true end,
+            function(p) p.running=true; p.rawMovementInput=true end,
+            function(p) p.sprinting=true; p.rawMovementInput=true end,
             function(p) p.zombies=1 end,
             function(p) p.aimInput=true end,
             function(p) p.attacking=true end,
@@ -623,6 +718,7 @@ return function(T, C, test, scoutTarget)
                         assert(not freshWalk and not C.status(p).active and #queue(p)==0)
                     end
                     C.stop(p); scoutTarget(nil); T.client=oldClient
+                    getCell,SafeHouse=oldCell,oldSafe
                 end
             end
         end)

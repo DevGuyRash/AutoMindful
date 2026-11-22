@@ -51,6 +51,11 @@ public final class KahluaCheck {
             environment.rawset("loadUpstream", (JavaFunction) (frame, count) -> frame.push(
                     evaluate(thread, environment, within(references.resolve("lua"), (String) frame.get(0)))));
         }
+        if (script.equals("ui.lua")) {
+            environment.rawset("nativeKeyRecord", (JavaFunction) (frame, count) -> frame.push(
+                    new zombie.core.Core.KeyBinding((String) frame.get(0), ((Number) frame.get(1)).intValue(),
+                            0, false, false, false)));
+        }
         evaluate(thread, environment, within(root.resolve("tests"), script));
         System.out.println("KAHLUA PASS " + script + "; installed interpreter with explicit game-boundary doubles");
     }

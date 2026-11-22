@@ -3,6 +3,7 @@ require "ISUI/ISPanel"
 require "ISUI/ISButton"
 require "ISUI/ISTickBox"
 require "ISUI/ISLabel"
+require "ISUI/ISComboBox"
 require "ISUI/ISRichTextPanel"
 require "ISUI/ISProgressBar"
 local Controller = require "AutoMindful/Controller"
@@ -25,6 +26,8 @@ local palette = {
     yoga = {r=0.82, g=0.69, b=0.45, a=1},
     water = {r=0.47, g=0.69, b=0.78, a=1},
     missing = {r=0.85, g=0.47, b=0.42, a=1},
+    value = {r=0.60, g=0.83, b=0.94, a=1},
+    caution = {r=0.96, g=0.65, b=0.53, a=1},
     gain = {r=0.45, g=0.88, b=0.56, a=1},
 }
 
@@ -144,6 +147,34 @@ local function setText(panel, text)
     if panel.text ~= text then panel:setText(text); panel:paginate() end
 end
 
+local function recoveryModes(mode)
+    return mode == "recovery" or mode == "recoverEndurance"
+end
+
+local function endurancePercent(value)
+    if type(value) == "number" and value >= 0 and value <= 1 then
+        return string.format("%d%%", math.floor(value * 100))
+    end
+end
+
+local function updateFooter(window)
+    local code = Options.windowKey()
+    local keyName = code ~= 0 and getKeyName and getKeyName(code) or nil
+    local shortcut = keyName and keyName ~= "" and ("Open with " .. keyName .. "; change in Mod Options.")
+        or "Shortcut: set a key in Mod Options."
+    setText(window.footer, colored(palette.muted, "Close to hide. Your current mode continues.") .. " <LINE> "
+        .. colored(palette.muted, shortcut))
+end
+
+local function recoveryWidths(width)
+    local font, gap = getTextManager(), 6
+    local primary = font:MeasureStringX(UIFont.Small, "Recovery") + 20
+    local full = font:MeasureStringX(UIFont.Small, "Recover to Full Endurance") + 20
+    if primary + full + gap > width then return width, width, true end
+    primary = math.min(width - full - gap, math.max(primary, width * .38))
+    return primary, width - primary - gap, false
+end
+
 function UI:savePreferences()
     local saved = preferences(self.player)
     saved.x, saved.y, saved.pin = self:getX(), self:getY(), self.pin
@@ -160,6 +191,11 @@ end
 function UI:onScoutingChanged()
     Options.setSearchNearby(self.scouting:isSelected(1))
     self:checkSupplies()
+end
+
+function UI:onCycleChanged(combo)
+    Options.setCycleIndex(combo:getSelected())
+    self:refresh()
 end
 
 function UI:checkSupplies()
@@ -188,8 +224,12 @@ function UI:onStart(button)
     UI.startTraining(self.player, button.mode)
 end
 
-function UI:onStop()
-    Controller.stop(self.player, "Stopped by you.")
+function UI:onStop(button)
+    -- Both stock mouse dispatch and forceClick pass this same control. Record
+    -- the callback source without claiming how it was activated.
+    local source = button and button == self.stopButton and "pane-stop-control" or "pane-stop-callback"
+    print("[AutoMindful] stop-request source=" .. source)
+    Controller.stop(self.player, "AutoMindful received a stop request.")
     self.startError = nil
     self.nextRefresh = 0
     self:refresh()
@@ -214,16 +254,165 @@ local function addGuideButton(frame, label, window, y)
     return button
 end
 
-function UI:refreshSkillGuide()
-    local lines = {}
-    for _, section in ipairs(Wellness.guide(self.player, self.status and self.status.progress)) do
-        if #section.lines > 0 then
-            if #lines > 0 then lines[#lines + 1] = "<LINE>" end
-            lines[#lines + 1] = colored(palette.meditation, section.title)
-            for _, value in ipairs(section.lines) do lines[#lines + 1] = colored(palette.text, value) end
+local guideThemes = {
+    Meditation = palette.meditation, Mindfulness = palette.meditation,
+    Yoga = palette.yoga, Zen = palette.yoga, Lessons = palette.water,
+}
+local guideSelected = {r=0.17, g=0.23, b=0.20, a=1}
+local maxGuideTabs = 5
+local guideWarnings = {["Trade-offs"]=true,["Early stops"]=true,["Multiplayer"]=true,["Version"]=true}
+
+-- Use the actual game font width for both wrapping and drawing. The stock
+-- rich-text paginator can underestimate glyph widths for colored guide rows.
+local GuideText = ISPanel:derive("AutoMindfulGuideText")
+function GuideText:paginate()
+    local font = getTextManager()
+    local lineHeight = font:getFontHeight(UIFont.Small) + 3
+    if self.layoutRows == self.rows and self.layoutWidth == self.width and self.layoutHeight == lineHeight then return end
+    self.layoutRows, self.layoutWidth, self.layoutHeight = self.rows, self.width, lineHeight
+    local maxWidth = math.max(1, self.width - 4)
+    local rendered, y = {}, 0
+    local function addText(value, color, emphasize)
+        local line = ""
+        local function emit()
+            if line ~= "" then
+                local item = {text=line,color=color,y=y}
+                if emphasize then
+                    local first, active, startAt = true, nil, 1
+                    item.runs = {}
+                    local function run(stopAt)
+                        if stopAt < startAt then return end
+                        local prefix = line:sub(1, startAt - 1)
+                        item.runs[#item.runs + 1] = {text=line:sub(startAt, stopAt),color=active,
+                            x=prefix == "" and 0 or font:MeasureStringX(UIFont.Small, prefix)}
+                    end
+                    for at, word in line:gmatch("()(%S+)") do
+                        -- Preserve the normal text color around numbers and ranges.
+                        local amount = word:match("^[%+%-x]?%d") and palette.value or color
+                        if first then active, first = amount, false
+                        elseif active ~= amount then
+                            run(at - 1)
+                            startAt, active = at, amount
+                        end
+                    end
+                    run(#line)
+                end
+                rendered[#rendered + 1] = item
+                y = y + lineHeight
+            end
+            line = ""
+        end
+        for word in value:gmatch("%S+") do
+            local nextLine = line == "" and word or (line .. " " .. word)
+            if font:MeasureStringX(UIFont.Small, nextLine) <= maxWidth then line = nextLine
+            else
+                emit()
+                if font:MeasureStringX(UIFont.Small, word) <= maxWidth then line = word
+                else
+                    -- Split long unbroken fallback/translated words between complete UTF-8 glyphs.
+                    for glyph in word:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+                        if font:MeasureStringX(UIFont.Small, line .. glyph) > maxWidth then emit() end
+                        if font:MeasureStringX(UIFont.Small, glyph) <= maxWidth then line = line .. glyph end
+                    end
+                end
+            end
+        end
+        emit()
+    end
+    for _, row in ipairs(self.rows or {}) do
+        if row.label then addText(row.label, row.caution and palette.caution or row.accent) end
+        addText(row.detail, row.numeric and palette.value or (row.label and palette.text or row.accent), row.label ~= nil and not row.numeric)
+        y = y + (row.numeric and 4 or 9)
+    end
+    self.rendered = rendered
+    self:setScrollHeight(y)
+end
+
+function GuideText:render()
+    for _, line in ipairs(self.rendered or {}) do
+        if line.runs then
+            for _, run in ipairs(line.runs) do
+                local c = run.color
+                self:drawText(run.text, run.x, line.y, c.r, c.g, c.b, c.a, UIFont.Small)
+            end
+        else
+            local c = line.color
+            self:drawText(line.text, 0, line.y, c.r, c.g, c.b, c.a, UIFont.Small)
         end
     end
-    setText(self.wellnessText, table.concat(lines, " <LINE> "))
+end
+
+function UI:refreshSkillGuide()
+    local sections = Wellness.guide(self.player, self.status and self.status.progress)
+    local index = self.wellnessSection or 1
+    if not sections[index] or sections[index].title ~= self.wellnessTopic then
+        index = 1
+        for i, section in ipairs(sections) do
+            if section.title == self.wellnessTopic then index = i; break end
+        end
+    end
+    local selected = sections[index]
+    if not selected then return end
+    self.wellnessSection, self.wellnessTopic = index, selected.title
+    for i, button in ipairs(self.wellnessTabs) do
+        local section = sections[i]
+        button:setVisible(section ~= nil)
+        if section then
+            if button.guideLabel ~= section.title then
+                button.guideLabel = section.title
+                button:setTitle(section.title)
+            end
+            local active = i == index
+            button.guideSelected = active
+            local accent = guideThemes[section.title] or palette.meditation
+            button.backgroundColor = active and guideSelected or palette.panel
+            button.borderColor = active and accent or palette.border
+            button.textColor = active and accent or palette.text
+        end
+    end
+    local accent = guideThemes[selected.title] or palette.meditation
+    self.wellnessCard.heading = selected.title
+    self.wellnessCard.borderColor = accent
+    local rows = {}
+    if selected.subtitle then rows[#rows + 1] = {detail=selected.subtitle,accent=accent} end
+    for _, value in ipairs(selected.lines) do
+        local label, detail = value:match("^([^:]+):%s+(.+)$")
+        if label and #label <= 44 then
+            rows[#rows + 1] = {label=label,detail=detail,accent=accent,caution=guideWarnings[label],
+                numeric=detail:match("^[%+%-]%d") ~= nil}
+        else
+            rows[#rows + 1] = {detail=value,accent=palette.text}
+        end
+    end
+    local signature = {selected.title, selected.subtitle or "", table.concat(selected.lines, "\n")}
+    local key = table.concat(signature, "\n")
+    if self.wellnessText.contentKey ~= key then
+        self.wellnessText.contentKey, self.wellnessText.rows = key, rows
+        self.wellnessText:paginate()
+    end
+end
+
+function UI:selectSkillGuideTab(button)
+    if not self.wellnessOpen or not button.guideLabel or button.guideLabel == self.wellnessTopic then return end
+    self.wellnessTopic = button.guideLabel
+    self:refreshSkillGuide()
+    self:layout()
+    self.body:setYScroll(0)
+end
+
+local function layoutGuideTabs(window, width, line)
+    local font = getTextManager()
+    local left, top, x, y, gap = 12, line + 24, 12, line + 24, 6
+    local height = math.max(24, line + 10)
+    for _, button in ipairs(window.wellnessTabs) do
+        if button:getIsVisible() then
+            local w = math.min(width - 24, math.max(68, font:MeasureStringX(UIFont.Small, button.guideLabel) + 18))
+            if x + w > width - 12 and x > left then x, y = left, y + height + gap end
+            button:setX(x); button:setY(y); button:setWidth(w); button:setHeight(height)
+            x = x + w + gap
+        end
+    end
+    return math.max(top, y) + height + 10
 end
 
 function UI:toggleSkillGuide()
@@ -240,33 +429,67 @@ end
 
 function UI:refresh()
     local status = Controller.status(self.player)
+    local recovery = recoveryModes(status.mode)
+    local recovering = status.active and recovery
     self.scouting:setSelected(1, Options.searchNearby())
+    self.cycle:setSelected(Options.cycleIndex())
     self.report = Controller.prepare(self.player, self.nearby:isSelected(1), true, self.forceSupplyRefresh)
     self.forceSupplyRefresh = nil
     self.status = status
+    self.recovering = recovering
     for _, button in ipairs(self.starts) do button:setEnable(not status.active) end
-    self.enduranceButton:setEnable(not status.active)
+    self.recoveryButton:setEnable(not status.active)
+    self.recoverEnduranceButton:setEnable(not status.active)
     self.stopButton:setEnable(status.active)
     self.nearby.enable = true
     local activityColor = status.active and palette.meditation or (self.startError and palette.missing or palette.text)
     local phase = status.active and (status.mode == "both" and "Training both" or status.mode == "yoga" and "Training yoga" or "Training meditation") or "Ready"
-    if status.active and status.mode == "endurance" then
-        phase = "Recovering endurance"
-        if type(status.endurance) == "number" and status.endurance >= 0 and status.endurance <= 1 then
-            phase = phase .. string.format(" (%d%%)", math.floor(status.endurance * 100))
+    local endurance = endurancePercent(status.endurance)
+    if recovering then
+        phase = status.mode == "recoverEndurance" and "Recovery until full endurance" or "Recovery on"
+        if status.careWaiting then phase = phase .. " (paused for care)"
+        elseif status.phase == "manual" then phase = phase .. " (yielding)" end
+        activityColor = palette.water
+    elseif recovery and status.phase == "complete" then
+        phase, activityColor = "Recovery complete", palette.water
+    else
+        if status.active and status.mode == "endurance" then
+            phase = "Recovering endurance" .. (endurance and " (" .. endurance .. ")" or "")
         end
+        if status.phase == "practice-care" then phase = "Practice for relief"; activityColor = palette.yoga end
+        if status.active and status.careWaiting then phase = "Paused for care"; activityColor = palette.yoga end
     end
     if status.phase == "stopped" then phase = "Stopped"; activityColor = palette.yoga end
-    setText(self.activity, colored(activityColor, phase) .. " <LINE> " .. colored(palette.text, self.startError or status.message))
+    local activityMessage = status.careWaiting and status.message or self.startError or status.message
+    local activity = colored(activityColor, phase) .. " <LINE> " .. colored(palette.text, activityMessage)
+    if endurance and (recovering or (recovery and status.phase == "complete")) then
+        activity = activity .. " <LINE> " .. colored(palette.water, "Endurance: " .. endurance)
+    end
+    if status.active and status.mode == "both" and status.cycle and (status.cycle.due == "meditation" or status.cycle.due == "yoga") then
+        local kind = status.cycle.due
+        local name = kind == "yoga" and "Yoga" or "Meditation"
+        local gate = status.cycle.gates and status.cycle.gates[kind]
+        local reason = gate and not gate.ready and gate.reason or nil
+        if reason then
+            activity = activity .. " <LINE> " .. colored(palette.yoga, name .. " is still next: " .. reason)
+        elseif status.cycle.bridge or (status.phase ~= kind) then
+            activity = activity .. " <LINE> " .. colored(palette.muted, "Next practice: " .. name)
+        end
+    end
+    setText(self.activity, activity)
+    self.progressFrame.heading = recovering and "Skill reference" or "Progress"
     local now = getTimestampMs()
     for _, skill in ipairs(self.skills) do
+        skill.label:setVisible(not recovering)
+        skill.bar:setVisible(not recovering)
         local level = math.max(0, math.min(10, status[skill.field] or 0))
         local progress = status.progress and status.progress[skill.field]
         skill.label:setName(string.format("%s - Level %d / 10", skill.name, level))
         skill.bar:setProgress(progress and progress.fraction or 0)
         skill.bar:setText(Progress.xpText(progress))
         skill.bar.textColor = level >= 10 and palette.yoga or (level > 0 and skill.color or palette.muted)
-        local change = self.progressObserved and Progress.change(skill.sample, progress)
+        if recovering then skill.flash = nil end
+        local change = not recovering and self.progressObserved and Progress.change(skill.sample, progress)
         if change then
             local amount = change.amount or change.levels
             local unit = change.amount and " XP" or (math.abs(amount) == 1 and " level" or " levels")
@@ -275,7 +498,7 @@ function UI:refresh()
         end
         skill.sample = progress
     end
-    self.progressObserved = self:getIsVisible()
+    self.progressObserved = not recovering and self:getIsVisible()
     self.checked:setName(getTimestampMs() - (self.checkedAt or -10000) < 3000 and "Supplies checked just now" or "Live supply refresh")
     local tips = {}
     if status.active and status.mode == "endurance" then
@@ -294,15 +517,19 @@ function UI:refresh()
         tips[#tips + 1] = colored(palette.yoga, "- " .. warning)
     end
     if #tips == 0 then
-        tips[1] = colored(palette.meditation, status.active and "Training continues. Care breaks happen only when needed."
-            or "Supplies are available. Choose a training mode when you are ready.")
+        local message = recovering and (status.mode == "recoverEndurance" and "Recovery stops at full endurance and yields to other actions."
+                or "Recovery stays on and yields to other actions. It only steps in when needed.")
+            or (status.active and "Training continues. Care breaks happen only when needed."
+                or "Supplies are available. Choose training or Recovery when you are ready.")
+        tips[1] = colored(recovering and palette.water or palette.meditation, message)
     end
     setText(self.guidance, table.concat(tips, " <LINE> "))
     local unread, rereads = self.report.unreadLiterature, self.report.rereadLiterature
     local literatureHelp = unread and string.format("Literature in inventory: %d unread, %d eligible rereads. ", unread, rereads or 0) or ""
     self.ledger.tooltip = "Known contents within the configured radius refresh while you move or change inventory. Uninspected/unconfirmed containers are reported separately; Check supplies never walks or remotely generates loot. Hydration includes safe drinks and hydrating food; one item can count in both food and hydration. " .. literatureHelp
-        .. "Training can start with no supplies. Missing stock becomes a stop only when the survivor's condition actually requires it. Unread literature is preferred, then eligible rereads. Recently read material can be unavailable until the game's cooldown ends. Nearby supplies are used only when collection is enabled."
+        .. "A mode can start with no supplies. Missing stock matters when the survivor needs it. Unread literature is preferred, then eligible rereads. Recently read material may be on cooldown. Nearby supplies are used only when collection is enabled."
     if self.wellnessOpen then self:refreshSkillGuide() end
+    updateFooter(self)
     self:layout()
 end
 
@@ -340,6 +567,7 @@ function UI:createChildren()
         skillY = skillY + line * 2 + 12
     end
     progress:setHeight(skillY + 7)
+    progress.fullHeight = progress.height
     progress.skills = self.skills
     y = y + progress.height + 8
     self.ledger = frame(self.body, Ledger, "Supplies", 0, y, contentWidth, line * 8 + 64)
@@ -353,24 +581,45 @@ function UI:createChildren()
     self.skillGuideButton = addGuideButton(progress, "Skill Guide", self, 5)
     self.wellnessFrame = frame(self.body, Frame, "Skill Guide", 0, 0, contentWidth, 1)
     self.wellnessBack = addGuideButton(self.wellnessFrame, "Back", self, 5)
-    self.wellnessText = textPanel(self.wellnessFrame, 12, line + 23, contentWidth - 24, 1, false)
-    self.wellnessText.marginTop, self.wellnessText.marginBottom = 0, 0
+    self.wellnessTabs = {}
+    for i = 1, maxGuideTabs do
+        local tab = ISButton:new(0, 0, 80, 24, "", self, UI.selectSkillGuideTab)
+        tab:initialise()
+        self.wellnessFrame:addChild(tab)
+        tab:setVisible(false)
+        self.wellnessTabs[i] = tab
+    end
+    self.wellnessCard = frame(self.wellnessFrame, Frame, "Meditation", 12, line + 53, contentWidth - 24, 1)
+    self.wellnessCard.backgroundColor = palette.background
+    self.wellnessText = GuideText:new(12, line + 23, contentWidth - 48, 1)
+    self.wellnessText:initialise()
+    self.wellnessText.background = false
+    self.wellnessCard:addChild(self.wellnessText)
     self.wellnessText.blockMouseWheel = true -- route wheel input to the outer guide scroll body
     self.wellnessFrame:setVisible(false)
     y = self.body:getBottom() + 6
-    self.scouting = ISTickBox:new(pad, y, width, row, Options.scoutingLabel, self, UI.onScoutingChanged)
+    self.scouting = ISTickBox:new(pad, y, width * 0.53, row, Options.scoutingLabel, self, UI.onScoutingChanged)
     self.scouting:initialise()
     self.scouting:addOption(Options.scoutingLabel)
     self.scouting:setSelected(1, Options.searchNearby())
     self.scouting.tooltip = Options.scoutingHelp
     self:addChild(self.scouting)
-    y = y + row + 4
-    self.nearby = ISTickBox:new(pad, y, width, row, "Adjacent supplies", self, UI.onNearbyChanged)
+    self.nearby = ISTickBox:new(pad + width * 0.53, y, width * 0.47, row, "Adjacent supplies", self, UI.onNearbyChanged)
     self.nearby:initialise()
     self.nearby:addOption("Use adjacent supplies")
     self.nearby:setSelected(1, useAdjacent(self.player))
     self.nearby.tooltip = "When scouting is off, allow borrowing from adjacent supplies without walking away. Scouting already includes adjacent supplies."
     self:addChild(self.nearby)
+    y = y + row + 4
+    self.cycleLabel = ISLabel:new(pad, y + math.floor((row - line) / 2), line,
+        Options.cycleLabel, palette.text.r, palette.text.g, palette.text.b, 1, UIFont.Small, true)
+    self.cycleLabel:initialise()
+    self:addChild(self.cycleLabel)
+    self.cycle = ISComboBox:new(pad + width * 0.46, y, width * 0.54, row, self, UI.onCycleChanged)
+    self.cycle:initialise()
+    for _, entry in ipairs(Options.cycleChoices()) do self.cycle:addOptionWithData(entry.label, entry.id, entry.help) end
+    self.cycle:setSelected(Options.cycleIndex())
+    self:addChild(self.cycle)
     y = y + row + 4
     self.starts = {}
     local labels = {{"Train both", "both"}, {"Meditation", "meditation"}, {"Yoga", "yoga"}}
@@ -385,20 +634,28 @@ function UI:createChildren()
         self.starts[index] = button
     end
     y = y + row + 4
-    self.enduranceButton = ISButton:new(pad, y, width, row, "Meditate to Full Endurance", self, UI.onStart)
-    self.enduranceButton:initialise()
-    self.enduranceButton.mode = "endurance"
-    self.enduranceButton.tooltip = "Meditate until endurance is full, then stop. No yoga, supply use or scouting."
-    self:addChild(self.enduranceButton)
+    self.recoveryButton = ISButton:new(pad, y, width, row, "Recovery", self, UI.onStart)
+    self.recoveryButton:initialise()
+    self.recoveryButton.mode = "recovery"
+    self.recoveryButton.tooltip = "Stay on in the background. Handle needs and use Yoga or Meditation only when useful. Other actions take priority."
+    self.recoveryButton.borderColor, self.recoveryButton.textColor = palette.water, palette.water
+    self.recoveryButton.backgroundColor = {r=.13, g=.20, b=.24, a=1}
+    self:addChild(self.recoveryButton)
+    self.recoverEnduranceButton = ISButton:new(pad, y, width, row, "Recover to Full Endurance", self, UI.onStart)
+    self.recoverEnduranceButton:initialise()
+    self.recoverEnduranceButton.mode = "recoverEndurance"
+    self.recoverEnduranceButton.tooltip = "Run Recovery until endurance is full, then stop. Useful care and existing supply settings still apply."
+    self.recoverEnduranceButton.borderColor = palette.water
+    self:addChild(self.recoverEnduranceButton)
     y = y + row + 4
     self.check = ISButton:new(pad, y, width / 2 - 3, row, "Check supplies", self, UI.checkSupplies)
     self.check:initialise()
     self.check.tooltip = "Refresh known container contents within the configured radius now. Unknown contents stay unknown; this does not move the survivor or collect items."
     self:addChild(self.check)
-    self.stopButton = ISButton:new(pad + width / 2 + 3, y, width / 2 - 3, row, "Stop training", self, UI.onStop)
+    self.stopButton = ISButton:new(pad + width / 2 + 3, y, width / 2 - 3, row, "Stop All", self, UI.onStop)
     self.stopButton:initialise()
     self.stopButton.borderColor = palette.missing
-    self.stopButton.tooltip = "Cancel the training loop. Closing the window only hides it."
+    self.stopButton.tooltip = "Stop only AutoMindful's mode and its own actions. Your actions and workouts from other mods keep running."
     self:addChild(self.stopButton)
     y = y + row + 6
     self.checked = ISLabel:new(pad, y, line, "Live supply refresh", palette.meditation.r, palette.meditation.g, palette.meditation.b, 1, UIFont.Small, true)
@@ -407,8 +664,7 @@ function UI:createChildren()
     local footer = textPanel(self, pad, y + line + 2, width, line * 2 + 4, false)
     self.footer = footer
     footer.marginTop, footer.marginBottom = 0, 0
-    setText(footer, colored(palette.muted, "Close to hide. Training continues.") .. " <LINE> "
-        .. colored(palette.muted, "Shortcut: Options > Mods > AutoMindful."))
+    updateFooter(self)
     self:layout()
 end
 
@@ -417,11 +673,12 @@ function UI:layout()
     local pad, line = 12, getTextManager():getFontHeight(UIFont.Small)
     local row = math.max(28, line + 10)
     local width = self.width - pad * 2
+    local recoveryWidth, fullWidth, stackRecovery = recoveryWidths(width)
     local bodyY = self:titleBarHeight() + 10
     self.footer:setWidth(width)
     self.footer:paginate()
     self.footer:setHeight(math.max(line * 2 + 4, self.footer:getScrollHeight()))
-    local controlsHeight = row * 5 + line + self.footer.height + 34
+    local controlsHeight = row * 5 + line + self.footer.height + 34 + (stackRecovery and row + 4 or 0)
     self.body:setWidth(width)
     self.body:setHeight(math.max(1, self.height - bodyY - controlsHeight - 8))
     local contentWidth = width - 15
@@ -434,6 +691,7 @@ function UI:layout()
     self.activityFrame:setHeight(line + 23 + self.activity.height)
     local y = self.activityFrame:getBottom() + 8
     self.progressFrame:setY(y)
+    self.progressFrame:setHeight(self.recovering and math.max(line + 22, 36) or self.progressFrame.fullHeight)
     for _, skill in ipairs(self.skills) do skill.bar:setWidth(contentWidth - 24) end
     self.ledger:setY(self.progressFrame:getBottom() + 8)
     self.guideFrame:setY(self.ledger:getBottom() + 8)
@@ -443,21 +701,29 @@ function UI:layout()
     self.wellnessFrame:setWidth(contentWidth)
     positionGuideButton(self.wellnessBack, self.wellnessFrame, line)
     if self.wellnessOpen then
-        self.wellnessText:setWidth(contentWidth - 24)
+        self.wellnessCard:setWidth(contentWidth - 24)
+        self.wellnessCard:setY(layoutGuideTabs(self, contentWidth, line))
+        self.wellnessText:setWidth(contentWidth - 48)
         self.wellnessText:setY(line + 23)
-        if self.wellnessText.text then self.wellnessText:paginate() end
+        self.wellnessText:paginate()
         self.wellnessText:setHeight(self.wellnessText:getScrollHeight() + 4)
-        self.wellnessFrame:setHeight(self.wellnessText:getBottom() + 8)
+        self.wellnessCard:setHeight(self.wellnessText:getBottom() + 10)
+        self.wellnessFrame:setHeight(self.wellnessCard:getBottom() + 10)
         self.body:setScrollHeight(self.wellnessFrame:getBottom() + 4)
     else
         self.body:setScrollHeight(self.guideFrame:getBottom() + 4)
     end
     y = self.body:getBottom() + 6
     self.scouting:setY(y)
-    self.scouting:setWidth(width)
-    y = y + row + 4
+    self.scouting:setWidth(width * 0.53)
+    self.nearby:setX(pad + width * 0.53)
     self.nearby:setY(y)
-    self.nearby:setWidth(width)
+    self.nearby:setWidth(width * 0.47)
+    y = y + row + 4
+    self.cycleLabel:setY(y + math.floor((row - line) / 2))
+    self.cycle:setX(pad + width * 0.46)
+    self.cycle:setY(y)
+    self.cycle:setWidth(width * 0.54)
     y = y + row + 4
     local buttonWidth = (width - 12) / 3
     for index, button in ipairs(self.starts) do
@@ -466,8 +732,14 @@ function UI:layout()
         button:setWidth(buttonWidth)
     end
     y = y + row + 4
-    self.enduranceButton:setY(y)
-    self.enduranceButton:setWidth(width)
+    self.recoveryButton:setY(y)
+    self.recoveryButton:setWidth(recoveryWidth)
+    self.recoveryButton:setHeight(row)
+    self.recoverEnduranceButton:setX(stackRecovery and pad or pad + recoveryWidth + 6)
+    self.recoverEnduranceButton:setY(stackRecovery and y + row + 4 or y)
+    self.recoverEnduranceButton:setWidth(fullWidth)
+    self.recoverEnduranceButton:setHeight(row)
+    if stackRecovery then y = y + row + 4 end
     y = y + row + 4
     self.check:setY(y)
     self.check:setWidth(width / 2 - 3)

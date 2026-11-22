@@ -190,6 +190,55 @@ function Supplies.scan(player, includeNearby, useNearbyTools)
     return result
 end
 
+-- Find an exact already-carried or native-accessible adjacent care item.
+-- Do not request unloaded remote loot or rummage in other people's storage.
+function Supplies.findCareItem(player, eligible, includeNearby)
+    local main, visited, seenCount = player:getInventory(), {}, 0
+    local function visit(container, depth, floor)
+        if not container or visited[container] or depth > 8 then return nil end
+        visited[container] = true
+        local items = container:getItems()
+        for i=0,items:size()-1 do
+            if seenCount >= 2048 then return nil end
+            seenCount = seenCount+1
+            local item=items:get(i)
+            if item and item:getContainer()==container then
+                local world=floor and item:getWorldItem()
+                local legal=not floor or (world and reachable(player,world:getSquare())
+                    and Storage.permitted(player,world:getSquare()))
+                if legal and (not item.isFavorite or not item:isFavorite()) and eligible(item)
+                        and (container==main or main:hasRoomFor(player,item)) then return item end
+            end
+        end
+        if depth < 8 then
+            for i=0,items:size()-1 do
+                if seenCount >= 2048 then return nil end
+                local item=items:get(i)
+                if item and item:getContainer()==container and instanceof(item, "InventoryContainer") then
+                    local nested=visit(item:getInventory(),depth+1,false)
+                    if nested then return nested end
+                end
+            end
+        end
+    end
+    local item=visit(main,0,false)
+    if item or not includeNearby then return item end
+    local nearby=containers(player)
+    if not nearby then return nil end
+    for i=0,nearby:size()-1 do
+        local container=nearby:get(i)
+        if container and not visited[container] then
+            local floor=container:getType()=="floor"
+            local square=containerSquare(container)
+            if floor or (Storage.permitted(player,square)
+                    and Storage.containerReachable(player,container,reachable(player,square))) then
+                item=visit(container,8,floor)
+                if item then return item end
+            end
+        end
+    end
+end
+
 local function rejectedItem(rejected, key)
     local rejection = rejected[key]
     if type(rejection) == "number" and getTimestampMs() >= rejection then
@@ -357,7 +406,7 @@ local function guardStorageAction(player, action, container)
     return true
 end
 
-function Supplies.painLoanAllowed(player, loan, worldAllowed)
+function Supplies.careLoanAllowed(player, loan, worldAllowed)
     if not loan then return true end
     local origin = loan.origin
     if not origin then return false end
@@ -375,7 +424,9 @@ function Supplies.painLoanAllowed(player, loan, worldAllowed)
     return Storage.permitted(player, square) and Storage.containerReachable(player, origin, reachable(player, square))
 end
 
-local function guardPainLoanAction(action, accessible)
+Supplies.painLoanAllowed = Supplies.careLoanAllowed
+
+local function guardCareLoanAction(action, accessible)
     if not accessible() then return false end
     local nativeValid = action.isValid
     action.isValid = function(self)
@@ -384,20 +435,20 @@ local function guardPainLoanAction(action, accessible)
     return true
 end
 
-function Supplies.transfer(player, item, painLoan)
+function Supplies.transfer(player, item, careLoan)
     local source = item:getContainer()
     if source == player:getInventory() then return true end
     if not player:getInventory():hasRoomFor(player, item) then return false end
     local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, source, player:getInventory())
     if action.ignoreAction then return false end
-    if painLoan then
-        if not guardPainLoanAction(action, function()
-            if item ~= painLoan.original or item:getContainer() ~= painLoan.origin then return false end
-            if painLoan.floor then
+    if careLoan then
+        if not guardCareLoanAction(action, function()
+            if item ~= careLoan.original or item:getContainer() ~= careLoan.origin then return false end
+            if careLoan.floor then
                 local world = item:getWorldItem()
-                if not world or world:getSquare() ~= painLoan.floor.square then return false end
+                if not world or world:getSquare() ~= careLoan.floor.square then return false end
             end
-            return Supplies.painLoanAllowed(player, painLoan, true)
+            return Supplies.careLoanAllowed(player, careLoan, true)
         end) then return false end
     elseif not guardStorageAction(player, action, source) then return false end
     ISTimedActionQueue.add(action)
@@ -493,7 +544,7 @@ function Supplies.returnAction(player, loan)
         local floor = loan.floor
         local action = ISDropWorldItemAction:new(player, item, floor.square, floor.x, floor.y, floor.z, 0, false)
         action.isPlaceItem = true
-        if loan.pain and not guardPainLoanAction(action, painReturnAllowed) then
+        if loan.pain and not guardCareLoanAction(action, painReturnAllowed) then
             return nil, "Borrowed supplies stay with you because their original floor square cannot be accessed."
         end
         if not action:isValid() then return nil, "Borrowed supplies stay with you because the original floor square cannot accept them." end
@@ -510,7 +561,7 @@ function Supplies.returnAction(player, loan)
         return nil, "Borrowed supplies stay with you because their original container is full."
     end
     local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, item:getContainer(), origin)
-    local guarded = not action.ignoreAction and ((loan.pain and guardPainLoanAction(action, painReturnAllowed))
+    local guarded = not action.ignoreAction and ((loan.pain and guardCareLoanAction(action, painReturnAllowed))
         or (not loan.pain and guardStorageAction(player, action, origin)))
     if not guarded or not action:isValid() then
         return nil, "Borrowed supplies stay with you because the original container cannot currently accept them."

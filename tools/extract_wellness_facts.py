@@ -41,17 +41,18 @@ def derive(root):
 
     block = exact(r"local function getMeditationLevelTable\(\)\s+return \{\s*(.*?)\n\s*\}\s*end",
                   mind, "Mindfulness duration table", re.S)
-    times = {}
-    row = r'\s*\{lvl=(\d+),trait="(disciplined|none)",duration=(\d+),effect=\d+(?:\.\d+)?\},\s*'
+    times, effects = {}, {}
+    row = r'\s*\{lvl=(\d+),trait="(disciplined|none)",duration=(\d+),effect=([\d.]+)\},\s*'
     for line in block.splitlines():
         match = re.fullmatch(row, line)
         if not match:
             raise ValueError("Unrecognized Mindfulness row")
-        rank, trait, minutes = match.groups()
+        rank, trait, minutes, effect = match.groups()
         key = (int(rank), trait)
         if key in times or not 0 < int(minutes) <= 1000:
             raise ValueError("Duplicate or invalid Mindfulness duration")
         times[key] = int(minutes)
+        effects[key] = effect
     if set(times) != {(rank, trait) for rank in range(3, 11) for trait in ("none", "disciplined")}:
         raise ValueError("Incomplete Mindfulness durations")
     first = 1 + int(exact(r"if \(self\.skillLevel > (\d+)\) and \(self\.mindfulState < 0\.6\) then",
@@ -65,20 +66,47 @@ def derive(root):
     duration = exact(r"if durationSO == 1 then\s+MindfulDurationMultiplier = ([\d.]+)\s+"
                      r"elseif durationSO == 3 then\s+MindfulDurationMultiplier = ([\d.]+)",
                      mind, "sandbox duration mode")
+    effect_scale = exact(r"if effectSO == 1 then\s+EffectMultiplier = ([\d.]+)\s+"
+                         r"elseif effectSO == 3 then\s+EffectMultiplier = ([\d.]+)",
+                         mind, "sandbox Mindfulness effect mode")
+    default_heal = exact(r"HealPercentage = \(SandboxVars\.Meditation\.HealFactor or (\d+)\)", mind, "Mindfulness default heal factor")
+    disc_heal, usual_heal = exact(
+        r"DISCIPLINED\) then\s+HealPercentage = HealPercentage\*(\d+)\s+"
+        r"elseif thisPlayer:getPerkLevel\(Perks.Meditation\) == 10 then\s+HealPercentage = HealPercentage\*(\d+)",
+        mind, "Perfect Mindfulness heal multipliers")
+    mind_stress = exact(r'moodList\["Stress"\] = \{-([\d.]+)\*MeditationStrengthFactor', mind, "Mindfulness stress")
+    mind_panic = exact(r'moodList\["Panic"\] = \{-([\d.]+)\*MeditationStrengthFactor', mind, "Mindfulness panic")
+    if float(mind_stress) * 100 != float(mind_panic):
+        raise ValueError("Mindfulness stress and panic no longer share a normalized rate")
+    mind_pain = exact(r'moodList\["Pain"\] = \{-([\d.]+)\*MeditationStrengthFactor', mind, "Strong pain relief")
+    mind_hunger, hunger_decimals = exact(
+        r'moodList\["Hunger"\] = \{LSUtil\.round\(-([\d.]+)\*MeditationStrengthFactor,(\d+)\)',
+        mind, "Strong hunger relief")
+    exact(r"local varResult = (\(Mind\+Trait\+Level\+1\)\*varMult\*StrengthMultiplier)", meditation, "Meditation effect result")
+    disc, couch = exact(r"if character:hasTrait\(CharacterTrait.DISCIPLINED\) then\s+Trait = ([\d.]+)\s+"
+                        r"elseif character:hasTrait\(CharacterTrait.COUCHPOTATO\) then\s+Trait = (-[\d.]+)",
+                        meditation, "Meditation trait effects")
+    divisor = exact(r"Level = \(\(tonumber\(PlayerMeditationLevel\)\)/([\d.]+)\)\+1", meditation, "Meditation level effect")
+    calm_boredom, calm_buffer = exact(r"\n\s*if currentBoredom <= (\d+) then\s+Aversion = Aversion-\d+\s+Buffer = (\d+)",
+                                    meditation, "Meditation low-boredom buffer")
+    calm_stress = exact(r"stressChange = ([\d.]+)\*\(varResult \+ Buffer\)", meditation, "Meditation stress relief")
+    med_strength = exact(r"if multiplierSO == 1 then\s+sM = ([\d.]+)\s+elseif multiplierSO == 3 then\s+sM = ([\d.]+)"
+                         r"\s+elseif multiplierSO == 4 then\s+sM = ([\d.]+)", meditation, "sandbox Meditation strength")
 
     block = exact(r"local function getYogaActionValues\(level\).*?local t = \{\s*(.*?)\n\s*\}",
                   menu, "Yoga rank table", re.S)
-    sequences = {}
-    row = r'\s*l(\d+) = \{"(Beginner|Intermediate|Advanced|Master)",\d+,(\d+),(\d+)\},\s*'
+    sequences, fall_base = {}, {}
+    row = r'\s*l(\d+) = \{"(Beginner|Intermediate|Advanced|Master)",(\d+),(\d+),(\d+)\},\s*'
     for line in block.splitlines():
         match = re.fullmatch(row, line)
         if not match:
             raise ValueError("Unrecognized Yoga row")
-        rank, group, efficiency, poses = match.groups()
+        rank, group, base, efficiency, poses = match.groups()
         rank, efficiency, poses = int(rank), int(efficiency), int(poses)
         if rank in sequences or not (0 < efficiency <= 6 and 0 < poses <= 20):
             raise ValueError("Duplicate or invalid Yoga rank")
         sequences[rank] = (group, efficiency, poses)
+        fall_base[rank] = int(base)
     if set(sequences) != set(range(11)):
         raise ValueError("Incomplete Yoga ranks")
     step, cap = map(int, exact(r"ZombRand\(100\)\+1\+(\d+)\*self\.skillLevel <= math\.min\((\d+),",
@@ -86,6 +114,19 @@ def derive(root):
     if not 0 < step <= cap <= 100:
         raise ValueError("Unrecognized Yoga fall calculation")
     no_fall_rank = (cap + step - 1) // step
+    def enum_values(name):
+        contents = exact(rf"local function {name}\(val\).*?local t = \{{\s*(.*?)\s*\}}\s*return t\[val\] or 1",
+                         yoga, name, re.S)
+        # The real `or 1` in this version also replaces the false entry.
+        entries = re.findall(r"\[(\d+)\] = (false|[\d.]+),", contents)
+        if [int(key) for key, _ in entries] != list(range(1, len(entries)+1)) or not entries:
+            raise ValueError(f"Incomplete enum: {name}")
+        return ",".join("1" if value == "false" else value for _, value in entries)
+
+    yoga_stress = exact(r'\["Stress"\] = \{-([\d.]+)\*self.bonus', yoga, "Yoga stress")
+    yoga_pain = exact(r'\["Pain"\] = \{-([\d.]+)\*self.bonus\*self.sandboxMult', yoga, "Yoga pain")
+    yoga_stiffness = exact(r'LSUtil\.reduceAllStiffness\(self.character, ([\d.]+)\*self.bonus\*self.sandboxMult\)',
+                           yoga, "Yoga stiffness")
 
     # Check the fresh grant, actual cooldown registration and displayed Moodle floor.
     # Do not reduce timing to decimal closed-form math: native Lua repeatedly
@@ -148,23 +189,30 @@ def derive(root):
     pool_text = exact(r"local function getActionTable\(playerSkill, actionTable\)\s*local t = \{\s*(.*?)"
                       r"\n\s*\}\s*for _, v in pairs\(t\) do\s*if v.lvl <= playerSkill",
                       yoga, "Yoga pose pool ladder", re.S)
-    poses, seen_poses = {}, set()
+    interaction_table = exact(r"local function getInteractionArgs\(action\)\s*local t = \{\s*(.*?)\n\s*\}\s*return t\[action\]",
+                              yoga, "Yoga pose roll inputs", re.S)
+    pose_rolls = {name: int(chance) for name, chance in re.findall(
+        r"^\s*(\w+) = \{[^\n]*?fail=(\d+),", interaction_table, re.M)}
+    poses, seen_poses, roll_at_unlock = {}, set(), {}
     for line in pool_text.splitlines():
         row = re.fullmatch(r'\s*\{lvl=(\d+),anims=\{("[\w]+"(?:,"[\w]+")*)\}\},\s*', line)
         if not row or int(row[1]) in poses:
             raise ValueError("Unrecognized Yoga pose pool row")
         names = re.findall(r'"(\w+)"', row[2])
-        if len(set(names)) != len(names) or seen_poses.intersection(names):
+        if len(set(names)) != len(names) or seen_poses.intersection(names) or set(names) - pose_rolls.keys():
             raise ValueError("Unexpected duplicate Yoga pose")
         seen_poses.update(names)
         poses[int(row[1])] = len(names)
+        roll_at_unlock[int(row[1])] = max(pose_rolls[name] for name in names)
     if set(poses) != {0} | {r for r in range(1, 11) if sequences[r][0] != sequences[r - 1][0]}:
         raise ValueError("Yoga pose ladder and ranks do not agree")
+    hardest_roll = {rank: base + max(chance for unlock, chance in roll_at_unlock.items() if unlock <= rank)
+                    for rank, base in fall_base.items()}
     exact(r"if self.animVars.parent or self.poseCount < (self.poseLimit) then", yoga, "nominal pose target")
     exact(r"function LSYogaAction:reduceXP\(\)[^\n]*\n\s*if (self.skillLevel >= 10 or self.gainedXP == 0) then return",
           yoga, "Yoga cancellation penalty")
-    cap_text = exact(r"local function getLevelLimit\(key\)\s*local t = \{\s*(.*?)\n\s*\}\s*return t\[key\]",
-                     yoga, "Yoga completion bonus limits", re.S)
+    cap_text, capped_bonus = exact(r"local function getLevelLimit\(key\)\s*local t = \{\s*(.*?)\n\s*\}\s*return t\[key\] or (\d+)",
+                                   yoga, "Yoga completion bonus limits", re.S)
     bonus = {}
     for line in cap_text.splitlines():
         row = re.fullmatch(r"\s*\[(\d+)\]\s*=\s*(\d+),\s*", line)
@@ -173,7 +221,9 @@ def derive(root):
         bonus[int(row[1])] = int(row[2])
     if set(bonus) != set(range(10)) or min(bonus.values()) <= 0:
         raise ValueError("Incomplete Yoga completion bonus")
-    exact(r"local limit = getLevelLimit\(self.skillLevel\)\s*bonusXP = (math.min\(limit, bonusXP\))",
+    bonus[10] = int(capped_bonus)
+    exact(r"local limit = getLevelLimit\(self.skillLevel\)\s*bonusXP = (math.min\(limit, bonusXP\))\s*"
+          r"if self.skillLevel < 10 then",
           yoga, "Yoga finish bonus bound")
 
     def lua_dict(values):
@@ -189,9 +239,20 @@ def derive(root):
     ]
     for rank in range(3, 11):
         output.append(f'        [{rank}]={{{times[rank,"none"]},{times[rank,"disciplined"]}}},')
-    output += ["    },", f"    meditationLengths={lua_dict(lengths)},",
+    output += ["    },", f"    mindfulnessEffectScale={{{effect_scale[0]},1,{effect_scale[1]}}},", "    mindfulnessEffect={"]
+    for rank in range(3, 11):
+        output.append(f'        [{rank}]={{{effects[rank,"none"]},{effects[rank,"disciplined"]}}},')
+    output += ["    },", f"    mindfulnessRelief={{{mind_panic},{mind_pain},{mind_hunger},{hunger_decimals}}},",
+               f"    mindfulnessHealing={{{default_heal},{usual_heal},{disc_heal}}},",
+               f"    meditationStrengthScale={{{med_strength[0]},1,{med_strength[1]},{med_strength[2]}}},",
+               f"    meditationEarlyStress={{{disc},{couch},{divisor},{calm_boredom},{calm_buffer},{calm_stress}}},",
+               f"    meditationLengths={lua_dict(lengths)},",
                f"    noFallRank={no_fall_rank},", "    zenTickMinutes=10,",
                f"    zenTicks={lua_dict(zen_ticks)},", f"    yogaNewPoses={lua_dict(poses)},",
+               f"    yogaFallRoll={lua_dict(hardest_roll)},", f"    yogaFallRankOffset={step},", f"    yogaFallCap={cap},",
+               "    yogaFallScale={" + enum_values("getYogaSandboxFailChance") + "},",
+               "    yogaStrengthScale={" + enum_values("getYogaSandboxMult") + "},",
+               f"    yogaRelief={{{yoga_stress},{yoga_pain},{yoga_stiffness}}},",
                f"    yogaCompletionCap={lua_dict(bonus)},", "    yoga={"]
     for rank, (group, efficiency, poses) in sorted(sequences.items()):
         output.append(f'        [{rank}]={{"{group}",{efficiency},{poses}}},')

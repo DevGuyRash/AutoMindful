@@ -56,6 +56,41 @@ loadUpstream("client/Helper/HSMng.lua")
 loadUpstream("shared/TimedActions/LSMeditateAction.lua")
 loadUpstream("shared/TimedActions/LSYogaAction.lua")
 loadUpstream("client/ISMeditation/ZenWellnessContextMenu.lua")
+-- Run the installed, unmodified gate methods before the progression replay.
+-- Stats, player, and inventory stay explicit doubles here, not live gameplay.
+do
+    local p = T.playerNew()
+    function p:getMaxWeight() error("Yoga/Meditation must not read player carry capacity to admit") end
+    function p:getInventoryWeight() error("Yoga/Meditation must not read inventory weight to admit") end
+    local square = p:getSquare()
+    function square:getObjects() return T.list({}) end
+    p.values.PAIN, p.values.STRESS, p.values.BOREDOM = 60, 1, 60
+    local yoga, med = ZenWellnessContextMenu.Options.Yoga, ZenWellnessContextMenu.Options.Meditation
+    local oldExhaustion, oldMat, oldEmbarrassment = SandboxVars.Yoga.Exhaustion, SandboxVars.Yoga.RequiresMat, SandboxVars.Yoga.Embarrassment
+    SandboxVars.Yoga.RequiresMat, SandboxVars.Yoga.Embarrassment = false, 1
+    for _,rule in ipairs({{1,0},{2,.8},{3,.6},{4,.3}}) do
+        SandboxVars.Yoga.Exhaustion = rule[1]
+        p.values.ENDURANCE = rule[2]
+        local blocked, reason = yoga.canPerform(p,"",nil)
+        assert(blocked == (rule[1] ~= 1) and (not blocked or reason == getText("Tooltip_Action_Exhausted")), "Installed Lifestyle Yoga boundary")
+        p.values.ENDURANCE = rule[2]+.01
+        assert(not yoga.canPerform(p,"",nil), "Pain/stress/boredom do not impose another Yoga start gate")
+    end
+    SandboxVars.Yoga.RequiresMat = true
+    local blocked, reason = yoga.canPerform(p,"",nil)
+    assert(blocked and reason == getText("Tooltip_Yoga_MissingMat"))
+    SandboxVars.Yoga.RequiresMat, SandboxVars.Yoga.Embarrassment = false, 2
+    p.data.LSMoodles.Embarrassed.Level = 1
+    blocked, reason = yoga.canPerform(p,"",nil)
+    assert(blocked and reason == getText("ContextMenu_Embarrassed"))
+    SandboxVars.Yoga.Exhaustion, SandboxVars.Yoga.RequiresMat, SandboxVars.Yoga.Embarrassment = oldExhaustion, oldMat, oldEmbarrassment
+    p.values.ENDURANCE, p.values.BOREDOM = 0, 30
+    assert(not med.canPerform(p,"",nil), "Meditation allows exact boredom 30 and ignores pain/stress/endurance at admission")
+    p.values.BOREDOM = 30.01
+    blocked, reason = med.canPerform(p,"",nil)
+    assert(blocked and reason == " <RED>" .. getText("ContextMenu_Meditate_Bored"))
+    print("UPSTREAM PASS licensed Lifestyle Yoga endurance/mat/embarrassment and Meditation boredom admission")
+end
 local rawPerks = readReference("perks.txt")
 local meditation = assert(rawPerks:match("perk%s+Meditation%s*{(.-)}"),"Native Meditation perk metadata missing")
 local totals, total = {}, 0
@@ -85,6 +120,30 @@ function sendClientCommand(player, module, command, args)
         player.xp=player.xp+args[2]
         while player.meditation < 10 and player.xp >= totals[player.meditation+1] do player.meditation=player.meditation+1 end
     end
+end
+-- Drive the installed action implementations' own forceStop paths. Only the
+-- player, native clock/animation and audio output below are modeled.
+function p:getDescriptor() return {isFemale=function() return false end} end
+p.data.PlayerVoice=0
+package.preload["TimedActions/PlayerVoiceTracks"]=function() return loadUpstream("client/TimedActions/PlayerVoiceTracks.lua") end
+for _,v in ipairs({{"both","LSMeditateAction"},{"both","LSYogaAction"},{"meditation","LSMeditateAction"},{"yoga","LSYogaAction"}}) do
+    local mode,target=v[1],v[2]; local med=target=="LSMeditateAction"
+    p.sitting=med; p.values.BOREDOM=med and 0 or 10
+    assert(C.start(p,mode,false)); T.tick(p,false)
+    local q=ISTimedActionQueue.getTimedActionQueue(p); local original=q.queue[1]
+    assert(original and original.Type==target,"Upstream did not queue "..target)
+    original:waitToStart(); original:start(); original.testStarted=true
+    local cards=#p.cards
+    if med then p.data.IsMeditationDisturbed=true; p.values.BOREDOM=10
+    else p.sitting=true; p.values.BOREDOM=0 end
+    original:update()
+    assert(original.autoMindfulStopped and not original.autoMindfulFinished,"Upstream did not cancel its action")
+    if med then assert(not p.data.IsMeditationDisturbed,"Native stop did not clear its disturbance") else p.sitting=false end
+    for i=1,8 do T.tick(p,false); if q.queue[1] then break end end
+    assert(q.queue[1] and q.queue[1]~=original and q.queue[1].Type==target
+        and C.status(p).active and C.status(p).mode==mode and #p.cards==cards,"Resume failed "..mode.."/"..target)
+    C.stop(p,"test cleanup")
+    print("UPSTREAM PASS actual Lifestyle cancellation and same-leg recovery: "..mode.."/"..target)
 end
 for i=1,32 do T.add(p.inventory,T.item("Literature")) end
 p.values.BOREDOM=35

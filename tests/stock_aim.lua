@@ -203,6 +203,99 @@ test("raw UI interruption holds then resumes without terminal toast",function()
     assert(C.status(p).active and #p.cards==0 and p.nativeHead and p.nativeHead.lua.Type=="Meditation","Raw gesture did not resume")
     C.stop(p,"test cleanup")
 end)
+-- Do not confuse a vanished training action with an explicit user Stop.
+-- Exercise stock base:stop (which normally resets the entire queue) with both
+-- pre-existing and callback-appended work and the intervening JVM clear.
+for _,kind in ipairs({"Meditation","Yoga"}) do
+    for _,mode in ipairs({kind:lower(),"both"}) do
+        test("native unexplained stop hands both waiters over exactly once and resumes "..mode.."/"..kind,function()
+            local p=player(); local isMeditation=kind=="Meditation"; p.sitting=isMeditation
+            p.values.BOREDOM=isMeditation and 0 or 10
+            assert(C.start(p,mode,true)); step(p)
+            local q=ISTimedActionQueue.getTimedActionQueue(p); local own=q.queue[1]
+            assert(own and own.Type==kind and own.starts==1)
+            local first,second=T.action(p,"UnrecognizedPlayerAction"),T.action(p,"ISReadMapItem")
+            ISTimedActionQueue.add(first); own.onStop=function() ISTimedActionQueue.add(second) end
+            p:StopAllActionQueue(); assert(not first.starts and not second.starts)
+            q:tick()
+            assert(q.queue[1]==first and q.queue[2]==second and #q.queue==2 and first.starts==1)
+            assert(not second.starts and not first.cancels and not second.cancels and own.stops==1)
+            step(p); assert(C.status(p).active and #p.cards==0 and p.nativeHead==first.action)
+            p.values.BOREDOM=isMeditation and 10 or 0
+            finish(p,first); finish(p,second); step(p,5)
+            assert(C.status(p).active and C.status(p).mode==mode and #p.cards==0)
+            assert(q.queue[1]~=own and q.queue[1].Type==kind and q.queue[1].starts==1 and p.nativeHead==q.queue[1].action)
+            C.stop(p,"test cleanup")
+        end)
+    end
+end
+for _,control in ipairs({"running","sprinting","cancelInput","attacking","zombies"}) do
+    test("between-poll hard stop remains terminal after "..control.." clears",function()
+        local p=player(); local old=begin(p)
+        local other=T.action(p,"UnknownWorkout")
+        old.onStop=function() ISTimedActionQueue.add(other) end
+        p[control]=control=="zombies" and 1 or true
+        p.rawMovementInput=control=="running" or control=="sprinting"
+        p:StopAllActionQueue(); p[control]=nil; p.rawMovementInput=nil
+        step(p,4)
+        assert(not C.status(p).active and #p.cards==1 and p.nativeHead==other.action)
+        assert(other.starts==1 and not other.stops and not other.cancels and old.stops==1)
+        finish(p,other); step(p,7); assert(not C.status(p).active and #p.cards==1 and not p.nativeHead)
+    end)
+end
+for _,control in ipairs({"running","sprinting"}) do
+    test(control.." flag without raw movement cannot disarm an owned head or make a native loss terminal",function()
+        local p=player(); local old=begin(p); local q=ISTimedActionQueue.getTimedActionQueue(p)
+        local other=T.action(p,"UnrelatedAction")
+        p[control]=true
+        step(p); assert(q.queue[1]==old and not old.stops and C.status(p).active and #p.cards==0)
+        ISTimedActionQueue.add(other)
+        p:StopAllActionQueue(); p[control]=nil
+        q:tick(); step(p)
+        assert(C.status(p).active and #p.cards==0 and q.queue[1]==other and other.starts==1
+            and not other.cancels and not other.stops and old.stops==1)
+        finish(p,other); step(p,5)
+        assert(C.status(p).active and q.queue[1]~=old and q.queue[1].Type=="Meditation" and #p.cards==0)
+        C.stop(p,"test cleanup")
+    end)
+end
+test("Escape on an inspection that opened between polls is a pause, not a player Stop",function()
+    local p=player(); begin(p)
+    local prev=ISWorldMap_instance
+    ISWorldMap_instance={playerNum=p:getPlayerNum(),isVisible=function() return true end}
+    p.cancelInput=true; p:StopAllActionQueue(); ISWorldMap_instance=prev
+    step(p); p.cancelInput=false; step(p,5)
+    assert(C.status(p).active and C.status(p).phase=="meditation" and #p.cards==0)
+    C.stop(p,"test cleanup")
+end)
+test("a proven undrained canceled owned handle disarms without stealing a real queued action",function()
+    local p=player(); local own=begin(p)
+    local q=ISTimedActionQueue.getTimedActionQueue(p)
+    local first=T.action(p,"UnrelatedWorkout"); ISTimedActionQueue.add(first)
+    own:stop() -- simulated native stop enters Lua, but does not release its Java handle
+    local handle=own.action
+    assert(own.stops==1 and p.nativeHead==handle and not first.starts)
+    T.now=T.now+4999; C.update(p)
+    assert(C.status(p).active and not first.starts and not first.cancels)
+    T.now=T.now+1; C.update(p)
+    assert(not C.status(p).active and #p.cards==1 and q.queue[2]==first and p.nativeHead==handle and not first.starts and own.stops==1)
+    p.nativeHead=nil; q:tick(); step(p,3)
+    assert(q.queue[1]==first and #q.queue==1 and first.starts==1 and not first.cancels and not first.stops)
+    finish(p,first); step(p,7)
+    assert(not C.status(p).active and #p.cards==1 and not p.nativeHead)
+end)
+test("a genuinely unrelated native handle during a held handoff has no timeout and cannot be stolen",function()
+    local p=player(); local own=begin(p); local q=ISTimedActionQueue.getTimedActionQueue(p)
+    local first=T.action(p,"AnotherUnknownAction"); ISTimedActionQueue.add(first)
+    own:stop(); local foreignHandle={}; p.nativeHead=foreignHandle
+    for _=1,3 do T.now=T.now+60000; C.update(p); q:tick() end
+    assert(C.status(p).active and #p.cards==0 and q.queue[2]==first and p.nativeHead==foreignHandle and not first.starts)
+    p.nativeHead=nil; q:tick(); step(p)
+    assert(p.nativeHead==first.action and first.starts==1 and not first.cancels and not first.stops)
+    finish(p,first); step(p,6)
+    assert(C.status(p).active and p.nativeHead.lua.Type=="Meditation" and #p.cards==0)
+    C.stop(p,"test cleanup")
+end)
 print("stock aim/controller integration: "..passed.." passed (native/player boundaries doubled)")
 
 assert(failed==0,tostring(failed).." stock aim integration regression(s)")

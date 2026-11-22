@@ -84,7 +84,7 @@ local function decorate(menu, option, player, mode)
     fillIcon(option, mode == "yoga" and "Mat" or "Bowl")
     local check = submenu:addOptionOnTop("Check supplies", player, UI.checkFor)
     fillIcon(check, "Supplies")
-    tooltip(submenu, check, "Check supplies", "Open the live inventory and nearby supply report. This does not interrupt training or collect items immediately.")
+    tooltip(submenu, check, "Check supplies", "Open the live inventory and nearby supply report. This does not interrupt your current mode or collect items immediately.")
     local train = submenu:addOptionOnTop(mode == "yoga" and "Train yoga" or "Train meditation", player, UI.startTraining, mode)
     fillIcon(train, mode == "yoga" and "Yoga" or "Meditate")
     local status = Controller.status(player)
@@ -98,16 +98,18 @@ local function decorate(menu, option, player, mode)
             or "Uses your saved adjacent-supply setting. The window can stay closed.")
     tooltip(submenu, train, "Automatic " .. mode, description)
     if mode == "meditation" then
-        local endurance = submenu:addOptionOnTop("Meditate to Full Endurance", player, UI.startTraining, "endurance")
-        fillIcon(endurance, "Endurance")
-        endurance.notAvailable = status.active
-        tooltip(submenu, endurance, "Meditate to Full Endurance", status.active
-            and "Stop the current loop before starting another."
-            or "Meditate until endurance is full, then stop. No yoga, supply use or scouting.")
+        local endurance = submenu:addOptionOnTop("Recover to Full Endurance", player, UI.startTraining, "recoverEndurance")
+        if endurance then
+            fillIcon(endurance, "Endurance")
+            endurance.notAvailable = status.active
+            tooltip(submenu, endurance, "Recover to Full Endurance", status.active
+                and "Use Stop All before changing AutoMindful modes."
+                or "Run Recovery until your endurance is full, then stop. Useful care and your supply settings still apply.")
+        end
     end
     local open = submenu:addOptionOnTop("Open AutoMindful", player, UI.open)
     fillIcon(open, "Open")
-    tooltip(submenu, open, "AutoMindful window", "Open training, both-skill mode, live supplies, and collection settings. Closing the window keeps the training loop running.")
+    tooltip(submenu, open, "AutoMindful window", "Open Recovery, training, supplies and collection settings. Closing the window keeps the current mode running.")
     menu:addSubMenu(option, submenu)
     option.onSelect, option.target, option.notAvailable = nil, nil, false
     for index = 1, 10 do option["param" .. index] = nil end
@@ -176,7 +178,8 @@ function Context.generalMenu(playerIndex, context, worldobjects, test)
     if not player or player:isDead() then return end
     local status = Controller.status(player)
     if not Options.generalMenu() and not status.active and (status.pendingReturns or 0) == 0 then return end
-    local label = status.active and "AutoMindful (running)" or "AutoMindful"
+    local recovering = status.mode == "recovery" or status.mode == "recoverEndurance"
+    local label = status.active and (recovering and "AutoMindful (recovery)" or "AutoMindful (running)") or "AutoMindful"
     for _, existing in ipairs(context.options) do
         if existing.autoMindfulGeneral and existing.target == player then
             if existing.autoMindfulIconKey then fillIcon(existing, existing.autoMindfulIconKey) end
@@ -191,7 +194,7 @@ function Context.generalMenu(playerIndex, context, worldobjects, test)
     if not option then return end
     option.autoMindfulGeneral = true
     fillIcon(option, "Mindful")
-    tooltip(context, option, "AutoMindful", "Open the training window and live supplies. Training continues while the window is closed.")
+    tooltip(context, option, "AutoMindful", "Open Recovery, training and live supplies. The current mode continues while the window is closed.")
 end
 
 Context.install()

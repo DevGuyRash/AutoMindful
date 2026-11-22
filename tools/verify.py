@@ -54,7 +54,14 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     if reference_root:
         command.append(str(reference_root))
     checks = [check(evidence, "portable-contracts", command)]
-    for name, script in (("ui-contracts", "ui.lua"), ("progress-contracts", "progress.lua"),
+    for name, script in (("scout-memory", "scout_memory.lua"),
+                         ("lifestyle-care-journey", "lifestyle_care_journey.lua"),
+                         ("lifestyle-restroom", "restroom_care.lua"), ("lifestyle-hygiene", "hygiene_care.lua"),
+                         ("ui-contracts", "ui.lua"), ("training-cycle", "training_cycle.lua"),
+                         ("training-scheduler-integration", "training_scheduler_integration.lua"),
+                         ("practice-care", "practice_care.lua"), ("practice-care-integration", "practice_care_integration.lua"),
+                         ("recovery-mode", "recovery_mode.lua"), ("walking-handoff", "walking_handoff.lua"),
+                         ("progress-contracts", "progress.lua"),
                          ("skills-pane-contracts", "skills_pane.lua"), ("yoga-bar-contracts", "yoga_bar.lua"),
                          ("wellness-guide-contracts", "wellness.lua"),
                          ("completion-hud-contracts", "completion_hud.lua"),
@@ -66,7 +73,9 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
         suite = [lua, "tests/" + script]
         if game and script in ("water_sources.lua", "fluid_transfers.lua"):
             suite.append(str(game.expanduser().resolve() / "media"))
-        elif reference_root and script == "progress.lua":
+        elif game and reference_root and script == "hygiene_care.lua":
+            suite.extend((str(game.expanduser().resolve() / "media"), str(reference_root)))
+        elif reference_root and script in ("progress.lua", "restroom_care.lua", "training_scheduler_integration.lua"):
             suite.append(str(reference_root))
         checks.append(check(evidence, name, suite))
     checks.append(check(evidence, "release-contracts", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_release.py"]))
@@ -78,6 +87,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
         checks.append(check(evidence, "stock-queue-kahlua-lookup",
                             [lua, "tests/stock_queue.lua", str(game / "media"), "--kahlua-queue-lookup"]))
         checks.append(check(evidence, "stock-native-aim-stop", [lua, "tests/stock_aim.lua", str(game / "media")]))
+        checks.append(check(evidence, "stock-scout-route-outcome", [lua, "tests/stock_route_outcome.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-context-icons", [lua, "tests/stock_context_icons.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-pain-action", [lua, "tests/stock_pain.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-skills-pane", [lua, "tests/stock_skills_pane.lua", str(game / "media")]))
@@ -92,7 +102,17 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
             if checks[-1]["passed"]:
                 env = {key: value for key, value in os.environ.items() if key not in {
                     "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "JAVA_OPTS", "CLASSPATH", "LD_PRELOAD"}}
-                for name, script in (("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"),
+                for name, script in (("native-scout-memory", "scout_memory.lua"),
+                                     ("native-stock-scout-route-outcome", "stock_route_outcome.lua"),
+                                     ("native-lifestyle-care-journey", "lifestyle_care_journey.lua"),
+                                     ("native-lifestyle-restroom", "restroom_care.lua"),
+                                     ("native-lifestyle-stock-wash", "stock_hygiene.lua"),
+                                     ("native-lifestyle-hygiene", "lifestyle_hygiene.lua"),
+                                     ("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"),
+                                     ("native-training-cycle", "training_cycle.lua"),
+                                     ("native-training-scheduler-integration", "training_scheduler_integration.lua"),
+                                     ("native-practice-care", "practice_care.lua"), ("native-practice-care-integration", "practice_care_integration.lua"),
+                                     ("native-recovery-mode", "recovery_mode.lua"), ("native-walking-handoff", "walking_handoff.lua"),
                                      ("native-skills-pane", "skills_pane.lua"), ("native-yoga-bar", "yoga_bar.lua"),
                                      ("native-wellness-guide", "wellness.lua"),
                                      ("native-stock-skills-pane", "stock_skills_pane.lua"),
@@ -108,7 +128,9 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-water-source-contracts", "water_sources.lua"),
                                      ("native-fluid-transfer-contracts", "fluid_transfers.lua"),
                                      ("native-nearby-contracts", "nearby.lua")):
-                    suite_reference = game / "media" if script in ("water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "stock_aim.lua", "stock_pain.lua", "stock_context_icons.lua", "stock_skills_pane.lua") else reference_root
+                    if script == "lifestyle_hygiene.lua" and not reference_root:
+                        continue
+                    suite_reference = game / "media" if script in ("stock_route_outcome.lua", "stock_hygiene.lua", "water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "stock_aim.lua", "stock_pain.lua", "stock_context_icons.lua", "stock_skills_pane.lua") else reference_root
                     command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),
                                "KahluaCheck", str(ROOT), str(suite_reference) if suite_reference else "-", script]
                     checks.append(check(evidence, name, command, cwd=game, env=env))

@@ -109,7 +109,8 @@ neighbor.getWidth=function() return 100 end
 local fallback=Bar:new(12,80,0,0,1,nil,pane,neighbor)
 assert(fallback.h==15 and fallback.w==190 and fallback.cellStride==19,"Reject undersized native geometry and use current formula")
 
--- Tooltips use the hovered rank's source text, not the attained level or a hand-maintained table.
+-- Tooltips follow the hovered rank. Unknown providers keep their localized
+-- notes; verified upstream facts augment the unmodified XP status.
 local locale = {
     UI_LSHS_Yoga_1 = "Setup flavor, not an effect. <LINE> o Begins a short Zen state <LINE>",
     UI_LSHS_Yoga_3 = "<RGB:1,1,1>o Intermediate poses <LINE> o Longer Zen <LINE> o Intermediate poses <LINE><IMAGE:ignored.png>",
@@ -158,15 +159,19 @@ expect(9,"Yoga Level 10 <LINE> Locked <LINE><LINE> - Teach Yoga <LINE> Yoga XP s
 expect(1,"Yoga Level 2 <LINE> Locked <LINE><LINE> Yoga XP setting: x1.75")
 data.LSMoodles.WasTaughtSkill.Value=.2
 checkedVersion="0.4.0.3"
-expect(0,"Yoga Level 1 <LINE> 3 / 12 XP <LINE><LINE> - Begins a short Zen state <LINE> Yoga XP setting: x1.75 <LINE> Yoga lesson boost active")
+local verifiedRankOne="Yoga Level 1 <LINE> 3 / 12 XP <LINE><LINE> - Zen duration: locked to 20m-30m in-game after a successful finish"
+    .. " <LINE> - Completion bonus cap: 10 to 15 base XP <LINE> - Max fall chance per roll: 55% to 45%"
+    .. " <LINE> - Begins a short Zen state <LINE> Yoga XP setting: x1.75"
+expect(0,verifiedRankOne.." <LINE> Yoga lesson boost active")
 checkedVersion="0.4.9"
 expect(0,"Yoga Level 1 <LINE> 3 / 12 XP <LINE><LINE> - Begins a short Zen state <LINE> Yoga XP setting: x1.75")
 checkedVersion="0.4.0.3"
 data.WasTaughtLast="Meditation"
-expect(0,"Yoga Level 1 <LINE> 3 / 12 XP <LINE><LINE> - Begins a short Zen state <LINE> Yoga XP setting: x1.75")
+expect(0,verifiedRankOne)
 data.WasTaughtLast="Yoga"
 SandboxVars.Yoga.YogaXPMultiplier=1
-expect(1,"Yoga Level 2 <LINE> Locked <LINE><LINE> - Targets 3 poses per session (was 2); linked poses can extend it <LINE> Yoga lesson boost active")
+expect(1,"Yoga Level 2 <LINE> Locked <LINE><LINE> - Pose target per session: 2 to 3 <LINE> - Completion bonus cap: 15 to 20 base XP"
+    .. " <LINE> - Max fall chance per roll: 45% to 25% <LINE> Yoga lesson boost active")
 data.LSMoodles.WasTaughtSkill.Value=.19
 checkedVersion="unverified"
 SandboxVars.Yoga.YogaXPMultiplier=.5

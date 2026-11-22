@@ -1,4 +1,4 @@
-local ActionYield = {}
+local ActionYield = {cooperativeWindowMs=1250}
 
 local function advanceAfterStop(timed, head)
     -- This is a cancellation, not a door/action retrigger or a successful
@@ -24,7 +24,21 @@ function ActionYield.finishHandoff(player)
     if not hold then return true end
     if hold.inStop then return false end
     local unchanged = timed.queue[1] == hold.head and (not timed.current or timed.current == hold.head)
-    if unchanged and not player:getCharacterActions():isEmpty() then return false end
+    if unchanged and not player:getCharacterActions():isEmpty() then
+        if hold.timeout then
+            local now = getTimestampMs()
+            if now < hold.startedAt then hold.startedAt = now end
+            if now - hold.startedAt >= hold.timeout then
+                -- A failed home walk should not permanently replace stock
+                -- queue handling. Leave the still-active native handle and
+                -- waiting actions alone; never start a successor over it.
+                if timed.tick == hold.tick then timed.tick = hold.prior end
+                timed.autoMindfulHandoff = nil
+                hold.head.autoMindfulNativeHandoffExpired = true
+            end
+        end
+        return false
+    end
     if timed.tick == hold.tick then timed.tick = hold.prior end
     timed.autoMindfulHandoff = nil
     if unchanged then advanceAfterStop(timed, hold.head) end
@@ -46,6 +60,9 @@ local function deferHandoff(player, timed, head)
     if timed.autoMindfulHandoff then return timed.autoMindfulHandoff end
     local previous = timed.tick
     local hold = {head=head, prior=ownField(timed, "tick")}
+    if head.autoMindfulHandoffTimeout then
+        hold.timeout, hold.startedAt = head.autoMindfulHandoffTimeout, getTimestampMs()
+    end
     hold.tick = function(self)
         if ActionYield.finishHandoff(player) and previous then return previous(self) end
     end
@@ -75,7 +92,7 @@ local function removeOwnWaiters(timed, owner)
     end
 end
 
-function ActionYield.nativeAimStop(player, owner, head, original, ...)
+function ActionYield.nativeStop(player, owner, head, original, ...)
     local timed = ISTimedActionQueue.getTimedActionQueue(player)
     if timed.current ~= head or timed.queue[1] ~= head or timed:isCurrentActionAddingOtherActions() then
         return original(head, ...)
@@ -100,6 +117,7 @@ function ActionYield.release(player, owner)
         for _, action in ipairs(queue) do if action.autoMindfulOwner == owner then return false end end
         return true
     end
+    if head.autoMindfulNativeHandoffExpired then return true end
     local native = player:getCharacterActions()
     -- Never stop an unidentified native action, even if Lua still lists our old head.
     if timed.current ~= head or timed:isCurrentActionAddingOtherActions() or (not native:isEmpty() and
@@ -117,6 +135,16 @@ end
 
 function ActionYield.nativeBusy(player)
     return ISTimedActionQueue.isPlayerDoingAction(player) or player:hasTimedActions()
+end
+
+-- Match the actual started foreign Lua head to its native action before
+-- treating engine movement without player input as ordinary cooperative work.
+function ActionYield.foreignMoving(player,queue,owner)
+    local head=queue[1]
+    if not player:isPlayerMoving() or not head or head.autoMindfulOwner==owner
+            or not head.action or not head:isStarted() or head.autoMindfulStopped then return false end
+    local native=player:getCharacterActions()
+    return native:size()==1 and native:contains(head.action)
 end
 
 function ActionYield.occupied(player, queue, owner)

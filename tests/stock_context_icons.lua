@@ -18,7 +18,7 @@ function getPlayerContextMenu(n) if not roots[n] then roots[n]=newMenu(n) end;re
 function ISContextMenu:new() return newMenu() end
 local expected={["Open AutoMindful"]={"Open","Item_Clipboard"}, ["Check supplies"]={"Supplies","Item_Backpack"},
     ["Train yoga"]={"Yoga","Item_Dumbbell"},["Train meditation"]={"Meditate","Item_Candle"},
-    ["Meditate to Full Endurance"]={"Endurance","Moodle_Icon_Endurance"}}
+    ["Recover to Full Endurance"]={"Endurance","Moodle_Icon_Endurance"}}
 local mounted,misses,looseLoads=false,{},0
 function fileExists(key) return mounted and key:match("^media/ui/AutoMindful/%a+%.png$")~=nil end
 function getTexture(key)

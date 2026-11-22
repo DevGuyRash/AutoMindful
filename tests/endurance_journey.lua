@@ -12,6 +12,7 @@ end
 -- This journey uses the native Lifestyle timed-action type. The shared
 -- fixture uses display-name types in its independent level-training cases.
 local meditationType = "LSMeditateAction"
+LSMeditateAction = {Type=meditationType}
 function ZenWellnessContextMenu.Options.Meditation.onAction(_, _, player)
     if player.preparingMeditation then
         ISTimedActionQueue.add(T.action(player, "ISUnequipAction"))

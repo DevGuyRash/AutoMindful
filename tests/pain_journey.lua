@@ -92,31 +92,63 @@ end
 for _,mode in ipairs({"meditation","both"}) do
     local p=survivor(); local bottle=pill(p.inventory,5)
     local old=begin(p,mode,false)
-    p.values.PAIN=12; T.tick(p,false) -- above ten, but native moodle not yet present
+    p.values.PAIN=9.99; T.tick(p,false)
     assert(p.pillRequests==0 and queued(p)[1]==old)
-    rise(p)
+    p.values.PAIN,p.painMoodle=10,0 -- flat at the threshold, before its first moodle refresh
     local action=nextPill(p)
     assert(old.stopped and action.item==bottle and p.pillRequests==1 and C.status(p).phase=="paincare")
     action:perform()
     assert(p.doses==1 and bottle.uses==4)
     advance(p,function() return queued(p)[1] and (queued(p)[1].Type=="Meditation" or queued(p)[1].Type=="Yoga") end)
-    for i=1,15 do p.values.PAIN=16+i/10; T.tick(p,false) end
+    p.values.PAIN=18
+    for i=1,15 do T.tick(p,false) end
     assert(C.status(p).active and p.pillRequests==1 and bottle.uses==4 and #p.cards==0)
     C.stop(p)
 end
-print("PASS ordinary meditation and Both take exactly one native dose after rising pain and a real moodle")
+print("PASS meditation and Both take the first dose at a plateau of exactly 10 despite delayed moodle; no active-effect overlap")
+
+do
+    local p=survivor(); local bottle=pill(p.inventory,5)
+    begin(p,"meditation",false)
+    p.values.PAIN=10
+    nextPill(p):perform()
+    local function meditate() return queued(p)[1] and queued(p)[1].Type=="Meditation" end
+    advance(p,meditate)
+    p.values.PAIN,p.effect,p.painDelta=17,-0.25,.45
+    for i=1,3 do T.tick(p,false) end
+    assert(meditate() and p.doses==1 and p.pillRequests==1,"Expiry overshoot with a nonzero delta is still active")
+    p.values.PAIN,p.painDelta=10,0
+    for i=1,8 do T.tick(p,false) end
+    assert(meditate() and p.doses==1 and p.pillRequests==1,"Exactly 10 must not trigger a repeat")
+    p.values.PAIN=10.05
+    nextPill(p):perform()
+    assert(p.doses==2 and p.pillRequests==2 and bottle.uses==3)
+    advance(p,meditate)
+    for i=1,12 do T.tick(p,false) end
+    assert(p.pillRequests==2 and p.doses==2,"Never queue two doses while the second effect is active")
+    C.stop(p)
+end
+print("PASS continuous meditation re-doses only above 10 after the exact prior effect wears off")
 
 local yoga=survivor(); pill(yoga.inventory,5)
 local pose=begin(yoga,"yoga",false)
-rise(yoga)
+yoga.values.PAIN=10
+for i=1,4 do T.tick(yoga,false) end
 assert(queued(yoga)[1]==pose and not pose.stopped and yoga.pillRequests==0,
     "Pain care alone must never terminate a genuine native yoga pose")
 pose:perform()
 nextPill(yoga):perform()
 advance(yoga,function() return queued(yoga)[1] and queued(yoga)[1].Type=="Yoga" end)
 assert(yoga.doses==1 and C.status(yoga).active)
+local nextPose=queued(yoga)[1]
+yoga.values.PAIN,yoga.effect,yoga.painDelta=17,-.1,0
+for i=1,4 do T.tick(yoga,false) end
+assert(queued(yoga)[1]==nextPose and not nextPose.stopped and yoga.pillRequests==1)
+nextPose:perform()
+nextPill(yoga):perform()
+assert(yoga.doses==2 and yoga.pillRequests==2 and C.status(yoga).active)
 C.stop(yoga)
-print("PASS yoga finishes its pose, then may take exactly one dose before resuming")
+print("PASS yoga finishes each legal pose before a first or eligible repeat dose")
 
 for _,mode in ipairs({"empty","existing","intoxicated","nonstock"}) do
     local p=survivor()

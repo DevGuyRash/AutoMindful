@@ -23,6 +23,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /client/TimedActions/ISTimedActionQueue.lua
+            /client/TimedActions/WalkToTimedAction.lua
             /shared/TimedActions/ISBaseTimedAction.lua
             /shared/TimedActions/ISTakePillAction.lua
             /client/ISUI/ISInventoryPaneContextMenu.lua

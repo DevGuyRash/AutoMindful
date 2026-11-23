@@ -520,5 +520,64 @@ do
     print("PASS a natural interim finish does not count as a training turn and can resume only while exhausted")
 end
 
-print("SCHEDULER INTEGRATION PASS 19 cases; "..(installedGate and "installed Lifestyle predicates; " or "mock Lifestyle predicates; ")
+-- A new max-rank session practices when idle rather than waiting for a
+-- symptom, trains no capped-skill XP, and never owns another scheduler's turn.
+do
+    local p=T.playerNew()
+    p.meditation,p.yoga,p.noXP,p.sitting=10,{10,0,0},true,true
+    assert(C.start(p,"both",false))
+    assert(C.status(p).backgroundPractice==true)
+    local meditation=await(p,"Meditation")
+    p.hours=p.hours+7; step(p)
+    assert(queue(p)[1]==meditation and C.status(p).active,"A capped skill is not an XP watchdog failure")
+    local workout=T.action(p,"IndependentWorkoutAction")
+    ISTimedActionQueue.add(workout)
+    for _=1,6 do step(p) end
+    local native=workout.action
+    assertUntouchedFitness(p,workout,native)
+    workout:perform()
+    local nextMed=await(p,"Meditation")
+    assert(nextMed~=meditation and C.status(p).cycle.skills.meditation.completed==0)
+    nextMed:perform()
+    local yoga=await(p,"Yoga")
+    assert(C.status(p).cycle.lastCompleted=="meditation")
+    yoga:perform()
+    await(p,"Meditation")
+    assert(C.status(p).cycle.lastCompleted=="yoga")
+    C.stop(p)
+    print("PASS capped Both alternates without XP and yields to foreign work")
+end
+
+do
+    for _,mode in ipairs({"meditation","yoga"}) do
+        local p=T.playerNew()
+        p.noXP,p.sitting=true,mode=="meditation"
+        if mode=="meditation" then p.meditation=10 else p.yoga={10,0,0} end
+        local kind=mode=="meditation" and "Meditation" or "Yoga"
+        assert(C.start(p,mode,false) and C.status(p).backgroundPractice)
+        local first=await(p,kind)
+        first:perform()
+        assert(await(p,kind)~=first)
+        assert(count(p,kind=="Yoga" and "Meditation" or "Yoga")==0)
+        C.stop(p)
+    end
+    print("PASS capped single modes stay on their selected skill when no relief is needed")
+end
+
+do
+    local p=startYoga(yogaOnly(3,.24))
+    C.stop(p)
+    p.yoga={10,0,0}
+    assert(C.start(p,"yoga",false) and C.status(p).backgroundPractice)
+    local bridge=await(p,"Meditation")
+    step(p)
+    assert(queue(p)[1]==bridge,"Capped Yoga does not prematurely stop the endurance bridge")
+    p.values.ENDURANCE=.62
+    await(p,"Yoga",bridge)
+    assert(C.status(p).cycle.skills.meditation.completed==0)
+    C.stop(p)
+    print("PASS capped Yoga can still use Meditation only as an endurance bridge")
+end
+
+print("SCHEDULER INTEGRATION PASS 22 cases; "..(installedGate and "installed Lifestyle predicates; " or "mock Lifestyle predicates; ")
     .."explicit game-boundary doubles, not live player or XP evidence")

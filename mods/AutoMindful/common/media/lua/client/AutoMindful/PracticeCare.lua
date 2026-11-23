@@ -1,16 +1,24 @@
--- Select optional comfort work; the controller owns admission, native actions,
--- receipts, and retries. Nothing here changes stats or spends a training turn.
+-- Choose optional comfort work. The controller owns native admission, actions,
+-- and observations. Nothing here changes stats or spends a training turn.
 local Facts = require "AutoMindful/WellnessFacts"
 local PracticeCare = {}
 
 local effects = {
     boredom={stat="BOREDOM", read="BOREDOM", max=100},
-    stiffness={stat="PAIN", max=100}, -- BodyPart stiffness is not the PAIN stat.
-    pain={stat="PAIN", read="PAIN", max=100},
-    stress={stat="STRESS", read="STRESS", max=1},
-    withdrawal={stat="NICOTINE_WITHDRAWAL", read="NICOTINE_WITHDRAWAL", max=1},
+    stiffness={stat="STIFFNESS", max=100}, -- BodyPart stiffness is not the PAIN stat.
+    pain={stat="PAIN", read="PAIN", max=100, tier=2},
+    stress={stat="STRESS", read="STRESS", max=1, tier=1},
+    withdrawal={stat="NICOTINE_WITHDRAWAL", read="NICOTINE_WITHDRAWAL", max=1, tier=1},
+    panic={stat="PANIC", read="PANIC", max=100, tier=1},
+    hunger={stat="HUNGER", read="HUNGER", max=1, tier=2},
+    health={stat="HEALTH", read="HEALTH", max=100, tier=3, rising=true},
 }
-local hungerEffect = {stat="HUNGER", read="HUNGER", max=1}
+local limits = {
+    [1]={[0]=90000},
+    [2]={[0]=240000,[1]=180000},
+    [3]={[0]=420000,[1]=370000,[2]=240000},
+}
+
 local function number(value, max)
     if type(value) == "number" and value >= 0 and value <= max then return value end
 end
@@ -19,29 +27,12 @@ local function rank(value)
     return number(value, 10) and value == math.floor(value) and value or nil
 end
 
-local function measure(readings, need, override)
-    local effect = override or effects[need]
+local function measure(readings, need)
+    local effect = effects[need]
     if type(readings) ~= "table" or not effect then return nil end
     local value = readings[need]
     if value == nil and effect.read then value = readings[effect.read] end
     return number(value, effect.max)
-end
-
-local function course(kind, need, maxMs)
-    return {kind=kind, need=need, stat=effects[need].stat, maxMs=maxMs}
-end
-
-local function yogaBudget(level)
-    -- Allow time for the normal-speed native pose sequence, including a
-    -- terminal pose's parent chain. Do not stop a successful pose early for
-    -- comfort alone: Lifestyle applies an XP penalty and may withhold Zen.
-    if level < 4 then return 240000 end
-    if level < 8 then return 330000 end
-    return 450000
-end
-
-local function calmMeditation(boredom, pain)
-    return boredom and boredom <= 5 and pain and pain <= 5
 end
 
 local function mindTier(readings)
@@ -51,115 +42,183 @@ local function mindTier(readings)
     return number(value, 3) and value == math.floor(value) and value or nil
 end
 
-local function strongCourse(input, m, y, boredom, pain)
-    if not m or m < Facts.meditationUnlocks[2] or input.mindfulEnabled ~= true
-            or input.preferTraining == "meditation" or not boredom or boredom > 5
-            or not pain or pain >= 20 then return nil end
-    local tier = mindTier(input)
-    if tier == nil or tier >= 2 then return nil end
-    local hunger = measure(input, "hunger", hungerEffect)
-    if not hunger or hunger > 0.30 then return nil end
-    local target, stat
-    if hunger >= 0.15 then
-        -- A meal still supplies calories; an unknown inventory is not a
-        -- confirmed absence. Strong Mindfulness never stands in for food.
-        if input.confirmedFood ~= false then return nil end
-        target, stat = "hunger", hungerEffect.stat
-    elseif pain >= 10 and input.painTreatment == false
-            and not (y and input.preferTraining == "yoga") then
-        target, stat = "pain", effects.pain.stat
-    end
-    if not target then return nil end
-    -- The native timer advances with the world clock. From tier 1, Strong
-    -- alone needs roughly 125 wall seconds at normal speed; from tier 0
-    -- the first tier adds about 42 seconds. These are limits, not promises.
-    return {kind="meditation", need="mindfulness", stat=stat, target=target,
-        recovery=true, fromTier=tier, targetTier=2, maxMs=tier == 0 and 240000 or 180000}
+function PracticeCare.nativeTier(value, level)
+    level = rank(level)
+    if not level or not number(value, 1) then return nil end
+    -- Under rank 3 Lifestyle clears even an old saved badge. At >=3 its
+    -- ongoing effects use the *active* tier, not a second unlock check.
+    if level < Facts.meditationUnlocks[1] then return 0 end
+    return value>=0.6 and 3 or value>=0.4 and 2 or value>=0.2 and 1 or 0
 end
 
--- now and nextAt use the same monotonic-ms clock. "confirmed" literature
--- and painTreatment=true mean a quicker, eligible care action is usable now.
--- A preferred training kind is one that would actually start at this boundary.
+local function course(kind, need, maxMs)
+    return {kind=kind, need=need, stat=effects[need].stat, maxMs=maxMs}
+end
+
+local function yogaBudget(level)
+    -- Leave time for a native pose sequence, including terminal parent phases.
+    -- Stopping early penalizes XP and may withhold Zen.
+    if level < 4 then return 240000 end
+    if level < 8 then return 330000 end
+    return 450000
+end
+
+local function calmMeditation(boredom, pain)
+    return boredom and boredom <= 5 and pain and pain <= 5
+end
+
+local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
+    if input.mindfulEnabled ~= true then return nil end
+    local level, tier = rank(input.meditationRank), mindTier(input)
+    if not level or level < Facts.meditationUnlocks[1] or tier == nil then return nil end
+    local hunger, panic, health = measure(input, "hunger"), measure(input, "panic"), measure(input, "health")
+    local stress, withdrawal = measure(input, "stress"), measure(input, "withdrawal")
+    local safeStart = canStart and m and input.preferTraining ~= "meditation"
+        and boredom and boredom <= 5 and pain and pain < 20 and hunger and hunger <= 0.30
+    local function match(need, applies, acquire)
+        if not applies then return nil end
+        local effect = effects[need]
+        local desired = effect.tier
+        local target = {target=need, targetTier=desired}
+        if tier >= desired then return nil, target end
+        if acquire and safeStart and level >= Facts.meditationUnlocks[desired] then
+            target.kind, target.need, target.stat = "meditation", "mindfulness", effect.stat
+            target.recovery, target.fromTier, target.maxMs = true, tier, limits[desired][tier]
+            return target
+        end
+    end
+    -- Dangers and direct resources are checked by the controller first.
+    -- Basic is for substantial panic, or enough residual panic to prevent sleep.
+    local attempt, passive = match("panic", panic and (panic>=25 or (input.sleepBlocked==true and panic>=5)), true)
+    if attempt or passive then return attempt, passive end
+    if hunger and hunger <= 0.30 then
+        attempt, passive = match("hunger", hunger>=0.15 and input.confirmedFood==false, true)
+        if attempt or passive then return attempt, passive end
+        attempt, passive = match("pain", hunger<0.15 and pain and pain>=10 and pain<20 and input.painTreatment==false
+            and not input.painReliefActive,
+            not yogaPain and not (y and input.preferTraining=="yoga"))
+        if attempt or passive then return attempt, passive end
+    end
+    -- Perfect heals general health, not the source of a wound or illness.
+    -- Only offer it for mild, stable loss without a competing symptom.
+    attempt, passive = match("health", input.healthSafe==true and health and health>=75 and health<95
+        and hunger and hunger<0.15 and pain and pain<=5 and panic and panic<5, true)
+    if attempt or passive then return attempt, passive end
+    attempt, passive = match("withdrawal", withdrawal and withdrawal>=0.35, false)
+    if passive then return nil, passive end
+    return match("stress", stress and stress>=0.50, false)
+end
+
+-- "confirmed" literature and painTreatment=true mean ordinary care wins.
+-- The second return is a passive observation, never an action or a wait.
 function PracticeCare.choose(input)
     if type(input) ~= "table" or not number(input.now, math.huge) or input.now == math.huge then return nil end
-    if input.nextAt ~= nil and (not number(input.nextAt, math.huge) or input.now < input.nextAt) then return nil end
+    if input.nextAt ~= nil and not number(input.nextAt, math.huge) then return nil end
     if input.reading == "confirmed" or input.painTreatment == true then return nil end
-
+    local canStart = not input.nextAt or input.now >= input.nextAt
     local y = input.yogaReady == true and rank(input.yogaRank)
     local m = input.meditationReady == true and rank(input.meditationRank)
     local boredom, pain = measure(input, "boredom"), measure(input, "pain")
     local stress, stiffness = measure(input, "stress"), measure(input, "stiffness")
+    local yogaPain = y and not input.painReliefActive and pain and pain >= (y >= 3 and 15 or 25)
     local yogaNeed
     if y then
-        -- Native Meditation rejects boredom above 30. More experienced
-        -- Yoga is reasonable sooner, not a larger boredom drop per pose.
+        -- Lifestyle applies the same boredom relief per successful pose.
         if boredom and (boredom > 30 or (y >= 3 and boredom >= 25)) then yogaNeed = "boredom"
-        elseif stiffness and stiffness >= (y >= 3 and 12.5 or 20) then yogaNeed = "stiffness"
-        elseif pain and pain >= (y >= 3 and 15 or 25) then yogaNeed = "pain" end
+        elseif stiffness and stiffness >= (y >= 3 and 12.5 or 20) then yogaNeed = "stiffness" end
     end
-    if yogaNeed then
+    if yogaNeed and canStart then
         if input.preferTraining ~= "yoga" then return course("yoga", yogaNeed, yogaBudget(y)) end
         return nil
     end
 
     if input.recovery == true then
-        local withdrawal = measure(input, "withdrawal")
-        if withdrawal and withdrawal >= 0.35 then
-            -- Both native actions directly lower a smoker's withdrawal at
-            -- any rank, even without Mindfulness. Prefer a ready scheduled
-            -- practice; start short Meditation only with low drawbacks.
-            local med = m and calmMeditation(boredom, pain)
-            if (y and input.preferTraining == "yoga") or (med and input.preferTraining == "meditation") then return nil end
-            local choice = med and course("meditation", "withdrawal", 30000)
-                or y and course("yoga", "withdrawal", yogaBudget(y))
-            if choice then choice.recovery=true; return choice end
-        end
-        local strong = strongCourse(input, m, y, boredom, pain)
-        if strong then return strong end
+        local attempt, passive = mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
+        if attempt or passive then return attempt, passive end
     end
-
-    if not stress or stress < 0.5 or (y and input.preferTraining == "yoga") then return nil end
-    -- Even at high rank, ordinary Meditation can raise boredom and neck
-    -- pain. Do not start it for comfort when those already need attention.
-    if m and m >= Facts.meditationUnlocks[2] and calmMeditation(boredom, pain) then
-        if input.preferTraining ~= "meditation" then return course("meditation", "stress", 30000) end
+    if not canStart then return nil end
+    if yogaPain then
+        if input.preferTraining ~= "yoga" then return course("yoga", "pain", yogaBudget(y)) end
         return nil
     end
-    if y and y >= 3 and stress >= 0.65 then return course("yoga", "stress", yogaBudget(y)) end
+
+    -- Both native practices can lower stress and smokers' withdrawal even
+    -- at rank zero; only Meditation can build Mindfulness.
+    local comfortable = m and calmMeditation(boredom, pain)
+    local function direct(need, allowYoga)
+        if (y and input.preferTraining == "yoga") or (comfortable and input.preferTraining == "meditation") then return nil end
+        if comfortable then return course("meditation", need, 30000) end
+        if y and allowYoga then return course("yoga", need, yogaBudget(y)) end
+    end
+    if input.recovery == true then
+        local withdrawal = measure(input, "withdrawal")
+        if withdrawal and withdrawal >= 0.35 then
+            local attempt = direct("withdrawal", true)
+            if attempt then attempt.recovery=true; return attempt end
+            if y and input.preferTraining=="yoga" or comfortable and input.preferTraining=="meditation" then return nil end
+        end
+    end
+    if stress and stress >= 0.50 then return direct("stress", stress >= 0.65) end
 end
 
--- A real native tier can be observed before the matching per-minute effect
--- settles. Don't report the tier itself as symptom relief.
 function PracticeCare.acquired(attempt, readings)
-    if type(attempt) ~= "table" or attempt.recovery ~= true or attempt.need ~= "mindfulness"
-            or attempt.targetTier ~= 2 or (attempt.fromTier ~= 0 and attempt.fromTier ~= 1) then return false end
-    local tier = mindTier(readings)
-    return tier ~= nil and tier >= attempt.targetTier
+    if type(attempt) ~= "table" or attempt.recovery ~= true or attempt.need ~= "mindfulness" then return false end
+    local effect = effects[attempt.target]
+    local from, after = number(attempt.fromTier, 3), mindTier(readings)
+    return effect ~= nil and effect.tier ~= nil and attempt.targetTier == effect.tier and from ~= nil and from == math.floor(from)
+        and from < attempt.targetTier and after ~= nil and after >= attempt.targetTier
 end
 
--- The caller snapshots course.before before dispatch, either as a single
--- value for the target or a readings table. Only a real matching fall counts.
+local function changed(target, before, readings, minimum)
+    local effect = effects[target]
+    if not effect then return false end
+    local old = type(before) == "table" and measure(before, target) or number(before, effect.max)
+    local after = measure(readings, target)
+    if old == nil or after == nil then return false end
+    local improved = effect.rising and after - old or old - after
+    return improved > minimum
+end
+
+-- A badge isn't relief. Capture the target *after* seeing the native tier;
+-- queued Lifestyle effects may flush after that tier has expired.
+function PracticeCare.watch(plan, readings)
+    local effect = type(plan) == "table" and effects[plan.target]
+    local active = mindTier(readings)
+    if not effect or not effect.tier or plan.targetTier~=effect.tier or not active or active<effect.tier then return nil end
+    local before = measure(readings, plan.target)
+    if not before then return nil end
+    return {target=plan.target, targetTier=effect.tier, before=before}
+end
+
+function PracticeCare.observed(watch, readings)
+    local effect = type(watch) == "table" and effects[watch.target]
+    return type(effect)=="table" and effect.tier ~= nil and watch.targetTier==effect.tier
+        and changed(watch.target, watch.before, readings, effect.max==1 and 0.0001 or 0.01)
+end
+
 function PracticeCare.improved(attempt, readings)
     if type(attempt) ~= "table" then return false end
-    local need = attempt.need
-    local override
-    if need == "mindfulness" then
-        if not PracticeCare.acquired(attempt, readings) then return false end
-        need = attempt.target
-        if need == "hunger" then override = hungerEffect
-        elseif need ~= "pain" then return false end
-    elseif need == "withdrawal" and attempt.recovery ~= true then return false end
-    local effect = override or effects[need]
-    if not effect then return false end
-    local before = type(attempt.before) == "table" and measure(attempt.before, need, override)
-        or number(attempt.before, effect.max)
-    local after = measure(readings, need, override)
-    if before == nil or after == nil then return false end
     if attempt.need == "mindfulness" then
-        -- Ignore negligible floating-point drift in these delayed receipts.
-        return before - after > (need == "hunger" and 0.0001 or 0.01)
+        return PracticeCare.acquired(attempt, readings)
+            and PracticeCare.observed({target=attempt.target,targetTier=attempt.targetTier,before=attempt.before}, readings)
     end
-    return after < before
+    if attempt.need=="withdrawal" and attempt.recovery~=true
+            or attempt.need=="panic" or attempt.need=="health" or attempt.need=="hunger" then return false end
+    return changed(attempt.need, attempt.before, readings, 0)
+end
+
+-- Pinned Lifestyle ZLSUpdate.lua: automatic mode follows the day-length
+-- preset; explicit MoodUpdate controls the accumulator flush. Perfect's
+-- general-health effect uses its own per-minute callback, not this batch.
+local configuredMinutes = {false,1,2,5,10,15,30,60,120}
+function PracticeCare.receiptMinutes(target, moodUpdate, dayLength)
+    if target=="health" then return 3 end
+    local configured = configuredMinutes[moodUpdate]
+    if configured then return configured + 2 end
+    local day = number(dayLength, 27) or 4
+    local automatic = day==1 and 120 or day==2 and 30 or day==3 and 15 or day<=6 and 10
+        or day<=14 and 5 or day<=22 and 2 or 1
+    return automatic + 2
 end
 
 return PracticeCare

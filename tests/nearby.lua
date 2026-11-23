@@ -158,6 +158,39 @@ assert(find("food").key=="food:8:0:0", "known useful stock takes precedence over
 local adjacentUnknown=object(square(1,0),{}).containers[1]; adjacentUnknown.explored=false
 refresh(); assert(find("literature").key=="unknown:1:0:0", "unknown adjacency permits inspection without walking")
 reset()
+do
+    local sameTile=square(4,0)
+    local function staticStorage(sprite)
+        local o=object(sameTile,{item({book=true})})
+        local c=o.containers[1]
+        o.spriteName=sprite
+        function o:getObjectName()return "IsoObject" end
+        function o:getSprite()return {getName=function()return o.spriteName end,getProperties=function()return nil end} end
+        function c:getParent()return o end
+        function c:getSourceGrid()return sameTile end
+        function c:getType()return "shelves" end
+        return o,c
+    end
+    local ao,a=staticStorage("cabinet_west")
+    local bo,b=staticStorage("cabinet_east")
+    local first=find("literature")
+    assert(first and first.storageScoped)
+    local sibling=find("literature",10,{[first.key]=true})
+    assert(sibling and sibling.storageScoped and sibling.container~=first.container and sibling.square==first.square,
+        "Rejecting one verified shelf must not hide suitable contents of its same-tile sibling")
+    client=true; a.items,b.items={},{}; refresh()
+    local unknownFirst=find("literature")
+    assert(unknownFirst and unknownFirst.unknown and unknownFirst.storageScoped)
+    local unknownSibling=find("food",10,{[unknownFirst.key]=true})
+    assert(unknownSibling and unknownSibling.unknown and unknownSibling.container~=unknownFirst.container,
+        "Both MP empty lists are unconfirmed, with rejection scoped to the concrete source")
+    bo.spriteName=ao.spriteName
+    refresh()
+    local ambiguous=find("literature")
+    assert(ambiguous and ambiguous.unknown and not ambiguous.storageScoped,
+        "Identical native furniture signatures do not invent stable object identity")
+end
+reset()
 local bag=item({kind="InventoryContainer"}); bag.inventory=container({item({book=true})})
 function bag:getInventory() return self.inventory end
 local inner=item({kind="InventoryContainer"}); inner.inventory=container({item({food=true})})

@@ -460,6 +460,140 @@ test("verified smoker withdrawal selects brief rank-zero care and waits for the 
     CharacterTrait.SMOKER,CharacterStat.NICOTINE_WITHDRAWAL=priorTrait,priorStat
 end)
 
+test("Basic opens the queue for panic but only a late matching native reading is relief", function()
+    local beforeText,beforeLS=SandboxVars.Text,SandboxVars.LS
+    SandboxVars.Text,SandboxVars.LS={DividerMeditationNew=true},{MoodUpdate=5}
+    local p=survivor(3)
+    p.values.PANIC,p.values.FATIGUE=7,0.65 -- sleepy, but a separate native restriction prevents sleep
+    started(p,"recovery")
+    local med=awaitHead(p,"Meditation")
+    local tier=p.data.LSMoodles.MindfulState
+    tier.Value=0.2
+    step(p)
+    assert(med.stopped and not head(p) and p.values.PANIC==7)
+    assert(not (C.status(p).careNotice or ""):find("Observed",1,true))
+    p.values.STRESS=0.25
+    step(p,16000)
+    assert(not head(p) and not (C.status(p).careNotice or ""):find("Observed",1,true))
+    tier.Value=0 -- native tier drops before its accumulated mood change flushes
+    p.values.PANIC=6
+    step(p,20000)
+    assert(C.status(p).active and not head(p))
+    assert((C.status(p).careNotice or ""):find("panic ease",1,true))
+    noTraining(p,0,1)
+    C.stop(p)
+    SandboxVars.Text,SandboxVars.LS=beforeText,beforeLS
+end)
+
+test("Strong pain starts at rank six and separately watches real pain after queue release", function()
+    local beforeText=SandboxVars.Text
+    SandboxVars.Text={DividerMeditationNew=true}
+    local p=survivor(6)
+    p.values.PAIN=12
+    started(p,"recovery")
+    local med=awaitHead(p,"Meditation")
+    local tier=p.data.LSMoodles.MindfulState
+    tier.Value=0.2
+    steps(p,4)
+    assert(head(p)==med and not med.stopped)
+    tier.Value=0.4
+    step(p)
+    assert(med.stopped and not head(p) and p.values.PAIN==12)
+    p.values.HUNGER=0.04
+    step(p,16000)
+    assert(not (C.status(p).careNotice or ""):find("Observed",1,true))
+    p.values.PAIN=11
+    step(p)
+    assert((C.status(p).careNotice or ""):find("pain ease",1,true) and not head(p))
+    noTraining(p,0,1)
+    C.stop(p)
+    SandboxVars.Text=beforeText
+end)
+
+test("foreign work and direct meals invalidate the passive symptom baseline without losing priority", function()
+    local beforeText=SandboxVars.Text
+    SandboxVars.Text={DividerMeditationNew=true}
+    for _, kind in ipairs({"foreign","meal"}) do
+        local p=survivor(6)
+        p.values.HUNGER=0.24
+        p.data.LSMoodles.MindfulState.Value=0.2
+        started(p,"recovery")
+        local med=awaitHead(p,"Meditation")
+        p.data.LSMoodles.MindfulState.Value=0.4
+        step(p)
+        assert(med.stopped and not head(p))
+        local action
+        if kind=="foreign" then
+            action=T.action(p,"ForeignFoodEffect",function() p.values.HUNGER=0.05 end)
+            Q.add(action)
+            step(p); untouched(p,action)
+        else
+            food(p)
+            action=awaitHead(p,"eat")
+            assert(action.autoMindfulOwner)
+        end
+        action:perform()
+        steps(p,10)
+        assert(p.values.HUNGER<0.15 and C.status(p).active and not head(p))
+        assert(not (C.status(p).careNotice or ""):find("Observed",1,true), "Other work is not Mindfulness relief")
+        noTraining(p,0,1)
+        C.stop(p)
+    end
+    SandboxVars.Text=beforeText
+end)
+
+test("a newly available drink beats acquisition even at the ordinary care threshold", function()
+    local beforeText=SandboxVars.Text
+    SandboxVars.Text={DividerMeditationNew=true}
+    local p=survivor(3)
+    p.values.PANIC=34
+    started(p,"recovery")
+    local med=awaitHead(p,"Meditation")
+    p.values.THIRST=0.16
+    local bottle=water(p)
+    local drink=awaitHead(p,"drink")
+    assert(med.stopped and count(p,"Meditation")==1 and p.values.PANIC==34)
+    drink:perform()
+    assert(p.values.THIRST<0.16 and bottle.fluid:getAmount()<1)
+    C.stop(p)
+    SandboxVars.Text=beforeText
+end)
+
+test("Perfect needs safe health, the full native tier, and a real health increase", function()
+    local beforeText=SandboxVars.Text
+    SandboxVars.Text={DividerMeditationNew=true}
+    for _, name in ipairs({"POISON","SICKNESS","FOOD_SICKNESS","ZOMBIE_INFECTION","ZOMBIE_FEVER"}) do CharacterStat[name]=name end
+    local function injured(rank,hp,poison)
+        local p=survivor(rank)
+        p.hp,p.values.POISON=hp,poison
+        local body={getOverallBodyHealth=function() return p.hp end,getNumPartsBleeding=function() return 0 end,
+            isInfected=function() return false end,getNumPartsBitten=function() return 0 end}
+        function p:getBodyDamage() return body end
+        return p
+    end
+    for _, p in ipairs({injured(9,87),injured(10,70),injured(10,87,1)}) do
+        started(p,"recovery"); steps(p,8); noTraining(p); C.stop(p)
+    end
+    local p=injured(10,85)
+    started(p,"recovery")
+    local med=awaitHead(p,"Meditation")
+    for _, value in ipairs({0.2,0.4}) do
+        p.data.LSMoodles.MindfulState.Value=value
+        steps(p,5)
+        assert(head(p)==med and not med.stopped and p.hp==85)
+    end
+    p.data.LSMoodles.MindfulState.Value=0.6
+    step(p)
+    assert(med.stopped and not head(p) and p.hp==85)
+    assert(not (C.status(p).careNotice or ""):find("Observed",1,true))
+    p.hp=86
+    step(p)
+    assert((C.status(p).careNotice or ""):find("health improve",1,true))
+    noTraining(p,0,1)
+    C.stop(p)
+    SandboxVars.Text=beforeText
+end)
+
 test("legacy endurance meditation still admits its selected native action and ends at full", function()
     local p = survivor(10)
     p.values.ENDURANCE = 0.6

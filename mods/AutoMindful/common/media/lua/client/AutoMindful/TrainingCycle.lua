@@ -13,6 +13,7 @@ end
 
 local function needed(entry)
     if type(entry) ~= "table" or entry.needed ~= true then return false end
+    if entry.allowCapped == true then return true end
     local progress = entry.progress
     return type(progress) ~= "table" or (progress.capped ~= true and progress.level ~= 10)
 end
@@ -39,7 +40,7 @@ local function preference(policy, lastCompleted, meditation, yoga)
     return lastCompleted == "meditation" and "yoga" or "meditation"
 end
 
--- Entries are { needed = boolean, eligible = boolean, progress = sample }.
+-- Entries are { needed = boolean, eligible = boolean, progress = sample, allowCapped = boolean }.
 -- Owed means the policy preferred a skill its native rules did not yet allow.
 -- A fallback (even a completed one) cannot spend that skill's turn.
 function TrainingCycle.choose(policy, lastCompleted, owed, meditation, yoga)

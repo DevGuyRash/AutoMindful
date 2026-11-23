@@ -490,7 +490,9 @@ test("stopping does not invent XP and idle, rejected, or already-capped requests
     C.stop(p); assert(not C.start(p,"invalid",false)); C.update(p)
     p.meditation=10
     assert(C.start(p,"meditation",false)); T.tick(p)
-    assert(C.status(p).phase=="complete" and #p.cards==0)
+    assert(C.status(p).active and C.status(p).backgroundPractice and #p.cards==0)
+    C.stop(p)
+    assert(#p.cards==0)
     p.meditation=0; p.sitting=true; p.noXP=true
     assert(C.start(p,"meditation",false)); T.tick(p)
     C.stop(p,"Stopped by you."); C.stop(p)

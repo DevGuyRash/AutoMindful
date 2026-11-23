@@ -236,4 +236,102 @@ do
     C.stop(p)
     memory.remember=remember
 end
+do
+    scout=true
+    local p=survivor();local home=p.square
+    local nearby=require "AutoMindful/Nearby"
+    local memory=require "AutoMindful/ScoutMemory"
+    local originalFind,originalWalk,originalRemember=nearby.find,luautils.walkAdj,memory.remember
+    local a,b=fixture(p,"first-shelf",4,0,true),fixture(p,"other-shelf",4,1,true)
+    local function bind(o)
+        local c=T.container(); c.square=o.square
+        function c:getParent()return o end
+        function c:getType()return "shelves" end
+        function c:isExplored()return true end
+        function o:getContainerCount()return 1 end
+        function o:getContainerByIndex(i)if i==0 then return c end end
+        return c
+    end
+    local ac,bc=bind(a),bind(b)
+    local fallback,wide,learned,blockedRoute=ac,0,{},nil
+    nearby.find=function(_,kind,origin)
+        assert(origin==home,"No additional radius scan while away on a known path")
+        if kind=="literature" then
+            wide=wide+1
+            return {square=fallback.square,container=fallback,key=kind..":"..fallback.square.x..":"..fallback.square.y..":0"}
+        end
+    end
+    luautils.walkAdj=function(pl,square)
+        if square==blockedRoute then return false end
+        local o=square==a.square and a or b
+        ISTimedActionQueue.add(ISWalkToTimedAction:new(pl,o.front))
+        return true
+    end
+    memory.remember=function(m,target,now,sample)
+        if target.kind=="literature" then learned[#learned+1]=target.container end
+        return originalRemember(m,target,now,sample)
+    end
+    local function book(c,title)
+        return T.add(c,T.item("Literature",{boredom=-60,data={literatureTitle=title}}))
+    end
+    local function begin()
+        p.values.BOREDOM=45; p.sitting=true
+        assert(C.start(p,"meditation",true))
+    end
+    local function readAt(o,title)
+        untilRun(p,function()return q(p)[1] and q(p)[1].Type=="read"end)
+        assert(p.square==o.front)
+        q(p)[1]:perform()
+        assert(p.read[title] and p.values.BOREDOM==0,"The exact shelf supplied the native action")
+    end
+    local function homeAndStop()
+        untilRun(p,function()return training(q(p)[1])end)
+        assert(p.square==home)
+        C.stop(p)
+    end
+    p.available={ac}
+    book(ac,"proved first")
+    begin()
+    readAt(a,"proved first")
+    untilRun(p,function()return q(p)[1] and q(p)[1].location==home end)
+    assert(#learned==0,"An away-from-home receipt must not publish a route yet")
+    homeAndStop()
+    assert(wide==1 and #learned==1 and learned[1]==ac)
+
+    -- Both walls are reachable at A's front; the other shelf is enumerated
+    -- first by native loot. Recall must re-select only A, not the first book.
+    p.available={bc,ac};fallback,wide=bc,0
+    book(bc,"alternate")
+    book(ac,"proved second")
+    begin()
+    readAt(a,"proved second")
+    homeAndStop()
+    assert(wide==0 and #learned==2 and learned[2]==ac and not p.read.alternate)
+
+    -- A stocked remembered source can become dry while the walk is in flight.
+    local last=book(ac,"removed while walking")
+    begin()
+    untilRun(p,function()return q(p)[1] and q(p)[1].location==a.front end)
+    assert(wide==0)
+    T.remove(ac,last)
+    q(p)[1]:perform()
+    T.tick(p,false)
+    assert(q(p)[1] and q(p)[1].location==home and not p.read.alternate and #learned==2,
+        "Don't use an alternate adjacent shelf or learn a failed path")
+    readAt(b,"alternate")
+    homeAndStop()
+    assert(wide==1 and #learned==3 and learned[3]==bc)
+
+    -- A refusal before native walking also falls back once, without stopping
+    -- the session, training twice, or polling a different floor.
+    book(bc,"unreachable")
+    book(ac,"fallback")
+    blockedRoute,fallback,wide=b.square,ac,0
+    begin()
+    readAt(a,"fallback")
+    homeAndStop()
+    assert(wide==1 and #learned==4 and not p.read.unreachable)
+    nearby.find,luautils.walkAdj,memory.remember=originalFind,originalWalk,originalRemember
+    print("PASS exact bookshelf recollection avoids a radius scan, rejects late stock loss, and falls back once")
+end
 print("PASS Lifestyle care ordering, successful walking time, exact target, learned locations and training resumption")

@@ -927,4 +927,46 @@ do
     assert(#reasons == 2 and reasons[1] == "AutoMindful received a stop request." and reasons[2] == reasons[1],
         "The stop reason must not attribute a physical action")
 end
-print("ui-contracts: PASS (including native art, default unmounted stock icons, late mount and unavailable assets)")
+-- Only read bounded history while its panel is open; never present a
+-- supply-preview gap as proof that the area contains no water.
+do
+    local oldState,oldInventory,oldRecent=Controller.state,Controller.inventory,Controller.recentDecisions
+    local reads=0
+    Controller.state={active=true,mode="recovery",phase="recovering",message="Critical thirst.",
+        decisionCode="water-unavailable",decisionLabel="No safe water confirmed",decisionRevision=2}
+    Controller.inventory={water=0,nearbyWater=0,unknownContainers=2,unloadedSquares=1,radius=10,warnings={}}
+    function Controller.recentDecisions(who)
+        assert(who==player)
+        reads=reads+1
+        return {{label="No safe water confirmed"},{label="Lifestyle is blocking Yoga",reason="Tapis de yoga requis."}}
+    end
+    local view=UI.open(player)
+    assert(view.activity.text:find("unknown",1,true), "Unloaded/uninspected stock remains explicitly unconfirmed")
+    assert(view.historyButton and not view.historyFrame.visible and reads==0)
+    view.historyButton:click()
+    assert(view.historyFrame.visible and view.historyText.text:find("Tapis de yoga requis.",1,true) and reads==1)
+    local paginates=view.historyText.paginated
+    view:refresh(); view:refresh()
+    assert(reads==1 and view.historyText.paginated==paginates, "Steady refresh does not reread/reflow history")
+    Controller.state.decisionRevision=3
+    view:refresh()
+    assert(reads==2)
+    Controller.inventory.unknownContainers,Controller.inventory.unloadedSquares=0,0
+    view:refresh()
+    assert(view.activity.text:find("found in checked supplies",1,true) and not view.activity.text:find("unknown",1,true))
+    Controller.inventory.nearbyWater=1
+    view:refresh()
+    assert(view.activity.text:find("did not confirm a usable drink",1,true))
+    view:setWidth(310); view:onResize()
+    assert(view.historyText:getBottom()<=view.historyFrame.height and view.historyFrame:getBottom()<view.progressFrame.y,
+        "The expandable history fits a narrow viewport and never covers the activity or controls")
+    view.skillGuideButton:click()
+    assert(not view.historyFrame.visible)
+    view.wellnessBack:click()
+    assert(view.historyFrame.visible and reads==2)
+    view.historyButton:click()
+    assert(not view.historyFrame.visible and view.stopButton.enable, "Showing or hiding history does not affect the mode")
+    view:close()
+    Controller.state,Controller.inventory,Controller.recentDecisions=oldState,oldInventory,oldRecent
+end
+print("ui-contracts: PASS (including bounded decision history, native art, default unmounted stock icons, late mount and unavailable assets)")

@@ -7,6 +7,7 @@ require "ISUI/ISComboBox"
 require "ISUI/ISRichTextPanel"
 require "ISUI/ISProgressBar"
 local Controller = require "AutoMindful/Controller"
+local Decisions = require "AutoMindful/DecisionHistory"
 local Options = require "AutoMindful/Options"
 local Progress = require "AutoMindful/Progress"
 local Wellness = require "AutoMindful/WellnessInfo"
@@ -422,9 +423,33 @@ function UI:toggleSkillGuide()
     self.wellnessOpen = open
     for _, panel in ipairs({self.activityFrame, self.progressFrame, self.ledger, self.guideFrame}) do panel:setVisible(not open) end
     self.wellnessFrame:setVisible(open)
-    if open then self:refreshSkillGuide() end
+    self.historyFrame:setVisible(self.historyOpen and not open)
+    if open then self:refreshSkillGuide()
+    else self:refreshDecisionHistory(self.status and self.status.decisionRevision or 0) end
     self:layout()
     self.body:setYScroll((open and self.wellnessScroll or self.trainingScroll) or 0)
+end
+
+function UI:refreshDecisionHistory(revision)
+    if not self.historyOpen or self.wellnessOpen or self.historyRevision == revision then return end
+    self.historyRevision = revision
+    local entries = Controller.recentDecisions and Controller.recentDecisions(self.player) or {}
+    local lines = {}
+    for _, entry in ipairs(entries) do
+        lines[#lines + 1] = colored(palette.text, entry.label)
+        if entry.reason then lines[#lines + 1] = colored(palette.muted, entry.reason) end
+    end
+    if #lines == 0 then lines[1] = colored(palette.muted, "No decisions recorded yet.") end
+    setText(self.historyText, table.concat(lines, " <LINE> "))
+end
+
+function UI:toggleDecisionHistory()
+    self.historyOpen = not self.historyOpen
+    self.historyButton.guideLabel = self.historyOpen and "Hide recent" or "Recent"
+    self.historyButton:setTitle(self.historyButton.guideLabel)
+    self.historyFrame:setVisible(self.historyOpen and not self.wellnessOpen)
+    self:refreshDecisionHistory(self.status and self.status.decisionRevision or 0)
+    self:layout()
 end
 
 function UI:refresh()
@@ -461,7 +486,29 @@ function UI:refresh()
     end
     if status.phase == "stopped" then phase = "Stopped"; activityColor = palette.yoga end
     local activityMessage = status.careWaiting and status.message or self.startError or status.message
-    local activity = colored(activityColor, phase) .. " <LINE> " .. colored(palette.text, activityMessage)
+    if status.active and status.backgroundPractice and not status.careWaiting and status.phase~="practice-care" then
+        phase = status.mode=="both" and "Practicing both (max rank)"
+            or status.mode=="yoga" and "Practicing yoga (max rank)" or "Practicing meditation (max rank)"
+    end
+    local activity = colored(activityColor, phase)
+    if status.decisionLabel and (not self.startError or status.careWaiting) then
+        activity = activity .. " <LINE> " .. colored(palette.text, status.decisionLabel)
+        local code, detail = status.decisionCode, status.decisionDetail
+        if code == "water-unavailable" then
+            detail = Decisions.waterDetail(self.report)
+            if status.active then activityMessage = "Thirst is critical." end
+        elseif status.phase == "manual" and detail then
+            -- The active cause can change (e.g. map opens during a wait)
+            -- without changing the controller's legacy phase message.
+            activityMessage, detail = detail, nil
+        end
+        if detail and rich(detail) ~= rich(activityMessage) then
+            activity = activity .. " <LINE> " .. colored(palette.yoga, detail)
+        end
+    end
+    if activityMessage and activityMessage ~= status.decisionLabel then
+        activity = activity .. " <LINE> " .. colored(palette.text, activityMessage)
+    end
     if endurance and (recovering or (recovery and status.phase == "complete")) then
         activity = activity .. " <LINE> " .. colored(palette.water, "Endurance: " .. endurance)
     end
@@ -470,13 +517,14 @@ function UI:refresh()
         local name = kind == "yoga" and "Yoga" or "Meditation"
         local gate = status.cycle.gates and status.cycle.gates[kind]
         local reason = gate and not gate.ready and gate.reason or nil
-        if reason then
+        if reason and status.decisionCode ~= kind .. "-gate" then
             activity = activity .. " <LINE> " .. colored(palette.yoga, name .. " is still next: " .. reason)
-        elseif status.cycle.bridge or (status.phase ~= kind) then
+        elseif not reason and (status.cycle.bridge or status.phase ~= kind) then
             activity = activity .. " <LINE> " .. colored(palette.muted, "Next practice: " .. name)
         end
     end
     setText(self.activity, activity)
+    self:refreshDecisionHistory(status.decisionRevision or 0)
     self.progressFrame.heading = recovering and "Skill reference" or "Progress"
     local now = getTimestampMs()
     for _, skill in ipairs(self.skills) do
@@ -550,7 +598,16 @@ function UI:createChildren()
     self.activityFrame = activity
     self.activity = textPanel(activity, 12, line + 17, contentWidth - 24, activity.height - line - 23, false)
     self.activity.marginTop, self.activity.marginBottom = 0, 0
+    self.historyButton = ISButton:new(0, 5, 88, 22, "Recent", self, UI.toggleDecisionHistory)
+    self.historyButton.guideLabel = "Recent"
+    self.historyButton.tooltip = "Show the six most recent decisions for this survivor. Not saved."
+    self.historyButton:initialise()
+    activity:addChild(self.historyButton)
     y = y + activity.height + 8
+    self.historyFrame = frame(self.body, Frame, "Recent decisions", 0, y, contentWidth, line * 3 + 23)
+    self.historyText = textPanel(self.historyFrame, 12, line + 18, contentWidth - 24, line * 2, false)
+    self.historyText.marginTop, self.historyText.marginBottom = 0, 0
+    self.historyFrame:setVisible(false)
     local progress = frame(self.body, SkillFrame, "Progress", 0, y, contentWidth, line * 5 + 32)
     self.progressFrame = progress
     self.skills = {}
@@ -628,8 +685,8 @@ function UI:createChildren()
         local button = ISButton:new(pad + (index - 1) * (buttonWidth + 6), y, buttonWidth, row, entry[1], self, UI.onStart)
         button:initialise()
         button.mode = entry[2]
-        button.tooltip = entry[2] == "both" and "Train both skills toward level 10, with recovery breaks. Close the window while it runs."
-            or "Train " .. entry[1]:lower() .. " toward level 10. AutoMindful handles care breaks and resumes."
+        button.tooltip = entry[2] == "both" and "Train unfinished skills to level 10. If both are already maxed, alternate when idle."
+            or "Train " .. entry[1]:lower() .. " toward level 10, or practice when idle if already maxed."
         self:addChild(button)
         self.starts[index] = button
     end
@@ -682,14 +739,24 @@ function UI:layout()
     self.body:setWidth(width)
     self.body:setHeight(math.max(1, self.height - bodyY - controlsHeight - 8))
     local contentWidth = width - 15
-    for _, panel in ipairs({self.activityFrame, self.progressFrame, self.ledger, self.guideFrame}) do panel:setWidth(contentWidth) end
-    for _, panel in ipairs({self.activity, self.guidance}) do
-        panel:setWidth(contentWidth - 24)
-        if panel.text then panel:paginate() end
+    for _, panel in ipairs({self.activityFrame, self.historyFrame, self.progressFrame, self.ledger, self.guideFrame}) do panel:setWidth(contentWidth) end
+    for _, panel in ipairs({self.activity, self.historyText, self.guidance}) do
+        if panel.width ~= contentWidth - 24 then
+            panel:setWidth(contentWidth - 24)
+            if panel.text then panel:paginate() end
+        end
     end
     self.activity:setHeight(math.max(line * 2, self.activity:getScrollHeight()) + 2)
     self.activityFrame:setHeight(line + 23 + self.activity.height)
     local y = self.activityFrame:getBottom() + 8
+    positionGuideButton(self.historyButton, self.activityFrame, line)
+    if self.historyOpen then
+        self.historyFrame:setY(y)
+        self.historyText:setY(line + 18)
+        self.historyText:setHeight(math.max(line, self.historyText:getScrollHeight()) + 2)
+        self.historyFrame:setHeight(self.historyText:getBottom() + 8)
+        y = self.historyFrame:getBottom() + 8
+    end
     self.progressFrame:setY(y)
     self.progressFrame:setHeight(self.recovering and math.max(line + 22, 36) or self.progressFrame.fullHeight)
     for _, skill in ipairs(self.skills) do skill.bar:setWidth(contentWidth - 24) end

@@ -48,7 +48,8 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     if lifestyle:
         reference_root = lifestyle.expanduser().resolve() / "common/media"
         for name in ("perks.txt", "lua/client/Helper/HSMng.lua", "lua/client/ISMeditation/ZenWellnessContextMenu.lua",
-                     "lua/shared/TimedActions/LSMeditateAction.lua", "lua/shared/TimedActions/LSYogaAction.lua"):
+                     "lua/shared/TimedActions/LSMeditateAction.lua", "lua/shared/TimedActions/LSYogaAction.lua",
+                     "lua/client/ISMeditation/Mindfulness.lua", "lua/client/ZLSUpdate.lua"):
             references[name] = hashlib.sha256((reference_root / name).read_bytes()).hexdigest()
     command = [lua, "tests/contracts.lua"]
     if reference_root:
@@ -57,7 +58,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     for name, script in (("scout-memory", "scout_memory.lua"),
                          ("lifestyle-care-journey", "lifestyle_care_journey.lua"),
                          ("lifestyle-restroom", "restroom_care.lua"), ("lifestyle-hygiene", "hygiene_care.lua"),
-                         ("ui-contracts", "ui.lua"), ("training-cycle", "training_cycle.lua"),
+                         ("ui-contracts", "ui.lua"), ("decision-status", "decision_status.lua"), ("training-cycle", "training_cycle.lua"),
                          ("training-scheduler-integration", "training_scheduler_integration.lua"),
                          ("practice-care", "practice_care.lua"), ("practice-care-integration", "practice_care_integration.lua"),
                          ("recovery-mode", "recovery_mode.lua"), ("walking-handoff", "walking_handoff.lua"),
@@ -78,6 +79,8 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
         elif reference_root and script in ("progress.lua", "restroom_care.lua", "training_scheduler_integration.lua"):
             suite.append(str(reference_root))
         checks.append(check(evidence, name, suite))
+    if reference_root:
+        checks.append(check(evidence, "lifestyle-mindfulness-effects", [lua, "tests/mindfulness_native.lua", str(reference_root)]))
     checks.append(check(evidence, "release-contracts", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_release.py"]))
     checks.append(check(evidence, "build-recovery", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_build_recovery.py"]))
     native_scope = "not requested"
@@ -109,10 +112,12 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-lifestyle-stock-wash", "stock_hygiene.lua"),
                                      ("native-lifestyle-hygiene", "lifestyle_hygiene.lua"),
                                      ("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"),
+                                     ("native-decision-status", "decision_status.lua"),
                                      ("native-training-cycle", "training_cycle.lua"),
                                      ("native-training-scheduler-integration", "training_scheduler_integration.lua"),
                                      ("native-practice-care", "practice_care.lua"), ("native-practice-care-integration", "practice_care_integration.lua"),
                                      ("native-recovery-mode", "recovery_mode.lua"), ("native-walking-handoff", "walking_handoff.lua"),
+                                     ("native-lifestyle-mindfulness-effects", "mindfulness_native.lua"),
                                      ("native-skills-pane", "skills_pane.lua"), ("native-yoga-bar", "yoga_bar.lua"),
                                      ("native-wellness-guide", "wellness.lua"),
                                      ("native-stock-skills-pane", "stock_skills_pane.lua"),
@@ -128,7 +133,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-water-source-contracts", "water_sources.lua"),
                                      ("native-fluid-transfer-contracts", "fluid_transfers.lua"),
                                      ("native-nearby-contracts", "nearby.lua")):
-                    if script == "lifestyle_hygiene.lua" and not reference_root:
+                    if script in ("lifestyle_hygiene.lua", "mindfulness_native.lua") and not reference_root:
                         continue
                     suite_reference = game / "media" if script in ("stock_route_outcome.lua", "stock_hygiene.lua", "water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "stock_aim.lua", "stock_pain.lua", "stock_context_icons.lua", "stock_skills_pane.lua") else reference_root
                     command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),

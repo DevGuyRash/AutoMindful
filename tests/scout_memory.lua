@@ -152,6 +152,68 @@ test("distance precedes recency, cooldown can reject nearest, memory capped/TTL 
 end)
 
 local function sampleAt(s,ms) return {x=s.x,y=s.y,z=s.z,ms=ms} end
+
+local function storage(o, kind)
+    local c={object=o,kind=kind}
+    o.storage=o.storage or {}
+    o.storage[#o.storage+1]=c
+    function c:getParent()return self.object end
+    function c:getSourceGrid()return self.object.square end
+    function c:getType()return self.kind end
+    function o:getContainerCount()return #self.storage end
+    function o:getContainerByIndex(i)return self.storage[i+1]end
+    return c,{getContainer=function()return c end}
+end
+local function exactStorage(kind,o,s,c)
+    calls=calls+1
+    if c and not c.denied then return {kind=kind,object=o,square=s,container=c} end
+end
+test("only a fixed typed container is saved; newest verified book stop wins without probing older shelves",function()
+    local mem={}
+    local a,b=object(square(2,0)),object(square(4,0))
+    local c1,book1=storage(a,"shelves")
+    local c2,book2=storage(b,"crate")
+    assert(M.remember(mem,M.supplyTarget("literature",book1),100))
+    assert(M.remember(mem,M.supplyTarget("literature",book2),101))
+    local result=pick(mem,"literature",6,200,exactStorage)
+    assert(result and result.container==c2 and calls==1 and M.liveStorage(result))
+    assert(not pick(mem,"food",6,200,exactStorage),"Never reuse a bookshelf proof for different care")
+    for _,value in pairs(mem.literature[1]) do
+        assert(type(value)=="number" or type(value)=="string" or type(value)=="boolean")
+    end
+    assert(pick(mem,"literature",3,200,exactStorage).container==c1)
+    c2.denied=true
+    assert(pick(mem,"literature",6,200,exactStorage).container==c1)
+end)
+test("reloading resolves the exact slot/type; changed identity, duplicates and explicit misses expire only that hint",function()
+    local mem={}
+    local s=square(3,0)
+    local o=object(s)
+    storage(o,"pantry")
+    local c,book=storage(o,"bookshelf")
+    assert(M.remember(mem,M.supplyTarget("literature",book),100))
+    local first=pick(mem,"literature",6,200,exactStorage)
+    assert(first.container==c and mem.literature[1].slot==1 and M.liveStorage(first))
+    local replacement=square(3,0)
+    local fresh=object(replacement)
+    storage(fresh,"pantry")
+    local restored=storage(fresh,"bookshelf")
+    assert(not M.liveStorage(first))
+    local second=pick(mem,"literature",6,200,exactStorage)
+    assert(second.container==restored and second.object==fresh and M.liveStorage(second))
+    assert(not pick(mem,"literature",6,200,function()return nil,true end) and #mem.literature==0)
+    assert(M.remember(mem,second,201))
+    fresh.storage[2].kind="different"
+    assert(not M.liveStorage(second) and not pick(mem,"literature",6,300,exactStorage) and #mem.literature==0)
+    fresh.storage[2].kind="bookshelf"
+    assert(M.remember(mem,second,301))
+    local recalled=pick(mem,"literature",6,400,exactStorage)
+    M.forget(mem,recalled)
+    assert(#mem.literature==0)
+    fresh.storage[2].getContainingItem=function()return {}end
+    assert(not M.remember(mem,second,402))
+end)
+
 test("a farther fixture wins when its verified round trip was quicker from this exact tile",function()
     local mem={}
     local near,far=object(square(2,0)),object(square(5,0))

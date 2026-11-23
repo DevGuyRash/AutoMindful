@@ -5,6 +5,7 @@ local Supplies = require "AutoMindful/Supplies"
 local Fluids = require "AutoMindful/Fluids"
 local Storage = require "AutoMindful/Storage"
 local PainCare = require "AutoMindful/PainCare"
+local ScoutMemory = require "AutoMindful/ScoutMemory"
 local Nearby = {}
 local snapshots = {}
 
@@ -63,11 +64,11 @@ function Nearby.scan(player, originSquare, radius, force)
         return cached.result
     end
     local seenContainers, seenItems, seenWater, seenVehicles = {}, {}, {}, {}
-    local function visitItem(item, square, container, part)
+    local function visitItem(item, square, container, part, scopedKey, storageScoped)
         if not item or seenItems[item] then return end
         seenItems[item] = true
-        local entry = {square = square, key = key(square), item = item, container = container, owned = false, part = part}
-        if part then entry.key = entry.key .. ":vehicle:" .. tostring(part:getVehicle():getId()) .. ":" .. tostring(part:getIndex()) end
+        local entry = {square=square,key=scopedKey or key(square),item=item,container=container,
+            owned=false,part=part,storageScoped=storageScoped}
         if PainCare.eligible(item) then
             result.pain[#result.pain + 1] = entry
             return
@@ -90,15 +91,16 @@ function Nearby.scan(player, originSquare, radius, force)
         if not container or seenContainers[container] then return end
         seenContainers[container] = true
         result.containerCount = result.containerCount + 1
+        local suffix=not part and ScoutMemory.storageSuffix(container,square) or nil
+        local scopedKey=key(square)..(suffix or (part and ":vehicle:"..tostring(part:getVehicle():getId())..":"..tostring(part:getIndex()) or ""))
         local items = container:getItems()
         -- isExplored can become true before the MP server sends its contents.
         -- An empty replicated list never establishes confirmed emptiness here.
         if not container:isExplored() or (isClient() and items:size() == 0) then
             result.unknownTargets[#result.unknownTargets + 1] = {
-                square = square, key = key(square) .. (part and ":vehicle:" .. tostring(part:getVehicle():getId()) .. ":" .. tostring(part:getIndex()) or ""),
-                container = container, unknown = true, part = part}
+                square=square,key=scopedKey,container=container,unknown=true,part=part,storageScoped=suffix~=nil}
         end
-        for index = 0, items:size() - 1 do visitItem(items:get(index), square, container, part) end
+        for index=0,items:size()-1 do visitItem(items:get(index),square,container,part,scopedKey,suffix~=nil) end
     end
     local function visitObjects(objects, square, ground)
         local loot = permitted(player, square, true)
@@ -194,7 +196,7 @@ function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWo
                         or (targetKey == best.key and entry.object and entry.item and entry.item == best.item and not best.object))) then
                     -- Do not mutate the shared snapshot while choosing targets.
                     best = {square = square, key = targetKey, distance = distance,
-                        unknown = entry.unknown, container = entry.container,
+                        unknown = entry.unknown, container = entry.container, storageScoped = entry.storageScoped,
                         item = entry.item, object = entry.object, part = entry.part}
                 end
             end

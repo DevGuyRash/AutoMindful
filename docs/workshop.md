@@ -42,7 +42,7 @@ The first command requests cloud validation. The second requests an upload. You 
 
 AutoMindful's own [workshop-publisher.json](../workshop-publisher.json) maps mod ID `AutoMindful` to existing Workshop item [`3837554362`](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362), under Project Zomboid application ID `108600`. Routine updates preserve the title, description, tags, visibility, and required items. Do not create a replacement item to repair an upload or authentication failure.
 
-The listing requires official [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858). AutoMindful's packaged executable files remain under `media/lua/client`. Normal Build 42 multiplayer loading still requires the server to advertise the mod.
+The listing requires official [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858). AutoMindful's packaged executable files remain under `media/lua/client`. Once the mod is loaded on the client, AutoMindful does not require a server-side component. Lifestyle's requirements and host rules still apply.
 
 ## Legacy game-based desktop uploader
 

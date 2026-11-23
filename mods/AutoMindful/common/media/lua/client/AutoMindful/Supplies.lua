@@ -334,12 +334,64 @@ function Supplies.chooseTransfer(player, source, kind, includeNearby, rejected)
     return nil, reason or scan.fluidReason or "A clean empty drinking vessel is needed for bulk liquids."
 end
 
-function Supplies.choose(player, kind, includeNearby, rejected, worldOnly)
+-- Inspect only the already replicated items of one recalled static stop.
+-- No load request, radius scan, adjacent container refresh, or hidden contents.
+function Supplies.scoutedStock(player,kind,container,rejected)
+    if not container:isExplored() then return false end
+    local items=container:getItems()
+    local size=items:size()
+    if size==0 then return false,not isClient() end
+    local carried
+    for i=0,math.min(size,128)-1 do
+        local item=items:get(i)
+        if item and item:getContainer()==container and not rejectedItem(rejected,item:getID()) then
+            local entry={item=item,owned=false}
+            if canCollect(player,entry) then
+                if kind=="literature" then
+                    if Supplies.eligibleLiterature(player,item) then return true end
+                elseif kind=="pain" then
+                    if PainCare.eligible(item) then return true end
+                else
+                    local d=Consumables.inspect(player,item,false)
+                    if d[kind] then
+                        if not d.needsVessel and Consumables.plan(player,d,kind) then return true end
+                        if d.needsVessel then
+                            -- An ordinary scout can still try other vessels.
+                            -- Recall a donor only with a known compatible main-inventory vessel.
+                            if not carried then
+                                carried={}
+                                local available=player:getInventory():getItems()
+                                for j=0,math.min(available:size(),128)-1 do
+                                    local vessel=available:get(j)
+                                    if vessel and not rejectedItem(rejected,vessel:getID()) and Fluids.emptyVessel(vessel) then
+                                        carried[#carried+1]=vessel
+                                        if #carried>=8 then break end
+                                    end
+                                end
+                            end
+                            entry.description=d
+                            for _,vessel in ipairs(carried) do
+                                if transferCompatible(player,entry,{item=vessel,owned=true}) then return true end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+function Supplies.choose(player, kind, includeNearby, rejected, worldOnly, exactContainer)
+    if exactContainer and (not includeNearby or worldOnly) then return nil end
     local scan = Supplies.scan(player, includeNearby)
+    local function selected(entry)
+        return not exactContainer or (not entry.worldSource and entry.item and entry.item:getContainer()==exactContainer)
+    end
     local best
     if kind == "pain" then
         for _, entry in ipairs(scan.pain) do
-            if not rejectedItem(rejected, entry.item:getID()) and canCollect(player, entry)
+            if selected(entry) and not rejectedItem(rejected, entry.item:getID()) and canCollect(player, entry)
                     and PainCare.eligible(entry.item) then
                 if entry.owned then return entry end
                 best = best or entry
@@ -349,7 +401,7 @@ function Supplies.choose(player, kind, includeNearby, rejected, worldOnly)
     end
     if kind == "literature" then
         for _, entry in ipairs(scan.literature) do
-            if not rejectedItem(rejected, entry.item:getID()) and canCollect(player, entry)
+            if selected(entry) and not rejectedItem(rejected, entry.item:getID()) and canCollect(player, entry)
                     and (not best or (entry.lastRead == nil and best.lastRead ~= nil)
                         or ((entry.lastRead == nil) == (best.lastRead == nil)
                             and ((entry.lastRead or -1) < (best.lastRead or -1)
@@ -362,7 +414,7 @@ function Supplies.choose(player, kind, includeNearby, rejected, worldOnly)
     local critical = player:getMoodles():getMoodleLevel(kind == "water" and MoodleType.THIRST or MoodleType.HUNGRY) >= 4
     if not worldOnly then
         for _, entry in ipairs(scan[kind]) do
-            if not rejectedSource(rejected, entry) and canCollect(player, entry) then
+            if selected(entry) and not rejectedSource(rejected, entry) and canCollect(player, entry) then
                 if entry.description.needsVessel then
                     entry.useNearbyTools = includeNearby == true
                     for _, vessel in ipairs(scan.vessels) do
@@ -375,7 +427,7 @@ function Supplies.choose(player, kind, includeNearby, rejected, worldOnly)
             end
         end
     end
-    if kind == "water" then
+    if kind == "water" and not exactContainer then
         for _, source in ipairs(scan.waterSources) do
             if not rejectedItem(rejected, source.object) and not (source.item and rejectedItem(rejected, source.item:getID())) then
                 best = consider(player, {source = source, description = source.description}, best, kind, critical)

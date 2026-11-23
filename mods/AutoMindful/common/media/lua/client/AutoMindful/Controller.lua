@@ -479,8 +479,8 @@ end
 
 function Controller.canShareMindfulnessWatch(state,phase)
     local watch=state.mindfulnessWatch
-    return watch and trainingPhase(phase)
-        and (watch.target=="hunger" or (watch.target=="pain" and phase=="meditation"))
+    return watch and ((watch.target=="hunger" and (trainingPhase(phase) or phase=="standing"))
+        or (watch.target=="pain" and phase=="meditation"))
 end
 
 local function ownBatch(player, state, phase, message, addActions)
@@ -488,7 +488,10 @@ local function ownBatch(player, state, phase, message, addActions)
     for _, action in ipairs(queueFor(player)) do before[action] = true end
     local batch = {}
     state.pending = batch
-    if not Controller.canShareMindfulnessWatch(state,phase) then state.mindfulnessWatch=nil end
+    if not Controller.canShareMindfulnessWatch(state,phase) then
+        if state.mindfulnessWatch and state.mindfulnessWatch.target=="hunger" then state.hungerAid=nil end
+        state.mindfulnessWatch=nil
+    end
     addActions()
     -- A synchronous callback may already have stopped or yielded this
     -- session. Never claim a replacement queue or reinstate its old phase.
@@ -725,6 +728,7 @@ local function yieldToPlayer(player, state, unexplained, walking, settling)
         state.collectingItem, state.contextInterrupted, state.travelScan = nil, nil, nil
         state.lifestyleCourse, state.lifestylePickup, state.lifestyleScan, state.practiceCare, state.mindfulnessWatch = nil, nil, nil, nil, nil
         state.utilityTierRetry=nil
+        if state.hungerAid and not state.hungerAid.failed then state.hungerAid=nil end -- discard ambiguous player-work baselines
         state.furnitureAttempted, state.cycleUntil, state.cooperativePending = nil, nil, nil
         state.standTransitionSince, state.standStableSince = nil, nil
         state.careNeeds = {}
@@ -1101,11 +1105,11 @@ local function nearbyTarget(player, state, kind, onlyWorldWater, skipRemembered)
     return target
 end
 
-local function beginExcursion(player, state, kind, onlyWorldWater, selectedCare, skipRemembered)
+local function beginExcursion(player, state, kind, onlyWorldWater, selectedCare, skipRemembered, confirmedOnly)
     local target = selectedCare or nearbyTarget(player, state, kind, onlyWorldWater, skipRemembered)
     if selectedCare and (state.excursion or not Options.searchNearby()) then return false end
     state.travelRejected = state.travelRejected or {}
-    if not target then return false end
+    if not target or (confirmedOnly and target.unknown) then return false end
     local worldWater = kind == "water" and target.object ~= nil and not target.container
     local waterObject = worldWater and Nearby.waterObject(player, target) or nil
     local exact=target.container and (target.remembered and target
@@ -1115,7 +1119,7 @@ local function beginExcursion(player, state, kind, onlyWorldWater, selectedCare,
         state.travelScan = nil
         if target.remembered then
             ScoutMemory.forget(state.scoutMemory,target)
-            if not selectedCare and not skipRemembered then return beginExcursion(player,state,kind,onlyWorldWater,nil,true) end
+            if not selectedCare and not skipRemembered then return beginExcursion(player,state,kind,onlyWorldWater,nil,true,confirmedOnly) end
         else state.travelRejected[target.key] = true end
         return false
     end
@@ -1165,7 +1169,7 @@ local function beginExcursion(player, state, kind, onlyWorldWater, selectedCare,
         if target.remembered then
             ScoutMemory.forget(state.scoutMemory,target)
             if not selectedCare and not skipRemembered and not state.releasePending then
-                return beginExcursion(player,state,kind,onlyWorldWater,nil,true)
+                return beginExcursion(player,state,kind,onlyWorldWater,nil,true,confirmedOnly)
             end
         end
     end
@@ -1272,9 +1276,9 @@ local function checkHomeRecovery(player, state, queue, now)
     return false
 end
 
-local function supply(player, state, kind, onlyWorldWater, waterObject, exactContainer)
+local function supply(player, state, kind, onlyWorldWater, waterObject, exactContainer, confirmedOnly)
     if kind == "pain" and not wantsPainCare(player, state, getTimestampMs()) then return false end
-    if kind == "literature" and player:tooDarkToRead() then return beginExcursion(player, state, kind, onlyWorldWater) end
+    if kind == "literature" and player:tooDarkToRead() then return beginExcursion(player,state,kind,onlyWorldWater,nil,nil,confirmedOnly) end
     state.supplyMissingReason = nil
     local collect = state.collectNearby or Options.searchNearby() or state.excursion ~= nil
     local entry
@@ -1317,7 +1321,7 @@ local function supply(player, state, kind, onlyWorldWater, waterObject, exactCon
     end
     if not entry then
         if exactContainer then return false end
-        if beginExcursion(player, state, kind, onlyWorldWater) then return true end
+        if beginExcursion(player, state, kind, onlyWorldWater,nil,nil,confirmedOnly) then return true end
         if kind == "water" or kind == "food" then
             local report = Supplies.report(player, state.collectNearby or Options.searchNearby())
             state.supplyMissingReason = state.supplyMissingReason
@@ -1441,6 +1445,9 @@ local function train(player, state, kind, bridge, course)
     if course then
         if not careGearSafe(player,kind,course.rank) then return false end
         state.practiceCare=course
+        if course.target=="hunger" then
+            state.hungerAid={tried=true,best=state.hungerAid and state.hungerAid.best}
+        end
         state.practiceCareRelieved=nil
         state.practiceCareNext=course.startedAt+120000
     elseif cycle then
@@ -1477,14 +1484,18 @@ local function criticalNeed(player, kind)
     return player:getMoodles():getMoodleLevel(kind == "water" and MoodleType.THIRST or MoodleType.HUNGRY) >= 4
 end
 
-local function comfortSupplyAvailable(player, state, kind)
+local function comfortSupplyAvailable(player, state, kind, confirmedOnly)
     if kind == "literature" then
-        if player:tooDarkToRead() then return nearbyTarget(player, state, kind, false) ~= nil end
+        if player:tooDarkToRead() then
+            local target=nearbyTarget(player,state,kind,false)
+            return target~=nil and not (confirmedOnly and target.unknown)
+        end
     end
     local full = kind ~= "literature" and player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN) >= 3
     if full and kind == "food" then return false end
-    return Supplies.choose(player, kind, state.collectNearby or Options.searchNearby(), state.rejected, full) ~= nil
-        or nearbyTarget(player, state, kind, full) ~= nil
+    if Supplies.choose(player,kind,state.collectNearby or Options.searchNearby(),state.rejected,full) then return true end
+    local target=nearbyTarget(player,state,kind,full)
+    return target~=nil and not (confirmedOnly and target.unknown)
 end
 
 -- Mild pain is optional care: only interrupt our own meditation for a known,
@@ -1557,13 +1568,38 @@ local function lifestyleCare(player,state,target,now)
     return queueLifestyle(player,state,target,now)
 end
 
-function Controller.sleepBlockedByMood(player)
-    return stat(player,"PANIC")>0 or (player:getMoodles():getMoodleLevel(MoodleType.PAIN)>=2
+function Controller.sleepBlockedByMood(player,hungerFallback)
+    local panic
+    if hungerFallback and player.getSleepingTabletEffect and (player:getSleepingTabletEffect() or 0)>=2000 then return false end
+    if hungerFallback and MoodleType.PANIC then
+        -- Stock sleep admission uses the displayed stage, not every trace of raw panic.
+        panic=player:getMoodles():getMoodleLevel(MoodleType.PANIC)>=1
+    else panic=stat(player,"PANIC")>0 end
+    return panic or (player:getMoodles():getMoodleLevel(MoodleType.PAIN)>=2
         and stat(player,"FATIGUE")<=0.85)
 end
 
+-- Ask whether native relief is a real alternative *before* rummaging through
+-- unreplicated MP storage. Always run the ordinary supply/known-route path first.
+function Controller.hungerOpportunity(player,state)
+    if not (state.cycle or state.recovery) or not Controller.mindfulnessEnabled() or not WellnessInfo.supported()
+            or (Options.practiceCare and not Options.practiceCare()) then return false end
+    local aid,watch=state.hungerAid,state.mindfulnessWatch
+    if aid and aid.failed then return false end
+    if watch and watch.target=="hunger" then return true end -- a late native flush may outlive the badge
+    local med=levels(player)
+    local tier=Tiers.current(player,"meditation")
+    local ready=PracticeCare.hungerUnlocked(med) and not (aid and aid.tried and not aid.helped) and not player:isSittingOnFurniture()
+        and not player:getModData().IsSittingOnSeat and meditationGate(player).ready and careGearSafe(player,"meditation",med)
+    local course,passive=PracticeCare.hungerPlan(stat(player,"HUNGER"),med,tier,ready)
+    return course~=nil or passive~=nil
+end
+
 local function care(player, state)
-    state.careNotice,state.recoverySleepBlocked = nil,nil
+    state.careNotice,state.recoverySleepBlocked,state.noConfirmedFood=nil,nil,nil
+    if not PracticeCare.hungry(stat(player,"HUNGER")) then state.hungerAid=nil
+    elseif state.hungerAid and not criticalNeed(player,"food") then state.hungerAid.best=nil end
+    local criticalFood
     local fullness = player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)
     for _, kind in ipairs({"water", "food"}) do
         local value = stat(player, kind == "water" and "THIRST" or "HUNGER")
@@ -1575,11 +1611,18 @@ local function care(player, state)
     for _, kind in ipairs(order) do
         local critical = criticalNeed(player, kind)
         if state.careNeeds[kind] then
-            if (kind == "water" or fullness < 3) and supply(player, state, kind, kind == "water" and fullness >= 3) then
+            local fallback=kind=="food" and fullness<3 and Controller.hungerOpportunity(player,state)
+            -- Once starvation has a viable fallback, still drink confirmed water.
+            -- Ordinary thirst is not evidence of a drink in an unexplored MP crate.
+            local confirmedOnly=fallback or (kind=="water" and not critical and criticalFood and state.noConfirmedFood)
+            if (kind=="water" or fullness<3) and supply(player,state,kind,kind=="water" and fullness>=3,nil,nil,confirmedOnly) then
                 state.mindfulnessWatch=nil
                 return true
             end
-            if critical then
+            if fallback then state.noConfirmedFood=true end
+            if critical and kind=="food" and fullness<3 and (state.cycle or state.recovery) then
+                criticalFood=true -- still give available water and normal sleep their opportunity
+            elseif critical then
                 if fullness >= 3 then
                     setPhase(state, "recovering", kind == "water"
                         and "Thirst is critical, but the game currently refuses another drink. Waiting for the drinking restriction to end."
@@ -1599,11 +1642,10 @@ local function care(player, state)
                 return true
             end
             state.careNeeds[kind] = nil
-            if kind=="food" and not state.recovery then
-                Controller.armMindfulnessWatch(player,state,getTimestampMs(),{target="hunger",targetTier=2})
+            if not critical then
+                state.careNotice = state.supplyMissingReason and (state.supplyMissingReason .. " Training can continue.")
+                    or (kind=="water" and "No drink found; continuing while thirst is safe." or "No food found; continuing while hunger is safe.")
             end
-            state.careNotice = state.supplyMissingReason and (state.supplyMissingReason .. " Training can continue.")
-                or (kind == "water" and "No drink found; continuing while thirst is safe." or "No food found; continuing while hunger is safe.")
         end
     end
     if needSleep(player) then
@@ -1615,20 +1657,44 @@ local function care(player, state)
             Controller.stop(player, "Sleep is needed but this server does not allow it. Recover fatigue before restarting.")
             return true
         end
-        if Controller.sleepBlockedByMood(player) then
-            if state.recovery then state.recoverySleepBlocked=true; return false end
-            if sit(player, state) then setPhase(state, "recovering", "Waiting for panic or pain to ease enough for normal sleep.") end
+        if Controller.sleepBlockedByMood(player,state.noConfirmedFood) then
+            if state.noConfirmedFood then
+                -- Sleep cannot run. Recheck it during relief rather than canceling a useful action each tick.
+                state.recoverySleepBlocked=true
+            elseif state.recovery and not criticalFood then state.recoverySleepBlocked=true; return false
+            else
+                if sit(player,state) then setPhase(state,"recovering","Waiting for panic or pain to ease enough for normal sleep.") end
+                return true
+            end
+        elseif player:getHoursSurvived() - player:getLastHourSleeped() <= 1 then
+            if sit(player,state) then setPhase(state,"recovering","Resting until the normal one-hour sleep cooldown ends.") end
+            return true
+        else
+            player:setVariable("ExerciseStarted", false)
+            player:setVariable("ExerciseEnded", true)
+            ISWorldObjectContextMenu.onSleepWalkToComplete(player:getPlayerNum(), nil)
+            if player:isAsleep() then setPhase(state,"sleeping","Sleeping on the ground. Training resumes after waking.")
+            else Controller.stop(player,"The game refused sleep. Resolve the sleep restriction, then start again.") end
             return true
         end
-        if player:getHoursSurvived() - player:getLastHourSleeped() <= 1 then
-            if sit(player, state) then setPhase(state, "recovering", "Resting until the normal one-hour sleep cooldown ends.") end
-            return true
+    end
+    -- A fallback is not reason to skip an actionable treatment or reading,
+    -- even in Yoga-only mode. Never mistake an unexplored crate for a book.
+    if state.noConfirmedFood then
+        if painAvailable(player,state,getTimestampMs()) and supply(player,state,"pain") then return true end
+        if stat(player,"BOREDOM")>=20 and comfortSupplyAvailable(player,state,"literature",true)
+                and supply(player,state,"literature",false,nil,nil,true) then return true end
+    end
+    if criticalFood then
+        state.careNotice=nil
+        if state.noConfirmedFood and Controller.criticalHungerRelief(player,state) then return true end
+        local reason=state.hungerAid and state.hungerAid.tried and " Native hunger relief was not confirmed." or ""
+        if state.recovery then
+            setPhase(state,"recovering","Critical hunger. Waiting for suitable food."..reason,"food-unavailable")
+        else
+            Controller.stop(player,"Stopped because hunger reached the game's Starving to Death stage and no suitable food is available."
+                ..reason..(state.supplyMissingReason and (" "..state.supplyMissingReason) or ""),"food-unavailable")
         end
-        player:setVariable("ExerciseStarted", false)
-        player:setVariable("ExerciseEnded", true)
-        ISWorldObjectContextMenu.onSleepWalkToComplete(player:getPlayerNum(), nil)
-        if player:isAsleep() then setPhase(state, "sleeping", "Sleeping on the ground. Training resumes after waking.")
-        else Controller.stop(player, "The game refused sleep. Resolve the sleep restriction, then start again.") end
         return true
     end
     return false
@@ -1694,16 +1760,30 @@ function Controller.armMindfulnessWatch(player,state,now,plan,readings,fresh)
     -- A bounded wall deadline still wins with a missing or frozen clock.
     watch.expires=now+math.max(15000,minutes*math.min(day,1440)*60000/1440+settle)
     state.mindfulnessWatch,state.mindfulnessWatchNext=watch,now+120000
+    if watch.target=="hunger" then
+        state.hungerAid=state.hungerAid or {tried=true}
+        if criticalNeed(player,"food") and state.hungerAid.best then
+            -- Within one starvation episode, oscillations above the previous low are not net progress.
+            watch.before=math.min(watch.before,state.hungerAid.best)
+        end
+    end
 end
 
 function Controller.observeMindfulness(player,state,head,now)
     local watch=state.mindfulnessWatch
     if not watch then return end
     local world=Controller.mindfulnessClock()
-    if (watch.worldExpires and world and world>=watch.worldExpires and now>=watch.notBefore)
-            or now>=watch.expires or not Controller.mindfulnessEnabled()
+    local expired=(watch.worldExpires and world and world>=watch.worldExpires and now>=watch.notBefore) or now>=watch.expires
+    if expired or not Controller.mindfulnessEnabled()
             or (Options.practiceCare and not Options.practiceCare())
-            or criticalNeed(player,"water") or criticalNeed(player,"food") then
+            or criticalNeed(player,"water") or (criticalNeed(player,"food") and watch.target~="hunger") then
+        if watch.target=="hunger" and state.hungerAid then
+            if not expired then state.hungerAid=nil -- displaced by a real priority, not a failed attempt
+            elseif not state.hungerAid.helped or (criticalNeed(player,"food")
+                    and (Tiers.current(player,"meditation") or watch.targetTier)>=watch.targetTier) then
+                state.hungerAid.failed=true
+            end
+        end
         state.mindfulnessWatch=nil
         return
     end
@@ -1715,6 +1795,10 @@ function Controller.observeMindfulness(player,state,head,now)
     local readings=practiceReadings(player,nil,true)
     if watch.target=="pain" and readings.painReliefActive then state.mindfulnessWatch=nil; return end
     if PracticeCare.observed(watch,readings) then
+        if watch.target=="hunger" and state.hungerAid then
+            state.hungerAid.helped=true
+            if criticalNeed(player,"food") then state.hungerAid.best=readings.HUNGER end
+        end
         state.mindfulnessWatch=nil
         state.practiceCareNotice="Observed " .. (watch.target=="health" and "health improve" or watch.target .. " ease")
             .. " after native Mindfulness became active."
@@ -1722,19 +1806,14 @@ function Controller.observeMindfulness(player,state,head,now)
     end
 end
 
-local function practiceCare(player,state,now,m,y,meditation,yoga,training,reading,pain)
+local function practiceCare(player,state,now,m,y,meditation,yoga,training,reading,pain,hungerOnly)
     local retry=state.utilityTierRetry
     if retry and (now<retry.startedAt or now>=retry.expires) then state.utilityTierRetry=nil; retry=nil end
     local cooling=state.practiceCareNext and now<state.practiceCareNext
-    if state.excursion or (cooling and not retry and not state.recovery)
+    if state.excursion or (cooling and not retry and not state.recovery and not state.noConfirmedFood)
             or not WellnessInfo.supported() or (Options.practiceCare and not Options.practiceCare()) then return false end
     local seated=state.recovery and player:isSittingOnFurniture()
     local readings=practiceReadings(player,meditation)
-    local confirmedFood
-    if state.recovery and readings.HUNGER and readings.HUNGER>=0.15 and readings.HUNGER<=0.30
-            and player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)<3 then
-        confirmedFood=comfortSupplyAvailable(player,state,"food")
-    end
     local nextAt=state.practiceCareNext
     if retry then nextAt=nil end
     local course,passive=PracticeCare.choose({now=now,nextAt=nextAt,
@@ -1745,8 +1824,11 @@ local function practiceCare(player,state,now,m,y,meditation,yoga,training,readin
         reading=reading,painTreatment=pain,painReliefActive=readings.painReliefActive,preferTraining=training,recovery=state.recovery,
         hunger=readings.HUNGER,withdrawal=readings.withdrawal,mindTier=readings.mindTier,
         panic=readings.PANIC,health=readings.HEALTH,healthSafe=readings.healthSafe,
-        sleepBlocked=state.recoverySleepBlocked,confirmedFood=confirmedFood,mindfulEnabled=Controller.mindfulnessEnabled()})
-    if passive then Controller.armMindfulnessWatch(player,state,now,passive,readings) end
+        sleepBlocked=state.recoverySleepBlocked,confirmedFood=not state.noConfirmedFood,mindfulEnabled=Controller.mindfulnessEnabled(),
+        hungerOnly=hungerOnly,renewHunger=not state.hungerAid or state.hungerAid.helped,
+        acquireHunger=not (state.hungerAid and state.hungerAid.tried and not state.hungerAid.helped)})
+    if passive then Controller.armMindfulnessWatch(player,state,now,passive,readings,
+        hungerOnly and not (state.mindfulnessWatch and state.mindfulnessWatch.target=="hunger")) end
     if not course then
         if retry then state.utilityTierRetry=nil end
         return false
@@ -1773,10 +1855,34 @@ local function practiceCare(player,state,now,m,y,meditation,yoga,training,readin
     -- Posture changes are their own native batches and must settle before
     -- choosing again. Failed admission is not a successful care attempt.
     if state.pending and #state.pending>0 then return true end
+    if course.target=="hunger" and (state.phase=="sitting" or state.phase=="between" and state.cycleUntil) then return true end
     if state.practiceCare then
         state.pending,state.practiceCare=nil,nil
     end
     state.utilityTierRetry=nil
+    return false
+end
+
+-- No training while critically hungry: either a single bounded own practice
+-- or a queue-free, time-limited wait for an actual change in the hunger stat.
+function Controller.criticalHungerRelief(player,state)
+    local watch=state.mindfulnessWatch
+    if watch and watch.target=="hunger" then
+        local tier=Tiers.current(player,"meditation")
+        if state.hungerAid and state.hungerAid.helped and tier and tier<watch.targetTier then
+            state.mindfulnessWatch=nil -- the last badge helped and is spent; allow renewal now
+        else
+            setPhase(state,"recovering","Critical hunger. Watching for native hunger relief; suitable food still comes first.","food-unavailable")
+            return true
+        end
+    end
+    local now=getTimestampMs()
+    local med,yoga=levels(player)
+    if practiceCare(player,state,now,meditationGate(player),yogaAdmission(player),med,yoga,nil,nil,nil,true) then return true end
+    if state.mindfulnessWatch and state.mindfulnessWatch.target=="hunger" then
+        setPhase(state,"recovering","Critical hunger. Watching for native hunger relief; suitable food still comes first.","food-unavailable")
+        return true
+    end
     return false
 end
 
@@ -2478,7 +2584,7 @@ function Controller.tierCareNeed(course,readings)
     if need=="withdrawal" then return (readings.withdrawal or 0)>=0.35 end
     if need=="panic" then return (readings.PANIC or 0)>=(course.tierSleepBlocked and 5 or 25) end
     if need=="pain" then return not readings.painReliefActive and (readings.PAIN or 0)>=10 and readings.PAIN<20 end
-    if need=="hunger" then return (readings.HUNGER or 0)>=0.15 and readings.HUNGER<=0.30 end
+    if need=="hunger" then return PracticeCare.hungry(readings.HUNGER) end
     if need=="health" then
         return readings.healthSafe and (readings.HUNGER or 1)<0.15
             and (readings.PAIN or 100)<=5 and (readings.PANIC or 100)<5
@@ -2493,12 +2599,14 @@ function Controller.updateCarePractice(player,state,head,now,urgent)
     local target=minimum and Tiers.clamp(course.kind,configured,course.rank)
     local current=target and target>0 and Tiers.current(player,course.kind)
     local minimumActive=current~=nil and current~=false
-    local ordinaryCare=state.recovery or minimumActive
-    local priority=urgent or (needSleep(player) and not (state.recovery and Controller.sleepBlockedByMood(player)))
-        or (stat(player,"HUNGER")>=(ordinaryCare and Consumables.careThreshold or 0.60) and comfortSupplyAvailable(player,state,"food"))
-        or (stat(player,"THIRST")>=(ordinaryCare and Consumables.careThreshold or 0.50) and comfortSupplyAvailable(player,state,"water"))
+    local hungerCare=course.target=="hunger"
+    local ordinaryCare=state.recovery or minimumActive or hungerCare
+    local priority=(urgent and (not hungerCare or criticalNeed(player,"water")))
+        or (needSleep(player) and not ((hungerCare or state.recovery) and Controller.sleepBlockedByMood(player,hungerCare)))
+        or (stat(player,"HUNGER")>=(ordinaryCare and Consumables.careThreshold or 0.60) and comfortSupplyAvailable(player,state,"food",hungerCare))
+        or (stat(player,"THIRST")>=(ordinaryCare and Consumables.careThreshold or 0.50) and comfortSupplyAvailable(player,state,"water",hungerCare))
         or (ordinaryCare and not state.contextVisible and (painAvailable(player,state,now)
-            or (stat(player,"BOREDOM")>=20 and comfortSupplyAvailable(player,state,"literature"))))
+            or (stat(player,"BOREDOM")>=20 and comfortSupplyAvailable(player,state,"literature",hungerCare))))
     local relief, drawback, acquired, readings, waitingForTier, careResolved
     if course.kind=="meditation" and head.autoMindfulOwner==state and isPractice(head,course.kind)
             and head:isStarted() and not head.autoMindfulStopped then
@@ -2509,7 +2617,10 @@ function Controller.updateCarePractice(player,state,head,now,urgent)
         end
         if course.need=="mindfulness" then
             acquired=PracticeCare.acquired(course,readings)
-            drawback=not Controller.mindfulnessEnabled() or (readings.BOREDOM or 0)>20
+            drawback=not Controller.mindfulnessEnabled() or (hungerCare and (not PracticeCare.hungry(readings.HUNGER)
+                    or not PracticeCare.hungerUnlocked(levels(player))
+                    or (readings.BOREDOM or 0)>(course.before.BOREDOM or 0)+20 and not meditationGate(player).ready)
+                or not hungerCare and (readings.BOREDOM or 0)>20)
                 or (readings.PAIN or 0)>(course.before.PAIN or 0)+10
                 or (course.target=="health" and (not readings.healthSafe or readings.HEALTH<course.before.HEALTH-2))
                 or (course.target=="panic" and readings.PANIC and readings.PANIC<5)
@@ -2532,6 +2643,7 @@ function Controller.updateCarePractice(player,state,head,now,urgent)
             or (Options.practiceCare and not Options.practiceCare()) then
         state.practiceCare=nil
         state.practiceCareNext=now+120000
+        if hungerCare and priority then state.hungerAid=nil end -- a meal, drink or player need interrupted; no failure
         if waitingForTier and not priority and not drawback then
             state.practiceCareNotice="The selected tier was not confirmed before the care practice ended."
             state.practiceCareNoticeUntil=now+5000
@@ -2734,12 +2846,14 @@ function Controller.update(player)
             local enduranceOnly=work and work.bridge==yogaEnduranceBridge
             local boredom = stat(player, "BOREDOM")
             local reading = boredom >= 20 and comfortSupplyAvailable(player, state, "literature")
-            local eating = stat(player, "HUNGER") >= 0.2 and comfortSupplyAvailable(player, state, "food")
+            local hungerCare=state.noConfirmedFood or (state.hungerAid and not state.hungerAid.failed)
+            local eating=stat(player,"HUNGER")>=(hungerCare and Consumables.careThreshold or 0.2)
+                and comfortSupplyAvailable(player,state,"food",hungerCare)
             local drinking = stat(player, "THIRST") >= 0.2 and comfortSupplyAvailable(player, state, "water")
             local pain = not state.contextVisible and painAvailable(player, state, now)
             local lifestyle = not state.contextVisible and lifestyleReady(player,state,now)
             if (meditation >= 10 and not state.backgroundPractice and not state.tierGoal and not enduranceOnly) or reading or eating or drinking or pain or lifestyle
-                    or urgent or needSleep(player) then
+                    or urgent or (needSleep(player) and not (hungerCare and Controller.sleepBlockedByMood(player,true))) then
                 breakForCare(player, state, "Taking a care break before resuming training.")
             elseif not state.contextVisible or enduranceOnly then
                 local head=queue[1]
@@ -2768,7 +2882,10 @@ function Controller.update(player)
                 if not enduranceOnly then Controller.offerRecoveryHandoff(player,state,head,now) end
             end
         elseif state.phase == "yoga" then
-            if urgent or (stat(player, "HUNGER") >= 0.6 and comfortSupplyAvailable(player, state, "food"))
+            local hungerCare=state.noConfirmedFood or (state.hungerAid and not state.hungerAid.failed)
+            if urgent or (hungerCare and needSleep(player) and not Controller.sleepBlockedByMood(player,true))
+                    or (stat(player,"HUNGER")>=(hungerCare and Consumables.careThreshold or 0.6)
+                    and comfortSupplyAvailable(player,state,"food",hungerCare))
                     or (stat(player, "THIRST") >= 0.5 and comfortSupplyAvailable(player, state, "water")) then
                 breakForCare(player, state, "Taking an urgent care break. Lifestyle may apply its normal early-stop yoga penalty.")
             elseif not state.contextVisible then Controller.observeTierHead(player,state,queue[1],now) end

@@ -67,6 +67,30 @@ local function calmMeditation(boredom, pain)
     return boredom and boredom <= 5 and pain and pain <= 5
 end
 
+-- The ordinary supply trigger is not an upper limit on the native effect.
+function PracticeCare.hungry(value)
+    return number(value,1)~=nil and value>=0.15
+end
+
+function PracticeCare.hungerUnlocked(level)
+    return rank(level)~=nil and level>=Facts.meditationUnlocks[effects.hunger.tier]
+end
+
+-- Already-active native effects need no posture, equipment or new action.
+-- Acquisition requires the *current* rank and the caller's live native gate.
+function PracticeCare.hungerPlan(value,level,tier,ready)
+    if not PracticeCare.hungry(value) or not rank(level) or level<Facts.meditationUnlocks[1]
+            or not number(tier,3) or tier~=math.floor(tier) then return end
+    local effect=effects.hunger
+    local plan={target="hunger",targetTier=effect.tier}
+    if tier>=effect.tier then return nil,plan end
+    if ready and PracticeCare.hungerUnlocked(level) then
+        plan.kind,plan.need,plan.stat="meditation","mindfulness",effect.stat
+        plan.recovery,plan.fromTier,plan.maxMs=true,tier,limits[effect.tier][tier]
+        return plan
+    end
+end
+
 local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
     if input.mindfulEnabled ~= true then return nil end
     local level, tier = rank(input.meditationRank), mindTier(input)
@@ -89,11 +113,20 @@ local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
     end
     -- Dangers and direct resources are checked by the controller first.
     -- Basic is for substantial panic, or enough residual panic to prevent sleep.
-    local attempt, passive = match("panic", panic and (panic>=25 or (input.sleepBlocked==true and panic>=5)), true)
-    if attempt or passive then return attempt, passive end
+    local attempt, passive, passivePanic
+    if input.recovery==true and not input.hungerOnly then
+        attempt, passive = match("panic", panic and (panic>=25 or (input.sleepBlocked==true and panic>=5)), true)
+        if attempt then return attempt end
+        passivePanic=passive -- Basic is already easing panic; building Strong need not displace it.
+    end
+    if input.confirmedFood==false then
+        attempt,passive=PracticeCare.hungerPlan(hunger,level,tier,m and input.acquireHunger~=false and input.preferTraining~="meditation"
+            and (canStart or input.renewHunger==true or input.hungerOnly==true))
+        if attempt or passive then return attempt,passive end
+    end
+    if passivePanic then return nil,passivePanic end
+    if input.recovery~=true or input.hungerOnly then return nil end
     if hunger and hunger <= 0.30 then
-        attempt, passive = match("hunger", hunger>=0.15 and input.confirmedFood==false, true)
-        if attempt or passive then return attempt, passive end
         attempt, passive = match("pain", hunger<0.15 and pain and pain>=10 and pain<20 and input.painTreatment==false
             and not input.painReliefActive,
             not yogaPain and not (y and input.preferTraining=="yoga"))
@@ -127,15 +160,16 @@ function PracticeCare.choose(input)
         if boredom and (boredom > 30 or (y >= 3 and boredom >= 25)) then yogaNeed = "boredom"
         elseif stiffness and stiffness >= (y >= 3 and 12.5 or 20) then yogaNeed = "stiffness" end
     end
+    -- Only a real, actionable hunger fallback may outrank optional comfort Yoga.
+    -- A native Meditation blocker, confirmed treatment or helpful scheduled leg still wins.
+    local attempt,passive=mindfulness(input,m,y,yogaPain,boredom,pain,canStart)
+    if input.hungerOnly or (attempt and attempt.target=="hunger") then return attempt,passive end
     if yogaNeed and canStart then
         if input.preferTraining ~= "yoga" then return course("yoga", yogaNeed, yogaBudget(y)) end
         return nil
     end
 
-    if input.recovery == true then
-        local attempt, passive = mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
-        if attempt or passive then return attempt, passive end
-    end
+    if attempt or passive then return attempt, passive end
     if not canStart then return nil end
     if yogaPain then
         if input.preferTraining ~= "yoga" then return course("yoga", "pain", yogaBudget(y)) end

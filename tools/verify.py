@@ -62,7 +62,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                          ("training-scheduler-integration", "training_scheduler_integration.lua"),
                          ("tier-targets", "tier_targets.lua"), ("tier-options", "tier_options.lua"),
                          ("tier-goals-integration", "tier_goals_integration.lua"), ("tier-one-shot-witness", "tier_one_shot_witness.lua"),
-                         ("practice-care", "practice_care.lua"), ("practice-care-integration", "practice_care_integration.lua"),
+                         ("hunger-relief", "hunger_relief.lua"), ("practice-care", "practice_care.lua"), ("practice-care-integration", "practice_care_integration.lua"),
                          ("recovery-mode", "recovery_mode.lua"), ("walking-handoff", "walking_handoff.lua"),
                          ("progress-contracts", "progress.lua"),
                          ("skills-pane-contracts", "skills_pane.lua"), ("yoga-bar-contracts", "yoga_bar.lua"),
@@ -82,7 +82,10 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
             suite.append(str(reference_root))
         checks.append(check(evidence, name, suite))
     if reference_root:
-        checks.append(check(evidence, "lifestyle-mindfulness-effects", [lua, "tests/mindfulness_native.lua", str(reference_root)]))
+        native_effects = [lua, "tests/mindfulness_native.lua", str(reference_root)]
+        if game:
+            native_effects.append(str(game.expanduser().resolve() / "media"))
+        checks.append(check(evidence, "lifestyle-mindfulness-effects", native_effects))
     checks.append(check(evidence, "release-contracts", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_release.py"]))
     checks.append(check(evidence, "build-recovery", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_build_recovery.py"]))
     native_scope = "not requested"
@@ -121,7 +124,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-tier-targets", "tier_targets.lua"), ("native-tier-options", "tier_options.lua"),
                                      ("native-mod-settings-panel", "settings_panel.lua"),
                                      ("native-tier-goals-integration", "tier_goals_integration.lua"), ("native-tier-one-shot-witness", "tier_one_shot_witness.lua"),
-                                     ("native-practice-care", "practice_care.lua"), ("native-practice-care-integration", "practice_care_integration.lua"),
+                                     ("native-hunger-relief", "hunger_relief.lua"), ("native-practice-care", "practice_care.lua"), ("native-practice-care-integration", "practice_care_integration.lua"),
                                      ("native-recovery-mode", "recovery_mode.lua"), ("native-walking-handoff", "walking_handoff.lua"),
                                      ("native-lifestyle-mindfulness-effects", "mindfulness_native.lua"),
                                      ("native-skills-pane", "skills_pane.lua"), ("native-yoga-bar", "yoga_bar.lua"),
@@ -144,6 +147,8 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                     suite_reference = game / "media" if script in ("stock_route_outcome.lua", "stock_hygiene.lua", "water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "stock_aim.lua", "stock_pain.lua", "stock_context_icons.lua", "stock_skills_pane.lua", "tier_options.lua", "settings_panel.lua") else reference_root
                     command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),
                                "KahluaCheck", str(ROOT), str(suite_reference) if suite_reference else "-", script]
+                    if script == "mindfulness_native.lua":
+                        command.append(str(game / "media"))
                     checks.append(check(evidence, name, command, cwd=game, env=env))
         native_scope = "Installed Kahlua interpreter. Game, player, queue, mood and XP receiver boundaries are explicit doubles."
     stable = source_before == fingerprint()

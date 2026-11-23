@@ -51,6 +51,12 @@ public final class KahluaCheck {
             environment.rawset("loadUpstream", (JavaFunction) (frame, count) -> frame.push(
                     evaluate(thread, environment, within(references.resolve("lua"), (String) frame.get(0)))));
         }
+        // Some integration tests need both the third-party Lifestyle scripts and the stock game action.
+        if (args.length > 3) {
+            Path stock = Path.of(args[3]).toRealPath().resolve("lua");
+            environment.rawset("loadStockLua", (JavaFunction) (frame, count) -> frame.push(
+                    evaluate(thread, environment, within(stock, (String) frame.get(0)))));
+        }
         if (script.equals("ui.lua")) {
             environment.rawset("nativeKeyRecord", (JavaFunction) (frame, count) -> frame.push(
                     new zombie.core.Core.KeyBinding((String) frame.get(0), ((Number) frame.get(1)).intValue(),

@@ -143,8 +143,8 @@ end)
 test("the new policy is opt-in and honors ordinary care and the existing cooldown", function()
     assertNone({withdrawal=0.51, meditationRank=10})
     assertNone({recovery="true", withdrawal=0.51, meditationRank=6})
-    assertNone({recovery=false, hunger=0.20, mindfulEnabled=true, mindTier=0,
-        confirmedFood=false, meditationRank=10})
+    assertCourse({recovery=false, hunger=0.20, mindfulEnabled=true, mindTier=0,
+        confirmedFood=false, meditationRank=10},"meditation","mindfulness","HUNGER")
     assertNone({recovery=true, withdrawal=0.51, reading="confirmed"})
     assertNone({recovery=true, withdrawal=0.51, painTreatment=true})
     assertNone({recovery=true, withdrawal=0.51, nextAt=1001})
@@ -209,14 +209,19 @@ test("Strong acquisition uses native rank, actual current tier, and stage-specif
     assertNone(strongInput({mindfulEnabled="yes"}))
 end)
 
-test("Strong is a mild fallback and never takes the place of an eligible meal or painkiller", function()
+test("Strong has a lower hunger trigger but no upper hunger veto; confirmed supplies still win", function()
     assertNone(strongInput({hunger=0.149}))
-    assertNone(strongInput({hunger=0.301, pain=12}))
+    for _,value in ipairs({0.301,0.80,1}) do
+        assertCourse(strongInput({hunger=value,pain=12}),"meditation","mindfulness","HUNGER")
+    end
+    assertNone(strongInput({hunger=1.01}))
+    assertNone(strongInput({hunger=0.8,meditationRank=5}))
+    assertNone(strongInput({hunger=0.8,confirmedFood=true}))
     assertNone(strongInput({hunger=0.20, confirmedFood=true, pain=12}))
     local unknown = strongInput(); unknown.confirmedFood=nil
     assertNone(unknown)
-    assertNone(strongInput({boredom=5.001}))
-    assertNone(strongInput({pain=20, yogaReady=false}))
+    assertCourse(strongInput({boredom=5.001}),"meditation","mindfulness","HUNGER")
+    assertCourse(strongInput({pain=20,yogaReady=false}),"meditation","mindfulness","HUNGER")
     assertNone(strongInput({preferTraining="meditation"}))
     assertNone(strongInput({meditationReady=false}))
     local pain = assertCourse(strongInput({hunger=0.05, pain=12, yogaReady=false, mindTier=1}),
@@ -227,6 +232,15 @@ test("Strong is a mild fallback and never takes the place of an eligible meal or
     assertNone(strongInput({hunger=0.05, pain=12, yogaReady=false, painReliefActive=true}))
     assertNone(strongInput({hunger=0.05, pain=12, preferTraining="yoga"}))
     assertCourse(strongInput({hunger=0.05, pain=15, yogaRank=3}), "yoga", "pain", "PAIN")
+end)
+
+test("active Basic already covers panic without vetoing a hungry survivor's attainable Strong",function()
+    local plan=assertCourse(strongInput({hunger=.25,mindTier=1,meditationRank=7,panic=35}),
+        "meditation","mindfulness","HUNGER")
+    assert(plan.fromTier==1 and plan.target=="hunger")
+    local basic=assertCourse(strongInput({hunger=.25,mindTier=0,meditationRank=7,panic=35}),
+        "meditation","mindfulness","PANIC")
+    assert(basic.targetTier==1)
 end)
 
 test("native Strong tier acquisition is separate from real target mood relief", function()

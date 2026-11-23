@@ -614,5 +614,25 @@ do
     C.stop(p)
 end
 
-print("SCHEDULER INTEGRATION PASS 24 cases; "..(installedGate and "installed Lifestyle predicates; " or "mock Lifestyle predicates; ")
+-- Stock can clear the sitting flag while its separate get-up animation
+-- still owns the posture. Starting native Yoga in that transition can fail.
+do
+    local p=T.playerNew()
+    p.noXP,p.sitting,p.yoga=true,true,{10,0,0}
+    function p:isGettingUp() return self.gettingUp==true end
+    assert(C.start(p,"yoga",false))
+    local stand=await(p,"stand")
+    stand:perform()
+    p.gettingUp=true
+    for _=1,4 do
+        step(p)
+        assert(not queue(p)[1] and count(p,"Yoga")==0,"Wait for the native get-up animation, even after the stand action ends")
+    end
+    p.gettingUp=false
+    await(p,"Yoga")
+    assert(count(p,"stand")==1 and count(p,"Yoga")==1)
+    C.stop(p)
+end
+
+print("SCHEDULER INTEGRATION PASS 25 cases; "..(installedGate and "installed Lifestyle predicates; " or "mock Lifestyle predicates; ")
     .."explicit game-boundary doubles, not live player or XP evidence")

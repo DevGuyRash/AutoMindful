@@ -441,6 +441,12 @@ local function ownAction(player, state, action)
                     if pending and state.active and queue[1] == self and (trainingPhase(state.phase) or state.practiceCare) then
                         local stoppedAt = getTimestampMs()
                         self.autoMindfulTrainingStoppedAt = stoppedAt
+                        if self.Type == practiceClasses.yoga and state.actionStarted and stoppedAt-state.actionStarted < 1000 then
+                            print("[AutoMindful] Yoga stopped during startup: started="..tostring(self:isStarted())
+                                .." seated="..tostring(player:isSitOnGround())
+                                .." gettingUp="..tostring(player.isGettingUp and player:isGettingUp() or false)
+                                .." inVehicle="..tostring(player:getVehicle()~=nil))
+                        end
                         sampleInspection(player, state, queue, stoppedAt)
                         if player:pressedMovement(false) then state.walkTakenOver=true end
                         state.trainingStopReason = state.trainingStopReason or unsafeReason(player, state)
@@ -657,6 +663,27 @@ local function sit(player, state)
 end
 
 local function stand(player, state, message)
+    local now = getTimestampMs()
+    local gettingUp = player.isGettingUp and player:isGettingUp()
+    if gettingUp then
+        -- The stock stand action can complete before PlayerGetUpState exits.
+        -- Lifestyle's timed action must not contend with that animation.
+        state.standTransitionSince = state.standTransitionSince or now
+        state.standStableSince = nil
+        if now - state.standTransitionSince > 15000 then
+            Controller.stop(player, "Could not finish standing up. Move to clear ground and start again.")
+        else
+            setPhase(state, "standing", "Waiting for the game to finish standing up.")
+        end
+        return false
+    end
+    if state.standTransitionSince then
+        if not player:isSitting() then
+            state.standStableSince = state.standStableSince or now
+            if now - state.standStableSince < 120 then return false end
+        end
+        state.standTransitionSince, state.standStableSince = nil, nil
+    end
     if not leaveFurniture(player, state) then return false end
     state.furnitureAttempted = nil
     if not player:isSitting() then return true end
@@ -699,6 +726,7 @@ local function yieldToPlayer(player, state, unexplained, walking, settling)
         state.lifestyleCourse, state.lifestylePickup, state.lifestyleScan, state.practiceCare, state.mindfulnessWatch = nil, nil, nil, nil, nil
         state.utilityTierRetry=nil
         state.furnitureAttempted, state.cycleUntil, state.cooperativePending = nil, nil, nil
+        state.standTransitionSince, state.standStableSince = nil, nil
         state.careNeeds = {}
         -- Keep the exact way home and any real failure budget, never the old
         -- care target, item or portion. A failed walk is retained as read-only

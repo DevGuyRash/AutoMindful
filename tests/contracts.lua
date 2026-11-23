@@ -26,7 +26,7 @@ AutoMindfulTest = T
 CharacterStat = {HUNGER="HUNGER", THIRST="THIRST", BOREDOM="BOREDOM", ENDURANCE="ENDURANCE", FATIGUE="FATIGUE", PAIN="PAIN", PANIC="PANIC"}
 CharacterTrait = {ILLITERATE="illiterate", DISCIPLINED="disciplined", COUCHPOTATO="couchpotato"}
 ItemTag = {UNINTERESTING="uninteresting", PICTUREBOOK="picturebook", PICTURE="picture"}
-MoodleType = {FOOD_EATEN="food", PAIN="pain", HUNGRY="hungry", THIRST="thirst"}
+MoodleType = {FOOD_EATEN="food", PAIN="pain", HUNGRY="hungry", THIRST="thirst", PANIC="panic", NOXIOUS_SMELL="smell"}
 Perks = {Meditation={
     getXpForLevel=function() return 100 end,
     getTotalXpForLevel=function(_, level) return level*100 end,
@@ -212,7 +212,7 @@ function T.playerNew()
     function p:getStats() return {get=function(_, name) return p.values[name] or 0 end, getNumVisibleZombies=function() return p.zombies or 0 end, getNumChasingZombies=function() return 0 end, getNumVeryCloseZombies=function() return 0 end} end
     function p:getBodyDamage() return {getOverallBodyHealth=function() return 100 end, getNumPartsBleeding=function() return 0 end} end
     function p:getNutrition() return {getCalories=function() return p.calories end} end
-    function p:getMoodles() return {getMoodleLevel=function(_, kind) return kind == "pain" and p.painMoodle or kind == "food" and p.foodMoodle or kind == "hungry" and p.hungerMoodle or kind == "thirst" and p.thirstMoodle or 0 end} end
+    function p:getMoodles() return {getMoodleLevel=function(_, kind) return kind == "pain" and p.painMoodle or kind == "food" and p.foodMoodle or kind == "hungry" and p.hungerMoodle or kind == "thirst" and p.thirstMoodle or kind == "panic" and p.panicMoodle or kind == "smell" and p.smellMoodle or 0 end} end
     function p:getPerkLevel(perk) return perk == Perks.Meditation and self.meditation or 0 end
     function p:getXp() return {getXP=function() return p.xp end} end
     function p:getHoursSurvived() return self.hours end
@@ -227,6 +227,8 @@ function T.playerNew()
     function p:isSitting() return self.sitting or false end
     function p:reportEvent(event) self.postureEvents=(self.postureEvents or 0)+1; self.sitting = event ~= "EventGetUp" end
     function p:setVariable() end
+    function p:getVariableBoolean(name,default) return name=="ExerciseEnded" end
+    function p:getSleepingTabletEffect() return 0 end
     function p:tooDarkToRead() return self.dark or false end
     function p:hasTrait(trait) return self.traits[trait] end
     function p:getReadLiterature() return {get=function(_,title) local value=p.read[title]; return value==true and T.nights or value end} end
@@ -790,9 +792,15 @@ test("refused care cannot loop indefinitely",function()
 end)
 test("zero XP watchdog spans completed sessions",function()
     local p=T.playerNew(); p.noXP=true; assert(C.start(p,"yoga",false))
-    -- A 500ms fairness gap alternates with completed training; its game hours
-    -- are not active no-XP time, so allow enough cycles to observe the watchdog.
-    for i=1,20 do T.tick(p,true,1); if not C.status(p).active then break end end
+    -- Completing immediately in the admission tick leaves no owned practice
+    -- time. The simulated game hours then elapse in the idle openings.
+    for _=1,20 do T.tick(p,true,1); assert(C.status(p).active) end
+    -- This time actually spend those hours in the started native action.
+    for _=1,40 do
+        T.tick(p,false,1)
+        if ISTimedActionQueue.getTimedActionQueue(p).queue[1] then T.tick(p,true,1) end
+        if not C.status(p).active then break end
+    end
     assert(not C.status(p).active and C.status(p).phase == "stopped")
 end)
 test("embarrassment recovery resumes yoga without literature",function()
@@ -1150,6 +1158,35 @@ test("opening borrowed food returns the new empty can and borrowed opener to the
     C.stop(interrupted)
     ArrayList,HandcraftLogic,getScriptManager,ISEntityUI,ResourceType,ISCraftingUI=saved.ArrayList,saved.HandcraftLogic,saved.getScriptManager,saved.ISEntityUI,saved.ResourceType,saved.ISCraftingUI
 end)
+test("known bulk scouting needs current safe stock and a compatible carried or same-holder empty vessel",function()
+    local p=T.playerNew(); p.values.HUNGER,p.values.THIRST=.25,.25
+    local S=require "AutoMindful/Supplies"
+    local shelf=T.container(6,0)
+    function shelf:isExplored() return false end -- positive listed stock is valid; missing contents are not
+    local bulk=T.add(shelf,T.water({capacity=5,hunger=-.5,thirst=-.5})); bulk.fluid.amount=5
+    local tag={item=bulk,container=shelf,square=shelf.square}
+    local function can(kind,rej)
+        return S.scoutProbe(p,kind,rej or {})(tag),S.scoutedStock(p,kind,shelf,rej or {})
+    end
+    for _,kind in ipairs({"food","water"}) do
+        local ordinary,recalled=can(kind); assert(not ordinary and not recalled)
+    end
+    local bag=T.container(); bag.root=p.inventory
+    T.add(p.inventory,T.item("InventoryContainer",{inventory=bag}))
+    local vessel=T.add(bag,T.water()); vessel.fluid.amount=0; vessel.fluid.reject=true
+    assert(not can("food"),"An incompatible empty is not enough")
+    vessel.fluid.reject=nil; assert(not can("food",{[vessel:getID()]=T.now+3000}))
+    local normal,recalled=can("food"); assert(normal and recalled,"The actual nested carried empty qualifies for either path")
+    vessel.fluid.amount=.1; assert(not can("food"),"Never dump another beverage to make a vessel")
+    vessel.fluid.amount=0; T.remove(bag,vessel); T.add(shelf,vessel)
+    assert(can("food"),"An observed compatible empty in the same holder is available at the destination")
+    bulk.fluid.amount=0; assert(not can("food"),"A dry donor is not current food")
+    bulk.fluid.amount=4; assert(can("food"),"Restocked donor gets another opportunity")
+    assert(not can("food",{[bulk:getID()]=T.now+3000}))
+    T.remove(shelf,bulk); assert(not can("food"),"Old positive snapshot cannot send a survivor to a moved item")
+    assert(p.refreshCount==nil and #p.history==0,"No loot request/refresh, pickup or native walking during stock proof")
+end)
+
 test("bulk milk and an empty vessel return to their separate nearby origins after care",function()
     local p=T.playerNew(); p.values.HUNGER=.2; p.values.THIRST=.2
     local pantry,shelf=T.container(1,0),T.container(0,1)
@@ -1919,6 +1956,92 @@ test("disabling walking during container inspection returns home without consumi
     for i=1,5 do T.tick(p) end
     assert(p:getSquare()==origin and not hasHistory(p,"read"))
     C.stop(p); nearbyTarget=nil
+end)
+
+test("unknown MP stock never preempts an admissible or already running selected practice",function()
+    T.client,roaming.enabled=true,true
+    for _,mode in ipairs({"meditation","yoga","both"}) do
+        local p=T.playerNew()
+        p.sitting=mode=="meditation"
+        p.values.BOREDOM,p.values.HUNGER,p.values.THIRST=24,.66,.55
+        nearbyTarget={square=T.square(6,0),key="unknown:6:0:0",unknown=true}
+        assert(C.start(p,mode,false))
+        for i=1,8 do T.tick(p,false) end
+        local q=ISTimedActionQueue.getTimedActionQueue(p).queue
+        assert(q[1] and (q[1].Type=="Yoga" or q[1].Type=="Meditation") and not q[1].stopped)
+        local first=q[1]; for i=1,6 do T.tick(p,false) end
+        assert(q[1]==first and not hasHistory(p,"ISWalkToTimedAction"))
+        C.stop(p)
+    end
+    -- A genuine gate is different: an unknown book case can still be inspected
+    -- if Meditation is the only selected mode and cannot currently start.
+    local p=T.playerNew(); p.values.BOREDOM=40
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    assert(hasHistory(p,"ISWalkToTimedAction"))
+    C.stop(p); T.client,roaming.enabled,nearbyTarget=false,false,nil
+end)
+
+test("critical care exhausts bounded alternate known paths, never an unknown substitute",function()
+    local original=luautils.walkAdj
+    roaming.enabled=true
+    for _,kind in ipairs({"food","water"}) do
+        local p=T.playerNew(); local available=T.container(9,0)
+        if kind=="food" then p.hungerMoodle,p.values.HUNGER=4,.8
+        else p.thirstMoodle,p.values.THIRST=4,.8 end
+        local first,last
+        for i=1,6 do
+            local t={square=i==6 and available.square or T.square(i+2,0),key=kind..":"..i}
+            if last then last.next=t else first=t end; last=t
+        end
+        last.next={square=T.square(2,0),key="unknown",unknown=true}
+        nearbyTarget=first
+        local attempts=0
+        luautils.walkAdj=function(player,square,keep)
+            attempts=attempts+1
+            if square==available.square then return original(player,square,keep) end
+            return false
+        end
+        assert(C.start(p,"meditation",false)); T.tick(p,false)
+        assert(C.status(p).active and attempts==4 and not hasHistory(p,"ISWalkToTimedAction"))
+        T.tick(p,false)
+        assert(C.status(p).active and attempts==6 and hasHistory(p,"ISWalkToTimedAction"))
+        C.stop(p)
+    end
+    luautils.walkAdj=original; roaming.enabled=false; nearbyTarget=nil
+end)
+
+test("switching scouting off releases a pending outbound walk without consuming or stopping a foreign waiter", function()
+    local p=T.playerNew(); p.values.BOREDOM=40; p.sitting=false; local home=p:getSquare()
+    roaming.enabled=true; nearbyTarget={square=T.square(6,0),key="literature:6:0:0"}
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    local q=ISTimedActionQueue.getTimedActionQueue(p).queue; local walk=q[1]
+    assert(walk and walk.Type=="ISWalkToTimedAction")
+    local foreign=T.action(p,"PlayerWork"); ISTimedActionQueue.add(foreign)
+    roaming.enabled=false; C.update(p)
+    assert(walk.stopped and q[1]==foreign and not foreign.stopped and p:getSquare()==home and not hasHistory(p,"read"))
+    C.stop(p); nearbyTarget=nil
+end)
+
+test("an owned route ignores a 31-second pause, but times out after witnessed lack of progress",function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.BOREDOM=40
+    nearbyTarget={square=T.square(9,0),key="literature:9:0:0"}
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    local walk=ISTimedActionQueue.getTimedActionQueue(p).queue[1]; assert(walk.Type=="ISWalkToTimedAction")
+    T.tick(p,false)
+    T.now=T.now+31000; C.update(p)
+    assert(C.status(p).active and not walk.stopped,"A missing 31 seconds of sampling is not a stalled native walk")
+    -- Even a long real journey is not a stall while moving.
+    for i=1,40 do p.x=.5+i*.15; T.tick(p,false) end
+    assert(C.status(p).active and not walk.stopped)
+    walkSpeed=0
+    for i=1,40 do T.now=T.now+1000; Events.OnTickEvenPaused.callback() end
+    walkSpeed=1
+    for i=1,28 do T.tick(p,false) end
+    assert(C.status(p).active and not walk.stopped,"Paused seconds are not charged")
+    for i=1,5 do T.tick(p,false) end
+    assert(not C.status(p).active and walk.stopped and #p.cards==1 and not hasHistory(p,"read"))
+    roaming.enabled=false; nearbyTarget=nil
 end)
 
 test("critical needs do not enter repeated unknown-container scouting", function()

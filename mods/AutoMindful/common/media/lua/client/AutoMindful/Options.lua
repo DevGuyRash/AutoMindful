@@ -101,7 +101,7 @@ for _, group in ipairs({
         if not option then
             option = settings:addComboBox(id, group.label .. ": minimum " .. spec.label, minimumHelp)
             for _, row in ipairs(choices) do
-                local label = row.tier == 0 and row.label or row.label .. " (level " .. row.rank .. ")"
+                local label = row.tier == 0 and row.label or Tiers.providerCompatible() and row.label .. " (level " .. row.rank .. ")" or row.label
                 option:addItem(label)
             end
             option:setValue(#choices)

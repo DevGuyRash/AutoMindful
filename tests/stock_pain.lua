@@ -136,4 +136,105 @@ test("stock entry is intentionally not a painkiller guard",function()
     -- Production selector must require Base.Pills; stock takePill alone cannot
     -- distinguish painkillers from other medicines or consumable substances.
 end)
+-- Run the real stock menu, timed action and AutoMindful medication guard
+-- together. Model Java JustTookPill's separate vitamin/analgesic branches and
+-- the network arrival of the positive effect/delta explicitly.
+package.path='mods/AutoMindful/common/media/lua/client/?.lua;'..package.path
+local PainCare=require "AutoMindful/PainCare"
+CharacterStat={PAIN="pain",INTOXICATION="intox"}
+function instanceof(i,k) return i and i.drainable and k=="DrainableComboItem" end
+ISInventoryPaneContextMenu.transferIfNeeded=function() end
+ISInventoryPaneContextMenu.getEatingMask=function() return nil end
+ISCraftingUI.ReturnItemToOriginalContainer=function() end
+ISTimedActionQueue.getTimedActionQueue=function(p)
+    return {queue=p.queue,onCompleted=function(_,a) assert(table.remove(p.queue,1)==a) end}
+end
+ISTimedActionQueue.isPlayerDoingAction=function(p) return #p.queue>0 end
+
+local function packageOfPills(id,fullType,useDelta)
+    local i=item(id,fullType)
+    i.drainable=true
+    function i:getUseDelta() return useDelta end
+    function i:getCurrentUses() return self.uses end
+    function i:getOnEat() return nil end
+    return i
+end
+
+local function medFixture()
+    local p=player()
+    current=p
+    local vitamin=packageOfPills(20,"Base.PillsVitamins",.20000000298)
+    local bottle=packageOfPills(21,"Base.Pills",.10000000149)
+    p.items[20],p.items[21]=vitamin,bottle
+    p.pain,p.intox,p.netEffect,p.netDelta,p.fatigue=18,0,0,0,.35
+    function p:getModData() self.data=self.data or {}; return self.data end
+    function p:getStats() return {get=function(_,k) return self[k] end} end
+    function p:getPainEffect() return self.netEffect end
+    function p:getPainDelta() return self.netDelta end
+    function p:getSleepingTabletEffect() return 0 end
+    function p:hasTimedActions() return #self.queue>0 end
+    function p:getCharacterActions() return {isEmpty=function() return #self.queue==0 end} end
+    function p:getBodyDamage()
+        return {JustTookPill=function(_,i)
+            i.uses=i.uses-1
+            if i==vitamin then p.fatigue=0
+            else
+                assert(i==bottle)
+                p.doseCalls=p.doseCalls+1
+                p.pendingEffect=5400
+            end
+        end}
+    end
+    return p,vitamin,bottle
+end
+
+local function tickPain(p,state,now)
+    PainCare.observeForeign(p,state,p.queue,now)
+    PainCare.observe(p,state,now)
+    return PainCare.wanted(p,state,now)
+end
+
+test("a stock vitamin action waits normally, changes fatigue, and leaves analgesic eligibility intact",function()
+    client,server=false,false
+    local p,vitamin,bottle=medFixture()
+    local state={}
+    ISInventoryPaneContextMenu.takePill(vitamin,0)
+    local a=p.queue[1]; native(a)
+    assert(a.Type=="ISTakePillAction" and a.item==vitamin and a:isValid())
+    assert(not tickPain(p,state,0) and not PainCare.queue(p,state,bottle,0))
+    assert(p.data.AutoMindfulPainCare.phase=="initial")
+    a:start(); a:perform()
+    assert(a:complete())
+    assert(#p.queue==0 and vitamin.uses==9 and p.fatigue==0 and p.netEffect==0 and p.doseCalls==0)
+    assert(tickPain(p,state,500) and PainCare.queue(p,state,bottle,500))
+    assert(#p.queue==1 and p.queue[1].item==bottle and not PainCare.queue(p,state,bottle,500))
+end)
+
+test("an exact stock MP pill can confirm after a foreign successor, then only repeat after wear-off",function()
+    client,server=true,false
+    local p,_,bottle=medFixture()
+    local state={}
+    assert(tickPain(p,state,0) and PainCare.queue(p,state,bottle,0))
+    local a=p.queue[1]; native(a); a.autoMindfulOwner=state; a:start()
+    local successor={Type="NativePlayerAction"}
+    ISTimedActionQueue.add(successor)
+    a:perform(); a.autoMindfulFinished=true
+    assert(p.queue[1]==successor and p.doseCalls==0 and bottle.uses==10)
+    assert(not tickPain(p,state,250))
+    PainCare.detach(p,state,250)
+    assert(not tickPain(p,state,750) and p.data.AutoMindfulPainCare.phase=="submitted")
+    client,server=false,true
+    assert(a:complete())
+    client,server=true,false
+    p.netEffect,p.netDelta=p.pendingEffect,.45
+    assert(not tickPain(p,state,1000) and p.data.AutoMindfulPainCare.phase=="active")
+    assert(p.queue[1]==successor and not successor.autoMindfulOwner and p.doseCalls==1 and bottle.uses==9)
+    p.queue={}
+    p.netEffect,p.netDelta=-.2,.45
+    assert(not tickPain(p,state,1500) and not tickPain(p,state,2500))
+    p.netDelta=0
+    assert(not tickPain(p,state,2750) and tickPain(p,state,3750))
+    assert(PainCare.queue(p,state,bottle,3750) and not PainCare.queue(p,state,bottle,3750))
+end)
+
 print("stock pain lifecycle: "..passed.." passed; native/server boundaries doubled")

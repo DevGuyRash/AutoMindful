@@ -9,7 +9,7 @@ local function queued(p) return ISTimedActionQueue.getTimedActionQueue(p).queue 
 local function pill(container, uses, fullType)
     local item = T.item("DrainableComboItem",{fullType=fullType or "Base.Pills",name="Painkillers",uses=uses or 5})
     function item:getCurrentUses() return self.uses end
-    function item:getUseDelta() return 0.1 end
+    function item:getUseDelta() return self:getFullType()=="Base.PillsVitamins" and 0.2 or 0.1 end
     function item:getOnEat() return nil end
     function item:getReplaceOnDeplete() return nil end
     return T.add(container,item)
@@ -205,6 +205,82 @@ for _,abandon in ipairs({false,true}) do
     C.stop(p)
 end
 print("PASS foreign action identity is preserved and ambiguous completion or cancellation never redoses")
+
+do
+    local p=survivor()
+    local bottle=pill(p.inventory,5)
+    local vitamin=pill(p.inventory,5,"Base.PillsVitamins")
+    begin(p,"meditation",false)
+    local takesVitamin=T.action(p,"ISTakePillAction",function()
+        vitamin.uses=vitamin.uses-1
+        p.values.FATIGUE=0.15
+    end)
+    takesVitamin.item=vitamin
+    ISTimedActionQueue.add(takesVitamin)
+    p.values.PAIN=18
+    T.tick(p,false)
+    assert(queued(p)[1]==takesVitamin and p.nativeHead==takesVitamin.action and not takesVitamin.stopped
+        and not takesVitamin.autoMindfulOwner and p.pillRequests==0)
+    assert(p.data.AutoMindfulPainCare.phase=="initial","Plain vitamins are not an ambiguous analgesic episode")
+    takesVitamin:perform()
+    local action=nextPill(p)
+    assert(action.item==bottle and p.pillRequests==1 and p.doses==0 and vitamin.uses==4)
+    action:perform()
+    assert(bottle.uses==4 and p.doses==1)
+    C.stop(p)
+end
+print("PASS manual plain vitamins do not lock out a subsequent legitimate painkiller")
+
+for _,timing in ipairs({"immediate","delayed","too late"}) do
+    local p=survivor()
+    local bottle=pill(p.inventory,5)
+    p.delayPainReceipt=timing~="immediate"
+    begin(p,"meditation",false)
+    p.values.PAIN=18
+    local dose=nextPill(p)
+    local foreign=T.action(p,"NativeManualWork")
+    local child=T.action(p,"NativeManualChild")
+    function foreign:start() ISTimedActionQueue.add(child) end
+    ISTimedActionQueue.add(foreign)
+    dose:perform() -- stock completion starts the foreign successor in the same call
+    local handle=foreign.action
+    T.tick(p,false)
+    assert(queued(p)[1]==foreign and queued(p)[2]==child and p.nativeHead==handle
+        and foreign.begins==1 and not foreign.autoMindfulOwner and not child.autoMindfulOwner)
+    assert(p.pillRequests==1)
+    if timing=="delayed" then
+        for _=1,2 do T.tick(p,false) end
+        assert(p.doses==0 and p.data.AutoMindfulPainCare.phase=="submitted")
+        p.pendingPainReceipt()
+        T.tick(p,false)
+    elseif timing=="too late" then
+        for _=1,9 do T.tick(p,false) end
+        assert(p.data.AutoMindfulPainCare.phase=="uncertain","The detached receipt has the same acknowledgement deadline")
+        p.pendingPainReceipt()
+        T.tick(p,false)
+    end
+    assert(p.data.AutoMindfulPainCare.phase==(timing=="too late" and "uncertain" or "active"))
+    assert(p.doses==1 and p.pillRequests==1 and bottle.uses==4 and not foreign.stopped)
+    foreign:perform()
+    assert(queued(p)[1]==child and p.nativeHead==child.action and child.begins==1 and not child.stopped)
+    child:perform()
+    p.effect,p.painDelta=-0.1,0
+    T.tick(p,false)
+    assert(p.pillRequests==1,"Never repeat on the first zero sample")
+    if timing=="too late" then
+        for _=1,15 do T.tick(p,false) end
+        assert(p.pillRequests==1 and p.doses==1 and bottle.uses==4,"A late unattributable effect must not permit a retry")
+    else
+        p.delayPainReceipt=false
+        local repeated=nextPill(p)
+        assert(repeated~=dose and repeated.item==bottle and p.pillRequests==2)
+        repeated:perform()
+        for _=1,6 do T.tick(p,false) end
+        assert(p.pillRequests==2 and p.doses==2 and bottle.uses==3,"Exactly one repeat after a confirmed effect wore off")
+    end
+    C.stop(p)
+end
+print("PASS immediate and bounded delayed owned receipts survive foreign successors without touching their queue")
 
 local restarted=survivor()
 pill(restarted.inventory,5)

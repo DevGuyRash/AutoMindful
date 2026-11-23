@@ -634,5 +634,91 @@ do
     C.stop(p)
 end
 
-print("SCHEDULER INTEGRATION PASS 25 cases; "..(installedGate and "installed Lifestyle predicates; " or "mock Lifestyle predicates; ")
+-- A recovery opening is a real interrupted opportunity, not a Meditation
+-- completion. Even when every such opening is claimed by another mod and
+-- drains below the Yoga gate, the second interrupted leg leaves Yoga due.
+do
+    local p=yogaOnly(3,.24)
+    p.yoga={10,0,0}
+    local options=require "AutoMindful/Options"
+    local original=options.minimumTier
+    options.minimumTier=function() return 0 end
+    assert(C.start(p,"both",false))
+    for i=1,2 do
+        local med=await(p,"Meditation")
+        for _=1,23 do step(p) end
+        p.values.ENDURANCE=.96; step(p)
+        assert(med.stopped and not queue(p)[1] and not p.data.AutoMindfulLastCompleted)
+        local workout=T.action(p,"UnrelatedFitnessProducer",function() p.values.ENDURANCE=.24 end)
+        ISTimedActionQueue.add(workout)
+        for _=1,6 do step(p); assertUntouchedFitness(p,workout,workout.action) end
+        workout:perform()
+    end
+    local s=C.status(p)
+    assert(s.cycle.due=="yoga" and s.cycle.lastCompleted==nil and s.cycle.skills.meditation.completed==0,
+        "Two actual recovery handoffs must owe Yoga without a fabricated Meditation receipt")
+    local bridge=await(p,"Meditation")
+    p.values.ENDURANCE=.61
+    local yoga=await(p,"Yoga",bridge)
+    assert(bridge.stopped and not bridge.autoMindfulFinished and count(p,"Yoga")==1)
+    assert(not p.data.AutoMindfulLastCompleted and C.status(p).cycle.skills.yoga.completed==0)
+    yoga:perform(); await(p,"Meditation")
+    assert(p.data.AutoMindfulLastCompleted=="yoga")
+    C.stop(p); options.minimumTier=original
+    print("PASS capped Both serves Yoga after actual recovery openings and exhausted foreign returns")
+end
+
+-- Pose gains are provisional: native stop may deduct more than the pose
+-- earned. Count only time with this survivor's exact started Yoga and use
+-- its post-stop skill tuple, not the next poll after a long foreign action.
+do
+    local p=yogaOnly(1,1)
+    p.yoga,p.sitting={3,100,750},false
+    assert(C.start(p,"yoga",false))
+    local before=100
+    for n=1,12 do
+        local yoga=await(p,"Yoga")
+        p.hours=p.hours+.51; p.yoga[2]=p.yoga[2]+4; step(p)
+        function yoga:onStop() self.character.yoga[2]=math.max(0,self.character.yoga[2]-20) end
+        local workout=T.action(p,"IndependentAction")
+        ISTimedActionQueue.add(workout)
+        step(p)
+        local handle=workout.action
+        assert(yoga.stopped and not yoga.autoMindfulFinished and not p.data.AutoMindfulLastCompleted)
+        assert(p.yoga[2]<=before,"Native-style early stop erased this pose")
+        before=p.yoga[2]
+        p.hours=p.hours+12
+        for _=1,6 do step(p); assertUntouchedFitness(p,workout,handle) end
+        if n<12 then assert(C.status(p).active,"Foreign time must never consume the six-hour budget") end
+        if not C.status(p).active then
+            assert(n==12 and C.status(p).cycle.skills.yoga.completed==0 and C.status(p).message:find("no XP",1,true))
+            workout:perform(); break
+        end
+        workout:perform()
+    end
+    local s=C.status(p)
+    assert(not s.active and #p.cards==1 and p.yoga[2]==0 and s.cycle.skills.yoga.positiveXPGains==0,
+        "Repeated gross poses with zero retained gains must stop rather than reset the watchdog")
+    print("PASS non-retained Yoga XP cannot erase twelve interrupted opportunities or charge foreign hours")
+end
+
+-- Allow real gains during an unusually long single course; don't stop it
+-- at six hours solely because its natural terminal receipt is still ahead.
+do
+    local p=yogaOnly(1,1); p.yoga,p.sitting={3,100,750},false
+    assert(C.start(p,"yoga",false))
+    local yoga=await(p,"Yoga")
+    for _=1,7 do p.hours=p.hours+1; p.yoga[2]=p.yoga[2]+3; step(p); assert(queue(p)[1]==yoga and C.status(p).active) end
+    function yoga:onStop() self.character.yoga[2]=self.character.yoga[2]-4 end
+    local other=T.action(p,"IndependentAction"); ISTimedActionQueue.add(other); step(p)
+    assert(yoga.stopped and p.yoga[2]==117 and queue(p)[1]==other and not other.autoMindfulOwner)
+    step(p)
+    local s=C.status(p)
+    assert(s.active and s.cycle.skills.yoga.positiveXPGains==1 and s.cycle.skills.yoga.hoursWithoutXP==0
+        and s.cycle.skills.yoga.completed==0 and not s.cycle.lastCompleted)
+    other:perform(); C.stop(p)
+    print("PASS real post-penalty gain resets only Yoga's own watchdog without inventing completion")
+end
+
+print("SCHEDULER INTEGRATION PASS 28 cases; "..(installedGate and "installed Lifestyle predicates; " or "mock Lifestyle predicates; ")
     .."explicit game-boundary doubles, not live player or XP evidence")

@@ -206,11 +206,18 @@ for _, missing in ipairs({false, true}) do
     start(p)
     step(p)
     local status = C.status(p)
-    assert(not status.active and status.phase == "stopped" and status.message:find("boredom is too high", 1, true),
-        "Disabled or unavailable optional care must retain the normal native blocker")
-    assert(not head(p) and count(p, "Yoga") == 0 and count(p, "Meditation") == 0 and #p.cards == 1)
-    unchangedYogaCycle(p)
-    print("PASS " .. (missing and "missing provider metadata" or "disabled setting") .. " uses unchanged training fallback")
+    if missing then
+        assert(status.active and status.phase == "practice-care" and head(p).Type == "Yoga" and status.tierGoal == nil)
+        unchangedYogaCycle(p)
+        C.stop(p)
+        print("PASS missing provider metadata keeps native direct care but suppresses unsupported numeric tiers")
+    else
+        assert(not status.active and status.phase == "stopped" and status.message:find("boredom is too high", 1, true),
+            "Disabled optional care must retain the normal native blocker")
+        assert(not head(p) and count(p, "Yoga") == 0 and count(p, "Meditation") == 0 and #p.cards == 1)
+        unchangedYogaCycle(p)
+        print("PASS disabled setting uses unchanged training fallback")
+    end
 end
 enabled, version = true, Facts.version
 

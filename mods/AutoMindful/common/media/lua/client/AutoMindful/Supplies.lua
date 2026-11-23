@@ -334,50 +334,88 @@ function Supplies.chooseTransfer(player, source, kind, includeNearby, rejected)
     return nil, reason or scan.fluidReason or "A clean empty drinking vessel is needed for bulk liquids."
 end
 
--- Inspect only the already replicated items of one recalled static stop.
--- No load request, radius scan, adjacent container refresh, or hidden contents.
-function Supplies.scoutedStock(player,kind,container,rejected)
-    if not container:isExplored() then return false end
-    local items=container:getItems()
-    local size=items:size()
-    if size==0 then return false,not isClient() end
-    local carried
-    for i=0,math.min(size,128)-1 do
-        local item=items:get(i)
-        if item and item:getContainer()==container and not rejectedItem(rejected,item:getID()) then
-            local entry={item=item,owned=false}
-            if canCollect(player,entry) then
-                if kind=="literature" then
-                    if Supplies.eligibleLiterature(player,item) then return true end
-                elseif kind=="pain" then
-                    if PainCare.eligible(item) then return true end
-                else
-                    local d=Consumables.inspect(player,item,false)
-                    if d[kind] then
-                        if not d.needsVessel and Consumables.plan(player,d,kind) then return true end
-                        if d.needsVessel then
-                            -- An ordinary scout can still try other vessels.
-                            -- Recall a donor only with a known compatible main-inventory vessel.
-                            if not carried then
-                                carried={}
-                                local available=player:getInventory():getItems()
-                                for j=0,math.min(available:size(),128)-1 do
-                                    local vessel=available:get(j)
-                                    if vessel and not rejectedItem(rejected,vessel:getID()) and Fluids.emptyVessel(vessel) then
-                                        carried[#carried+1]=vessel
-                                        if #carried>=8 then break end
-                                    end
-                                end
-                            end
-                            entry.description=d
-                            for _,vessel in ipairs(carried) do
-                                if transferCompatible(player,entry,{item=vessel,owned=true}) then return true end
-                            end
-                        end
+-- The radius report can show potential donors. Admission must instead prove
+-- a usable current portion. For a bulk donor the vessel must travel with us
+-- or already be positively visible in the same holder (or same ground tile).
+-- No loot refresh, load request, remote transfer, or inferred empty vessel.
+function Supplies.scoutProbe(player,kind,rejected)
+    local inventory=player:getInventory()
+    local carried,byHolder=nil,{}
+    local function vessels(holder,owned,ground)
+        local results,visited,left={},{},256
+        local function visit(container,depth)
+            if visited[container] or left<=0 then return end
+            visited[container]=true
+            local items=container:getItems()
+            for i=0,math.min(items:size(),left)-1 do
+                if left<=0 then break end
+                left=left-1
+                local item=items:get(i)
+                if item and item:getContainer()==container then
+                    if not rejectedItem(rejected,item:getID()) and Fluids.emptyVessel(item) then
+                        results[#results+1]={item=item,owned=owned}
+                    elseif owned and depth<8 and instanceof(item,"InventoryContainer") then
+                        visit(item:getInventory(),depth+1)
                     end
                 end
             end
         end
+        if ground then
+            local objects=holder:getWorldObjects()
+            for i=0,math.min(objects:size(),128)-1 do
+                local object=objects:get(i)
+                local item=object and object:getItem()
+                if item and item:getWorldItem()==object and object:getSquare()==holder
+                        and not rejectedItem(rejected,item:getID()) and Fluids.emptyVessel(item) then
+                    results[#results+1]={item=item,owned=false}
+                end
+            end
+        else visit(holder,0) end
+        return results
+    end
+    return function(entry)
+        local item,holder=entry.item,entry.container
+        if not item or rejectedItem(rejected,item:getID()) then return false end
+        if holder then
+            if item:getContainer()~=holder or not holder:contains(item) then return false end
+        else
+            local world=item:getWorldItem()
+            if not world or not entry.square or world:getSquare()~=entry.square or world:getItem()~=item then return false end
+        end
+        local source={item=item,owned=false}
+        if not canCollect(player,source) then return false end
+        if kind=="literature" then return Supplies.eligibleLiterature(player,item) end
+        if kind=="pain" then return PainCare.eligible(item) end
+        local d=Consumables.inspect(player,item,false)
+        if not d[kind] then return false end
+        if not d.needsVessel then return Consumables.plan(player,d,kind)~=nil end
+        source.description=d
+        local function viable(list)
+            for _,v in ipairs(list) do
+                if transferCompatible(player,source,v) then
+                    local fc=Fluids.container(v.item)
+                    local available=math.min(d.remainingLiters,fc:getCapacity()-fc:getAmount())
+                    if available>0 and Consumables.plan(player,Fluids.project(d,available),kind) then return true end
+                end
+            end
+        end
+        carried=carried or vessels(inventory,true,false)
+        if viable(carried) then return true end
+        local key=holder or entry.square
+        if not byHolder[key] then byHolder[key]=vessels(key,false,holder==nil) end
+        return viable(byHolder[key])==true
+    end
+end
+
+-- Read only already-replicated stock of this recalled stop. MP's empty list
+-- is never proof of emptiness; observing positive contents needs no request.
+function Supplies.scoutedStock(player,kind,container,rejected)
+    local items=container:getItems()
+    local size=items:size()
+    if size==0 then return false,container:isExplored() and not isClient() end
+    local probe=Supplies.scoutProbe(player,kind,rejected)
+    for i=0,math.min(size,128)-1 do
+        if probe({item=items:get(i),container=container}) then return true end
     end
     return false
 end
@@ -487,11 +525,29 @@ local function guardCareLoanAction(action, accessible)
     return true
 end
 
+local function refuseMerge() return false end
+local function onExactTransferComplete() end
+
+local function exactTransfer(player, item, source, target)
+    local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, source, target)
+    if action.canMergeAction then
+        -- Stock's merged head replaces self.item. An exact loan guard and
+        -- ownership receipt belong to one item, not a batch of same-shelf moves.
+        action.canMergeAction = refuseMerge
+        -- Stock also rejects merging an incoming action with an onComplete.
+        -- This protects our action if some other work becomes the native head.
+        if action.setOnComplete and not action.onCompleteFunc then
+            action:setOnComplete(onExactTransferComplete)
+        end
+    end
+    return action
+end
+
 function Supplies.transfer(player, item, careLoan)
     local source = item:getContainer()
     if source == player:getInventory() then return true end
     if not player:getInventory():hasRoomFor(player, item) then return false end
-    local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, source, player:getInventory())
+    local action = exactTransfer(player, item, source, player:getInventory())
     if action.ignoreAction then return false end
     if careLoan then
         if not guardCareLoanAction(action, function()
@@ -573,15 +629,37 @@ function Supplies.finishLoan(player, loan, now)
     return true
 end
 
+local favoriteReturnNotice = "Borrowed supplies marked as favorites stay in your inventory. Unfavorite them to allow their return."
+
+local function favorite(item)
+    return item.isFavorite and item:isFavorite() == true
+end
+
+local function protectFavoriteReturn(action, item)
+    local nativeValid = action.isValid
+    action.isValid = function(self, ...)
+        return not favorite(self.item or item) and nativeValid(self, ...)
+    end
+end
+
 function Supplies.returnAction(player, loan)
     local inventory = player:getInventory()
     local origin = loan.origin
-    local item
+    local item, protected
     for _, candidate in ipairs(loan.items) do
         local current = Supplies.inventoryItem(player, candidate)
-        if current and current:getContainer() ~= origin then item = current; break end
+        if current and current:getContainer() ~= origin then
+            if favorite(current) then protected = true
+            else item = current; break end
+        end
     end
-    if not item then return nil, nil, true end
+    if not item then
+        -- Native container returns silently do nothing for a favorite, and
+        -- native exact placement can drop it. Don't queue either kind; leave
+        -- this loan pending without blocking other loans or training.
+        if protected then return nil, favoriteReturnNotice end
+        return nil, nil, true
+    end
     local function painReturnAllowed()
         -- Returning a borrowed bottle does not require permission to take a new dose.
         return Supplies.painLoanAllowed(player, loan, true)
@@ -599,6 +677,7 @@ function Supplies.returnAction(player, loan)
         if loan.pain and not guardCareLoanAction(action, painReturnAllowed) then
             return nil, "Borrowed supplies stay with you because their original floor square cannot be accessed."
         end
+        protectFavoriteReturn(action, item)
         if not action:isValid() then return nil, "Borrowed supplies stay with you because the original floor square cannot accept them." end
         return action
     end
@@ -612,9 +691,10 @@ function Supplies.returnAction(player, loan)
     if not origin:hasRoomFor(player, item) then
         return nil, "Borrowed supplies stay with you because their original container is full."
     end
-    local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, item:getContainer(), origin)
+    local action = exactTransfer(player, item, item:getContainer(), origin)
     local guarded = not action.ignoreAction and ((loan.pain and guardCareLoanAction(action, painReturnAllowed))
         or (not loan.pain and guardStorageAction(player, action, origin)))
+    if guarded then protectFavoriteReturn(action, item) end
     if not guarded or not action:isValid() then
         return nil, "Borrowed supplies stay with you because the original container cannot currently accept them."
     end

@@ -464,7 +464,7 @@ test("Basic opens the queue for panic but only a late matching native reading is
     local beforeText,beforeLS=SandboxVars.Text,SandboxVars.LS
     SandboxVars.Text,SandboxVars.LS={DividerMeditationNew=true},{MoodUpdate=5}
     local p=survivor(3)
-    p.values.PANIC,p.values.FATIGUE=7,0.65 -- sleepy, but a separate native restriction prevents sleep
+    p.values.PANIC,p.values.FATIGUE,p.panicMoodle=7,0.65,1 -- the actual native moodle prevents sleep
     started(p,"recovery")
     local med=awaitHead(p,"Meditation")
     local tier=p.data.LSMoodles.MindfulState

@@ -3,7 +3,9 @@ package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
 package.loaded["AutoMindful/Consumables"] = {inspect = function(_, item)
     return {food = item.food == true and not item.unsafe, water = item.water == true and not item.unsafe}
 end}
-package.loaded["AutoMindful/Supplies"] = {literatureInfo = function(_, item)
+package.loaded["AutoMindful/Supplies"] = {scoutProbe=function()
+    return function(entry) return entry.item and not entry.item.unsafe and not entry.item.noUsableVessel end
+end,literatureInfo = function(_, item)
     if not item.book then return false end
     if item.cooldown then return "cooldown" end
     return item.lastRead and "reread" or "unread", item.lastRead
@@ -31,6 +33,7 @@ local function square(x,y,z)
     function s:getX() return self.x end
     function s:getY() return self.y end
     function s:getZ() return self.z end
+    function s:canReachTo(other) return not other.acrossWall end
     function s:getObjects() return list(self.objects) end
     function s:getWorldObjects() return list(self.world) end
     cells[x..":"..y..":"..s.z] = s
@@ -104,16 +107,24 @@ assert(snapshot.radius==10 and snapshot.scannedAt==1000 and snapshot.food[1].own
 assert(snapshot.unloadedSquares>0 and #snapshot.unknownTargets==0)
 assert(find("food").key=="food:3:0:0", "known targets skip adjacent sources included in snapshot")
 assert(find("food",10,{["food:3:0:0"]=true}).key=="food:8:0:0")
+adjacent.square.acrossWall=true
+assert(find("food").square==adjacent.square,"A geometrically adjacent but unreachable holder needs a native approach")
+adjacent.square.acrossWall=false
+assert(find("food").square==near.square,"A normally reachable neighbor is handled without travel")
 assert(find("food",10,{["food:3:0:0"]=999}).key=="food:3:0:0")
 local before=reads
 assert(Nearby.scan(player,origin,10)==snapshot and reads==before, "cache reused across needs")
 near.containers[1].items[1].unsafe=true
-assert(find("food").key=="food:3:0:0", "cached positive remains bounded to its short lifetime")
+assert(find("food").key=="food:8:0:0", "admission rechecks even a cached positive before choosing a route")
 now=1999; assert(Nearby.scan(player,origin,10)==snapshot)
 now=2000; assert(find("food").key=="food:8:0:0", "cache expires after one second")
 near.containers[1].items[1].unsafe=false
 Nearby.scan(player,origin,10,true)
 assert(find("food").key=="food:3:0:0", "forced scan refreshes data")
+near.containers[1].items[1].noUsableVessel=true
+assert(find("food").square==far.square,"A potential but unusable bulk donor cannot hide a usable alternative")
+near.containers[1].items[1].noUsableVessel=false
+assert(find("food").square==near.square,"A newly viable holder is selectable from the same read-only snapshot")
 near.containers[1].items={}; refresh()
 assert(not find("food",5), "radius honored")
 object(square(7,8),{item({food=true})}); object(square(2,0,1),{item({food=true})})

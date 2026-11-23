@@ -222,6 +222,33 @@ test("a pre-existing capped minimum keeps one native leg, not an empty rotation"
     C.stop(p)
 end)
 
+test("already-satisfied pins allow cooperative rotation in either direction, including an owed leg",function()
+    local p=new(10,10)
+    config.capped.meditation,config.capped.yoga=2,2
+    nativeTier(p,"meditation",.4); nativeTier(p,"yoga",.5)
+    p.data.AutoMindfulLastCompleted="yoga"
+    begin(p,"both")
+    for _,kind in ipairs({"Meditation","Yoga"}) do
+        for i=1,2 do
+            local practice=await(p,kind)
+            local foreign=T.action(p,"IndependentJob")
+            Q.add(foreign); step(p)
+            local native=foreign.action
+            for _=1,6 do
+                step(p)
+                assert(head(p)==foreign and p.nativeHead==native and not foreign.autoMindfulOwner and foreign.begins==1 and not foreign.stopped)
+            end
+            assert(practice.stopped and not practice.autoMindfulFinished)
+            foreign:perform()
+        end
+        local due=kind=="Meditation" and "yoga" or "meditation"
+        local c=C.status(p).cycle
+        assert(c.due==due and c.lastCompleted=="yoga" and p.data.AutoMindfulLastCompleted=="yoga")
+        assert(c.skills.meditation.completed==0 and c.skills.yoga.completed==0)
+    end
+    await(p,"Meditation"); C.stop(p)
+end)
+
 test("optional tier failures keep normal capped practice and rearm after a setting change",function()
     local p=new(10,10)
     config.capped.meditation=1

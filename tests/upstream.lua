@@ -182,3 +182,58 @@ assert(failedPoses > 0,"Pose failures must be exercised by the deterministic ran
 assert(T.hasHistory(p,"read"),"Boredom recovery must use a provision and resume")
 print("UPSTREAM PASS real Lifestyle action logic and hidden-skill thresholds reach 10/10; poses="..poses.." failed="..failedPoses.." meditationUpdates="..medTicks)
 print("UPSTREAM SCOPE accelerated action clock; modeled player, queues, mood application and raw-metadata XP receiver; not native engine or multiplayer progression")
+
+-- Read the installed hidden-skill tuple on each side of real grantXP/stop.
+-- Only the clock, player and waiting foreign queue owner are modeled.
+do
+    local q=ISTimedActionQueue.getTimedActionQueue(p)
+    local oldRandom,oldExhaust=ZombRand,SandboxVars.Yoga.Exhaustion
+    ZombRand=function(low,high)
+        if low==100 and high==nil then return 99 end -- deterministic successful native pose roll
+        return oldRandom(low,high)
+    end
+    SandboxVars.Yoga.Exhaustion=1
+    p.data.LSHiddenSkills.Yoga={3,100,750}
+    p.values.ENDURANCE,p.values.HUNGER,p.values.THIRST,p.sitting=1,.05,0,false
+    local last=p.data.AutoMindfulLastCompleted
+    assert(C.start(p,"yoga",false))
+    local rounds,prior=0,100
+    for n=1,12 do
+        for _=1,30 do
+            T.now=T.now+250; C.update(p)
+            if q.queue[1] then break end
+        end
+        local a=assert(q.queue[1],C.status(p).message)
+        assert(a.Type=="LSYogaAction" and a.autoMindfulOwner)
+        a:waitToStart(); a:start(); a.testStarted=true
+        T.now=T.now+250; C.update(p)
+        for _=1,32 do
+            a:update()
+            if a.poseCount>0 then break end
+        end
+        local gross=HiddenSkills.getSkill(p,"Yoga")[2]
+        assert(a.poseCount==1 and gross>prior,"Expected a real pose gain at interruption "..n)
+        p.hours=p.hours+.51
+        T.now=T.now+250; C.update(p)
+        local foreign=T.action(p,"OtherProducer")
+        ISTimedActionQueue.add(foreign)
+        T.now=T.now+250; C.update(p)
+        local retained=HiddenSkills.getSkill(p,"Yoga")[2]
+        assert(a.autoMindfulStopped and not a.autoMindfulFinished and retained<=prior)
+        prior,rounds=retained,n
+        local handle=foreign.action
+        p.hours=p.hours+12
+        for _=1,6 do
+            T.now=T.now+250; C.update(p)
+            assert(q.queue[1]==foreign and p.nativeHead==handle and foreign.begins==1 and not foreign.stopped
+                and not foreign.cancelled and not foreign.autoMindfulOwner)
+        end
+        assert(C.status(p).active==(n<12),"Foreign hours and provisional pose gains must not own the clock")
+        foreign:perform()
+    end
+    local s=C.status(p)
+    assert(rounds==12 and prior==0 and not s.active and s.cycle.skills.yoga.completed==0
+        and s.cycle.skills.yoga.positiveXPGains==0 and p.data.AutoMindfulLastCompleted==last)
+    print("UPSTREAM PASS 12 interrupted real Lifestyle poses, native retained XP 100->0, bounded at 6.12 owned hours; 144 foreign hours excluded")
+    ZombRand,SandboxVars.Yoga.Exhaustion=oldRandom,oldExhaust
+end

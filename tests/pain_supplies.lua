@@ -39,6 +39,10 @@ local function container(s,kind)
     function c:getSourceGrid()return self.square end
     function c:getType()return self.kind end
     function c:getItems()return list(self.items)end
+    function c:contains(item)
+        for _, carried in ipairs(self.items) do if carried == item then return true end end
+        return false
+    end
     function c:getOutermostContainer()return self end
     function c:isExplored()return self.explored end
     function c:getContainingItem()end

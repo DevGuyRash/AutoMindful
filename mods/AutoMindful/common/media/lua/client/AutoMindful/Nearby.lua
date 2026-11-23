@@ -174,12 +174,25 @@ function Nearby.scan(player, originSquare, radius, force)
     return result
 end
 
-function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWorldWater)
+function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWorldWater, rejectedItems)
     if kind ~= "food" and kind ~= "water" and kind ~= "literature" and kind ~= "pain" then return nil end
     local here = player:getSquare()
     if not here or not originSquare or here:getZ() ~= originSquare:getZ() then return nil end
     local snapshot = Nearby.scan(player, originSquare, radius)
     rejectedTargets = rejectedTargets or {}
+    rejectedItems=rejectedItems or {}
+    local probe
+    local function usable(entry)
+        if entry.unknown then return true end
+        if entry.object then
+            local reject=rejectedItems[entry.object]
+            if type(reject)=="number" and getTimestampMs()>=reject then rejectedItems[entry.object],reject=nil,nil end
+            return not reject and Nearby.waterObject(player,entry)~=nil
+        end
+        if not Storage.permitted(player,entry.square) then return false end
+        probe=probe or Supplies.scoutProbe(player,kind,rejectedItems)
+        return probe(entry)
+    end
     local function choose(entries, allowAdjacent, best)
         for _, entry in ipairs(entries) do
             local square = entry.square
@@ -189,11 +202,15 @@ function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWo
             if type(rejection) == "number" and getTimestampMs() >= rejection then
                 rejectedTargets[targetKey], rejection = nil, nil
             end
-            if not rejection and (allowAdjacent or (entry.part and not Storage.vehicleAccessible(player, entry.part))
-                    or math.abs(dx) > 1 or math.abs(dy) > 1) then
+            -- Geometric neighbors behind a wall are not in the native adjacent
+            -- supply pass. Ask normal pathfinding to approach them.
+            if not rejection and (allowAdjacent or math.abs(dx)>1 or math.abs(dy)>1
+                    or (entry.part and not Storage.vehicleAccessible(player,entry.part))
+                    or (not entry.part and square~=here and not here:canReachTo(square))) then
                 local distance = dx * dx + dy * dy
-                if not best or distance < best.distance or (distance == best.distance and (targetKey < best.key
-                        or (targetKey == best.key and entry.object and entry.item and entry.item == best.item and not best.object))) then
+                if (not best or distance < best.distance or (distance == best.distance and (targetKey < best.key
+                        or (targetKey == best.key and entry.object and entry.item and entry.item == best.item and not best.object))))
+                        and usable(entry) then
                     -- Do not mutate the shared snapshot while choosing targets.
                     best = {square = square, key = targetKey, distance = distance,
                         unknown = entry.unknown, container = entry.container, storageScoped = entry.storageScoped,

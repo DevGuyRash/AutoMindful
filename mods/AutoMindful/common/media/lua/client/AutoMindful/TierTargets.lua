@@ -1,6 +1,20 @@
 local Facts = require "AutoMindful/WellnessFacts"
 
 local Tiers = {}
+
+function Tiers.wellnessEnabled()
+    return not (SandboxVars and SandboxVars.Text and SandboxVars.Text.DividerMeditationNew == false)
+end
+
+function Tiers.providerCompatible()
+    -- In-game registry mismatch cannot certify the private tier table.
+    if not getModInfoByID then return true end -- portable fixtures use pinned upstream
+    local ok, version = pcall(function()
+        local mod = getModInfoByID("LifestyleHobbies")
+        return mod and tostring(mod:getModVersion())
+    end)
+    return ok and version == Facts.version
+end
 local kinds = {
     meditation = {
         key="MindfulState", thresholds={0.2, 0.4, 0.6}, ranks=Facts.meditationUnlocks,
@@ -33,7 +47,7 @@ end
 
 function Tiers.clamp(kind, tier, skill)
     local spec = kinds[kind]
-    if not spec or type(tier) ~= "number" or tier < 1 or tier % 1 ~= 0
+    if not spec or not Tiers.providerCompatible() or type(tier) ~= "number" or tier < 1 or tier % 1 ~= 0
             or type(skill) ~= "number" or not (skill >= 0 and skill <= 10) or skill % 1 ~= 0 then return 0 end
     for target = math.min(tier, #spec.ranks), 1, -1 do
         if skill >= spec.ranks[target] then return target end
@@ -51,7 +65,7 @@ end
 
 function Tiers.current(player, kind)
     local spec = kinds[kind]
-    if not spec or (SandboxVars and SandboxVars.Text and SandboxVars.Text.DividerMeditationNew == false) then return nil end
+    if not spec or not Tiers.wellnessEnabled() or not Tiers.providerCompatible() then return nil end
     local ok, value = pcall(moodleData, player, spec.key)
     -- Lifestyle's rendered Level can lag the action that just changed Value.
     if not ok or type(value) ~= "number" or not (value >= 0 and value <= 1) then return nil end

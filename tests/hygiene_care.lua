@@ -136,7 +136,7 @@ local perfume=bottle("Base.Perfume","PerfumeFloral")
 for _,r in ipairs({{60,.2,0,0},{60.00001,.2,0,1},{70,.2,0,1},{70.002,.4,0,2},{80,.4,0,2},
         {80.0001,.6,0,3},{90,.6,0,3},{90.001,.8,0,4},{92,.8,.001,2},{78,.4,.001,0},{65,0,0,0}})do
     setNeed(r[1],r[2],r[3]);assert(Care.need(player)==r[4],"need boundary "..r[1])
-    assert(Care.item(player,perfume)==(r[3]==0 and r[4]>0 and r[4]<=2),"full relief only")
+    assert(Care.item(player,perfume)==(r[3]==0 and r[4]>0),"scent must improve the current moodle")
 end
 setNeed(75,.4,0)
 assert(Care.item(player,perfume));local cologne=bottle();assert(Care.item(player,cologne))
@@ -169,7 +169,15 @@ end
 
 queue={};setNeed(94,.8,0);visual.blood[0]=.7;visual.dirt[1]=.8
 local sinkSquare=square(2,1,0,"house");local sink=source(sinkSquare)
-assert(not Care.item(player,perfume));local e=assert(Care.inspect(player,sink));assert(Care.accessible(player,e))
+perfume.place=player.inv
+assert(Care.item(player,perfume), "A four-stage moodle can get useful partial relief")
+assert(Care.inspect(player,sink), "A body wash is also a valid follow-up")
+local partial=Care.snapshot(player,perfume)
+player.data.LSMoodles.SmellGood.Value=1
+assert(not Care.receipt(player,partial,"item"),"No partial-relief receipt without the actual dose")
+perfume.amount=partial.amount-partial.dose
+assert(Care.receipt(player,partial,"item") and not Care.item(player,perfume),"Partial relief counts once, not a second dose")
+local e=assert(Care.inspect(player,sink));assert(Care.accessible(player,e))
 assert(Care.validTarget(player,{care=e,square=sinkSquare,object=sink}));assert(not Care.validTarget(player,{care=e,square=home,object=sink}))
 sink.amount=.99; assert(not Care.validTarget(player,e));sink.amount=1
 sink.water=false;assert(not Care.inspect(player,sink));sink.water=true

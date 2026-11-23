@@ -13,7 +13,11 @@ function Menu.fill(menu, player, kind, status, launch)
     for _, entry in ipairs(Tiers.choices(kind)) do
         if entry.tier > 0 then
             local reason
-            if current ~= nil and current >= entry.tier then
+            if not Tiers.providerCompatible() then
+                reason = "Numeric tier goals are not verified for this Lifestyle version."
+            elseif not Tiers.wellnessEnabled() then
+                reason = "Lifestyle Wellness is disabled."
+            elseif current ~= nil and current >= entry.tier then
                 reason = "Already at this tier or higher."
             elseif skill == nil or current == nil then
                 reason = "Current skill or moodle is unavailable."

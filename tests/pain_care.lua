@@ -42,8 +42,8 @@ local function fixture(pain)
             if f.fail then error("throws after queueing once") end
         end}
     function f:tick(now)
-        P.observe(p,self.state,now)
         P.observeForeign(p,self.state,self.q.queue,now)
+        P.observe(p,self.state,now)
         return P.wanted(p,self.state,now)
     end
     function f:queue(now)
@@ -169,6 +169,37 @@ test("foreign pill overrides even apparently successful automatic action",functi
     f.q.queue={}; f:effect(0,0)
     assert(not f:tick(1000) and not f:tick(2000) and not f:queue(2000))
     assert(f.calls==1)
+end)
+test("foreign plain vitamins wait their turn without poisoning initial or confirmed medication",function()
+    local f=fixture(18)
+    local vitamin=setmetatable({fullType="Base.PillsVitamins",useDelta=.20000000298},{__index=f.item})
+    f.q.queue={{Type="ISTakePillAction",character=f.p,item=vitamin}}
+    assert(not f:tick(0) and not f:queue(0) and f:phase()=="initial")
+    f.q.queue={}
+    assert(f:tick(250) and f:queue(250) and f.calls==1)
+    f:finish(false)
+    f.q.queue={{Type="ISTakePillAction",character=f.p,item=vitamin}}
+    f:effect(5400,.45)
+    assert(not f:tick(500) and f:receipt(500)=="confirmed" and f:phase()=="active")
+    f:effect(0,0)
+    assert(not f:tick(1250) and f:phase()=="active")
+    f.q.queue={}
+    assert(not f:tick(1500) and f:tick(2500) and f:queue(2500) and f.calls==2)
+end)
+test("lookalike vitamins with hooks, unknown medicines and unreadable items remain ambiguous",function()
+    for _,altered in ipairs({
+        {onEat="MyMod.ReplacePillEffect"}, {requirement={}}, {useDelta=.1}, {kind="Food"},
+        {fullType="Other.PillsVitamins"}, {fullType="Base.PillsSleepingTablets"},
+        {getOnEat=function() error("Unknown script") end},
+    }) do
+        local f=fixture(18)
+        local base=setmetatable({fullType="Base.PillsVitamins",useDelta=.2},{__index=f.item})
+        local vitamin=setmetatable(altered,{__index=base})
+        f.q.queue={{Type="ISTakePillAction",character=f.p,item=vitamin}}
+        assert(not f:tick(0) and f:phase()=="uncertain")
+        f.q.queue={}
+        assert(not f:tick(1000) and not f:queue(1000) and f.calls==0)
+    end
 end)
 test("stale, invalid, or rewound samples do not establish wear-off",function()
     local f=fixture(18); f:effect(.01,.45); assert(not f:tick(0))

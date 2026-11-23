@@ -91,6 +91,16 @@ function PracticeCare.hungerPlan(value,level,tier,ready)
     end
 end
 
+function PracticeCare.healingEnabled(factor)
+    -- Lifestyle defaults a missing option to 2. An explicit 0 is valid and
+    -- disables health recovery, independent of all other tier effects.
+    return factor==nil or (number(factor,10)~=nil and factor>0)
+end
+
+local function effectEnabled(target,readings)
+    return target~="health" or PracticeCare.healingEnabled(type(readings)=="table" and readings.healFactor)
+end
+
 local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
     if input.mindfulEnabled ~= true then return nil end
     local level, tier = rank(input.meditationRank), mindTier(input)
@@ -114,7 +124,7 @@ local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
     -- Dangers and direct resources are checked by the controller first.
     -- Basic is for substantial panic, or enough residual panic to prevent sleep.
     local attempt, passive, passivePanic
-    if input.recovery==true and not input.hungerOnly then
+    if (input.recovery==true or input.sleepRelief==true) and not input.hungerOnly then
         attempt, passive = match("panic", panic and (panic>=25 or (input.sleepBlocked==true and panic>=5)), true)
         if attempt then return attempt end
         passivePanic=passive -- Basic is already easing panic; building Strong need not displace it.
@@ -125,16 +135,17 @@ local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
         if attempt or passive then return attempt,passive end
     end
     if passivePanic then return nil,passivePanic end
-    if input.recovery~=true or input.hungerOnly then return nil end
+    if input.hungerOnly or (input.recovery~=true and input.sleepRelief~=true) then return nil end
     if hunger and hunger <= 0.30 then
         attempt, passive = match("pain", hunger<0.15 and pain and pain>=10 and pain<20 and input.painTreatment==false
             and not input.painReliefActive,
             not yogaPain and not (y and input.preferTraining=="yoga"))
         if attempt or passive then return attempt, passive end
     end
+    if input.recovery~=true then return nil end
     -- Perfect heals general health, not the source of a wound or illness.
     -- Only offer it for mild, stable loss without a competing symptom.
-    attempt, passive = match("health", input.healthSafe==true and health and health>=75 and health<95
+    attempt, passive = match("health", PracticeCare.healingEnabled(input.healFactor) and input.healthSafe==true and health and health>=75 and health<95
         and hunger and hunger<0.15 and pain and pain<=5 and panic and panic<5, true)
     if attempt or passive then return attempt, passive end
     attempt, passive = match("withdrawal", withdrawal and withdrawal>=0.35, false)
@@ -199,7 +210,7 @@ function PracticeCare.acquired(attempt, readings)
     if type(attempt) ~= "table" or attempt.recovery ~= true or attempt.need ~= "mindfulness" then return false end
     local effect = effects[attempt.target]
     local from, after = number(attempt.fromTier, 3), mindTier(readings)
-    return effect ~= nil and effect.tier ~= nil and attempt.targetTier == effect.tier and from ~= nil and from == math.floor(from)
+    return effect ~= nil and effect.tier ~= nil and effectEnabled(attempt.target,readings) and attempt.targetTier == effect.tier and from ~= nil and from == math.floor(from)
         and from < attempt.targetTier and after ~= nil and after >= attempt.targetTier
 end
 
@@ -218,7 +229,7 @@ end
 function PracticeCare.watch(plan, readings)
     local effect = type(plan) == "table" and effects[plan.target]
     local active = mindTier(readings)
-    if not effect or not effect.tier or plan.targetTier~=effect.tier or not active or active<effect.tier then return nil end
+    if not effect or not effect.tier or not effectEnabled(plan.target,readings) or plan.targetTier~=effect.tier or not active or active<effect.tier then return nil end
     local before = measure(readings, plan.target)
     if not before then return nil end
     return {target=plan.target, targetTier=effect.tier, before=before}
@@ -226,7 +237,7 @@ end
 
 function PracticeCare.observed(watch, readings)
     local effect = type(watch) == "table" and effects[watch.target]
-    return type(effect)=="table" and effect.tier ~= nil and watch.targetTier==effect.tier
+    return type(effect)=="table" and effect.tier ~= nil and effectEnabled(watch.target,readings) and watch.targetTier==effect.tier
         and changed(watch.target, watch.before, readings, effect.max==1 and 0.0001 or 0.01)
 end
 

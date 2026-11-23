@@ -41,28 +41,64 @@ local function guard(player)
     if phases[g.phase] then return g end
 end
 
+local function plainStock(item, fullType, useDelta)
+    if item:getFullType() ~= fullType or not instanceof(item, "DrainableComboItem") then return false end
+    local callback = item:getOnEat()
+    return math.abs(item:getUseDelta() - useDelta) < 0.000001
+        and (not callback or callback == "") and not item:getRequireInHandOrInventory()
+end
+
 function PainCare.eligible(item)
     local ok, yes = pcall(function()
-        if item:getFullType() ~= "Base.Pills" or not instanceof(item, "DrainableComboItem") then return false end
+        if not plainStock(item, "Base.Pills", 0.1) then return false end
         local uses = item:getCurrentUses()
         return number(uses) and uses > 0 and uses == math.floor(uses)
-            and math.abs(item:getUseDelta() - 0.1) < 0.000001
-            and (not item:getOnEat() or item:getOnEat() == "")
-            and not item:getRequireInHandOrInventory()
     end)
     return ok and yes == true
 end
 
+local function plainVitamins(item)
+    -- B42 BodyDamage.JustTookPill changes fatigue (and common stress) for
+    -- stock vitamins, not pain timers. A custom callback is not this case.
+    local ok, yes = pcall(plainStock, item, "Base.PillsVitamins", 0.2)
+    return ok and yes == true
+end
+
+local function witnessed(r, state)
+    return r.action.autoMindfulOwner == state and r.action.autoMindfulFinished == true
+        and not r.action.autoMindfulStopped
+end
+
 local function confirm(g, o, state, v, now)
     local r = o.receipt
-    if g.phase == "submitted" and r and not o.foreignPill and v.effect > 0 and v.delta > 0
-        and r.action.autoMindfulOwner == state and r.action.autoMindfulFinished == true
-        and not r.action.autoMindfulStopped and (not r.endedAt or now >= r.endedAt and now-r.endedAt < ACK_MS) then
+    if not r or not witnessed(r, state) then return end
+    r.endedAt = r.endedAt or now
+    if g.phase == "submitted" and not o.foreignPill and v.effect > 0 and v.delta > 0
+        and now >= r.endedAt and now-r.endedAt < ACK_MS then
         -- Normal completion alone proves nothing. Both native fields must
         -- reflect the stock effect after this exact admitted pill action.
         r.confirmed = true
         phase(g, "active")
     end
+end
+
+local function settleReceipt(g, o, state, v, now)
+    local r = o.receipt
+    if not r or not g then return "unconfirmed", "No pending medication receipt" end
+    local function unknown(reason)
+        if g.phase == "submitted" then phase(g, "uncertain") end
+        o.receipt = nil
+        return "unconfirmed", reason
+    end
+    if not number(now) then return unknown("Clock unavailable") end
+    r.endedAt = r.endedAt or now
+    if now < r.endedAt then return unknown("Clock changed during medication acknowledgement") end
+    if v then confirm(g, o, state, v, now) end
+    if r.confirmed then o.receipt=nil; return "confirmed", "Native medication effect observed" end
+    if not witnessed(r, state) or now-r.endedAt >= ACK_MS then
+        return unknown("No native medication effect confirmed; no automatic retry")
+    end
+    return "pending", "Waiting for native medication acknowledgement"
 end
 
 local function desire(g, o, v)
@@ -81,6 +117,7 @@ function PainCare.observe(player, state, now)
     local o, g, v = observer(state), guard(player), read(player)
     if not number(now) or not g or not v then
         o.last, o.clearAt, o.cleanAt = nil, nil, nil
+        if g and o.receipt and o.receipt.detached then settleReceipt(g, o, state, nil, now) end
         return false
     end
     if not o.last or now < o.last or now-o.last > SAMPLE_GAP then
@@ -91,12 +128,16 @@ function PainCare.observe(player, state, now)
         -- Stop/restart discarded the exact local action. Do not retry blindly.
         phase(g, "uncertain")
     end
-    confirm(g, o, state, v, now)
+    if o.receipt and o.receipt.detached then
+        settleReceipt(g, o, state, v, now)
+    else
+        confirm(g, o, state, v, now)
+    end
     if (g.phase == "initial" or g.phase == "wornOff") and effectActive(v) then phase(g, "active") end
     -- A lone old latch is not proof of either consumption or expiry. Unlike a
     -- new uncertain dispatch, it may be rehabilitated by an actually observed
     -- positive native timer AND delta, and then the same verified wear-off.
-    -- A foreign pill in this tick can still invalidate it in observeForeign.
+    -- observeForeign runs first; an ambiguous pill must never rehabilitate it.
     if g.phase == "legacy" and not o.pillInQueue and v.effect > 0 and v.delta > 0 then phase(g, "active") end
     local clear = not effectActive(v) and not mixBlocked(v) and not o.pillInQueue
     if g.phase == "active" and clear then
@@ -133,7 +174,7 @@ function PainCare.observeForeign(player, state, queue, _now)
     for _, action in ipairs(queue or {}) do
         if action.Type == "ISTakePillAction" then
             o.pillInQueue = true
-            if action.autoMindfulOwner ~= state then o.foreignPill = true end
+            if action.autoMindfulOwner ~= state and not plainVitamins(action.item) then o.foreignPill = true end
         end
     end
     if o.pillInQueue then o.clearAt, o.cleanAt = nil, nil end
@@ -183,23 +224,17 @@ end
 -- Caller invokes only after the owned native chain has ended, not at animation
 -- start or based on bottle use count. An MP effect may be replicated later.
 function PainCare.receipt(player, state, now)
-    local o, g = observer(state), guard(player)
-    local r = o.receipt
-    if not r or not g then return "unconfirmed", "No pending medication receipt" end
-    local function unknown(reason)
-        if g.phase == "submitted" then phase(g, "uncertain") end
-        o.receipt = nil
-        return "unconfirmed", reason
-    end
-    if not number(now) then return unknown("Clock unavailable") end
-    r.endedAt = r.endedAt or now
-    if now < r.endedAt then return unknown("Clock changed during medication acknowledgement") end
-    local v = read(player)
-    if v then confirm(g, o, state, v, now) end
-    if r.confirmed then o.receipt=nil; return "confirmed", "Native medication effect observed" end
-    if r.action.autoMindfulStopped or r.action.autoMindfulOwner ~= state or r.action.autoMindfulFinished ~= true
-        or now-r.endedAt >= ACK_MS then return unknown("No native medication effect confirmed; no automatic retry") end
-    return "pending", "Waiting for native medication acknowledgement"
+    return settleReceipt(guard(player), observer(state), state, read(player), now)
+end
+
+-- The scheduler has given up the care batch, not the exact dose witness.
+-- Retire a terminal receipt now, or observe its remaining acknowledgement
+-- window without delaying or touching the player's successor action.
+function PainCare.detach(player, state, now)
+    local o = state.painCare
+    if not o or not o.receipt then return end
+    o.receipt.detached = true
+    settleReceipt(guard(player), o, state, read(player), now)
 end
 
 return PainCare

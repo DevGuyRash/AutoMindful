@@ -40,17 +40,18 @@ local function fluidDose(item)
     return finite(amount) and amount or nil
 end
 
-local function fragranceWouldClear(state)
-    return state and state.level > 0 and state.unmasked <= 2 and state.scent == 0
+local function fragranceWouldHelp(state)
+    return state and state.level > 0 and state.scent == 0
+        and math.max(0, state.unmasked - 2) < state.level
 end
 
 function Care.searchItems(player)
     local ok, state = pcall(readNeed, player)
-    return ok and fragranceWouldClear(state) == true
+    return ok and fragranceWouldHelp(state) == true
 end
 
 local function usableItem(player, item)
-    if not fragranceWouldClear(readNeed(player)) or not item then return false end
+    if not fragranceWouldHelp(readNeed(player)) or not item then return false end
     -- Match BOTH the upstream inventory dispatcher and its primary-fluid gate.
     -- Otherwise an empty cologne bottle or fragrance poured into a random bottle qualifies incorrectly.
     local t = item:getFullType()
@@ -228,7 +229,7 @@ function Care.receipt(player, before, kind)
     if kind ~= "item" and kind ~= "hygieneItem" then return false end
     local ok, after = pcall(readNeed, player)
     if not ok or not after or before.scent ~= 0 or not finite(before.level) or before.level < 1
-            or not finite(after.scent) or after.scent <= 0 or after.unmasked > 2 then return false end
+            or not finite(after.scent) or after.scent <= 0 or math.max(0, after.unmasked - 2) >= before.level then return false end
     if not before.item then return true end -- scent activation itself is a native observable effect
     local read, amount = pcall(function() return before.item:getFluidContainer():getAmount() end)
     return read and finite(amount) and finite(before.amount) and finite(before.dose)

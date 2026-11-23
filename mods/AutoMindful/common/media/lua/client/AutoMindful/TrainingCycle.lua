@@ -73,4 +73,38 @@ function TrainingCycle.complete(lastCompleted, owed, kind)
     return completed, owed
 end
 
+-- Yoga's hidden skill is XP *within* the current rank. Compare ranks first:
+-- crossing a threshold (including rank 10) is real progress even if XP wraps.
+local function further(sample, previous)
+    return sample and previous and (sample.level > previous.level
+        or (sample.level == previous.level and sample.current > previous.current))
+end
+
+-- A pose can provisionally keep its own running action alive, but it cannot
+-- forgive prior stalled practice. Lifestyle can deduct more than it awarded
+-- in stop(). Only its terminal receipt commits a new retained high-water mark.
+function TrainingCycle.observeYoga(meter, work, current, elapsed)
+    meter.hoursWithoutXP = meter.hoursWithoutXP + elapsed
+    meter.retained = meter.retained or work.entry
+    if further(current, work.peak or work.entry) then
+        work.peak, work.sincePose = current, 0
+    elseif work.sincePose then
+        work.sincePose = work.sincePose + elapsed
+    end
+    return work.sincePose or meter.hoursWithoutXP
+end
+
+function TrainingCycle.settleYoga(meter, work, current)
+    if work.settled then return end
+    work.settled = true
+    -- Require progress over *both* this admission and prior retained work.
+    -- Foreign XP between our actions, regaining a loss, and a temporary
+    -- in-pose peak are not a new native training receipt.
+    if further(current, work.entry) and further(current, meter.retained or work.entry) then
+        work.productive, meter.retained = true, current
+        meter.hoursWithoutXP = 0
+        meter.positiveXPGains = meter.positiveXPGains + 1
+    end
+end
+
 return TrainingCycle

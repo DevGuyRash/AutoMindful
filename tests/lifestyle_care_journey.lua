@@ -112,6 +112,22 @@ end
 
 do
     scout=true
+    local p=survivor()
+    fixture(p,"restroom",4,0,true); p.urge=.4
+    assert(C.start(p,"meditation",true))
+    untilRun(p,function()return q(p)[1] and q(p)[1].Type=="LSUseToilet"end)
+    local head=q(p)[1]; local progress=0
+    function head.action:getJobDelta()return progress end
+    T.tick(p,false); T.now=T.now+61000; C.update(p)
+    assert(C.status(p).active and q(p)[1]==head,"A polling gap is not witnessed care time")
+    for i=1,65 do progress=i/100; T.tick(p,false) end
+    assert(C.status(p).active and q(p)[1]==head,"The native action is still doing work")
+    for i=1,64 do T.tick(p,false) end
+    assert(not C.status(p).active and head.stopped and #p.careLog==0 and p.receipts==0)
+    print("PASS long pause and progressing restroom action versus 60s confirmed stall; no manufactured relief")
+end
+do
+    scout=true
     local p=survivor();local home=p.square
     fixture(p,"restroom",2,0,false)
     local usable=fixture(p,"restroom",4,0,true)

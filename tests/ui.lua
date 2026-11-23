@@ -23,6 +23,8 @@ function Widget:setVisible(value) self.visible = value end
 function Widget:getIsVisible() return self.visible end
 function Widget:getX() return self.x end
 function Widget:getY() return self.y end
+function Widget:getAbsoluteX() return self.x end
+function Widget:getAbsoluteY() return self.y end
 function Widget:setX(value) self.x = value end
 function Widget:setY(value) self.y = value end
 function Widget:setWidth(value) self.width = value end
@@ -31,7 +33,7 @@ function Widget:setHeight(value) self.height = value end
 function Widget:setEnable(value) self.enable = value end
 function Widget:bringToTop() end
 function Widget:setScrollChildren(value) self.scrollChildren = value end
-function Widget:addScrollBars() self.hasScrollbars = true end
+function Widget:addScrollBars() self.hasScrollbars = true; self.vscroll = Widget:new() end
 function Widget:setScrollHeight(value) self.scrollHeight = value end
 function Widget:getScrollHeight() return self.scrollHeight or 0 end
 function Widget:setYScroll(value) self.scrollY = value end
@@ -43,23 +45,36 @@ Widget.drawTextRight = Widget.drawText
 ISPanel = Widget:derive("ISPanel")
 function ISPanel:prerender() end
 ISCollapsableWindow = ISPanel:derive("ISCollapsableWindow")
-function ISCollapsableWindow:createChildren() end
+function ISCollapsableWindow:createChildren()
+    local function resize()
+        return {target=self,onMouseUp=function(w) w.resizing=false end,onMouseUpOutside=function(w) w.resizing=false end}
+    end
+    self.resizeWidget,self.resizeWidget2=resize(),resize()
+    self.pinButton,self.collapseButton=Widget:new(),Widget:new()
+    self.pinButton:setVisible(false)
+end
 function ISCollapsableWindow:update() end
 function ISCollapsableWindow:onResize() end
+function ISCollapsableWindow:onMouseDown() self.moving=true end
+function ISCollapsableWindow:onMouseUp() self.moving=false end
+function ISCollapsableWindow:onMouseUpOutside() self.moving=false end
 function ISCollapsableWindow:titleBarHeight() return 24 end
 ISButton = Widget:derive("ISButton")
 function ISButton:new(x,y,w,h,name,target,callback)
     local o=Widget.new(self,x,y,w,h);o.name,o.target,o.callback=name,target,callback;return o
 end
 function ISButton:setTitle(title) self.name=title end
+function ISButton:setImage(image) self.image=image end
 function ISButton:click() if self.callback then return self.callback(self.target,self) end end
 ISTickBox = Widget:derive("ISTickBox")
 function ISTickBox:new(x, y, width, height, _, target, callback)
     local box = Widget.new(self, x, y, width, height)
     box.target, box.callback = target, callback
+    box.boxSize,box.textGap=height,6
     return box
 end
 function ISTickBox:addOption(label) self.option = label end
+function ISTickBox:clearOptions() self.option,self.selected=nil,nil end
 function ISTickBox:setSelected(_, value) self.selected = value end
 function ISTickBox:isSelected() return self.selected == true end
 function ISTickBox:click()
@@ -136,7 +151,8 @@ function getSpecificPlayer(index) return ({[0]=player,[1]=player2})[index] end
 local textureLoads, textureHandles = {}, {}
 function fileExists(path) return path:match("^media/ui/AutoMindful/%a+%.png$") ~= nil end
 function getTexture(path)
-    assert(path:match("^media/ui/AutoMindful/%a+%.png$"), "Icons must use their bundled texture namespace")
+    assert(path=="media/ui/inventoryPanes/Button_Gear.png" or path:match("^media/ui/AutoMindful/%a+%.png$"),
+        "Only the stock gear may use a texture outside the bundled namespace")
     textureLoads[path] = (textureLoads[path] or 0)+1
     textureHandles[path] = textureHandles[path] or {path=path}
     return textureHandles[path]
@@ -196,7 +212,8 @@ function Controller.prepare(_, collect, preview, force)
     for key, value in pairs(Controller.inventory) do copy[key] = value end
     return copy
 end
-function Controller.start(_, mode, collect)
+function Controller.start(_, mode, collect, tier)
+    Controller.lastTier = tier
     Controller.starts = Controller.starts + 1
     if Controller.failure then return false, Controller.failure end
     Controller.state.active, Controller.state.mode = true, mode
@@ -206,6 +223,26 @@ end
 function Controller.stop() Controller.stops = Controller.stops + 1; Controller.state.active = false end
 function Controller.setCollectNearby(_, value) Controller.state.collectNearby = value; Controller.lastNearby = value end
 package.loaded["AutoMindful/Controller"] = Controller
+
+local localLayouts, geometryWrites = {}, {}
+function getFileReader(name,create)
+    assert(not create)
+    local text=localLayouts[name]
+    if text then return {readLine=function() return text:match("^[^\r\n]*") end,close=function() end} end
+end
+function getFileWriter(name,create,append)
+    assert(create and not append and name:match("^AutoMindful/window%-%d+%.txt$"))
+    return {write=function(_,text)
+        localLayouts[name]=text
+        geometryWrites[name]=(geometryWrites[name] or 0)+1
+    end,close=function() end}
+end
+
+local Settings={toggles=0,closes=0}
+function Settings.toggle(window) Settings.toggles=Settings.toggles+1; Settings.parent=window end
+function Settings.close(window) Settings.closes=Settings.closes+1; Settings.closedParent=window end
+package.loaded["AutoMindful/SettingsPanel"]=Settings
+
 
 local menus, nextMenu = {}, 0
 ISContextMenu = {}
@@ -230,6 +267,11 @@ function ISContextMenu:getNew(parent)
     menu.subOptionNums, menu.player = nextMenu, parent.player
     menus[nextMenu] = menu
     return menu
+end
+function ISContextMenu.get(playerIndex,x,y)
+    ISContextMenu.popup = ISContextMenu:new()
+    ISContextMenu.popup.player, ISContextMenu.popup.x, ISContextMenu.popup.y = playerIndex,x,y
+    return ISContextMenu.popup
 end
 function ISContextMenu:addSubMenu(option, submenu) option.subOption = submenu.subOptionNums end
 function ISContextMenu:getSubMenu(id) return menus[id] end
@@ -295,7 +337,7 @@ practice:setValue(false)
 search:setValue(false)
 package.loaded["AutoMindful/Options"] = nil
 require "AutoMindful/Options"
-assert(settings.count == 7 and not Options.searchNearby() and not Options.practiceCare(), "Reload reuses an existing off preference")
+assert(settings.count == 13 and not Options.searchNearby() and not Options.practiceCare(), "Reload reuses an existing off preference")
 
 local context, world = ISContextMenu:new(), {"clicked square"}
 local first, second, third = ZenWellnessContextMenu.doBuildMenu(0, context, world)
@@ -325,12 +367,45 @@ local occupiedWellness = occupiedMenu:getSubMenu(occupiedMenu.options[1].subOpti
 assert(occupiedMenu:getSubMenu(occupiedWellness.options[1].subOption).options[2].notAvailable,
     "The endurance menu action cannot replace an active session")
 Controller.state.active = false
-local manual = submenu.options[5]
+local manual = submenu.options[6]
 assert(manual.notAvailable and manual.iconTexture == "native meditation icon" and manual.toolTip, "Native availability and presentation are retained")
 assert(manual.onSelect(manual.target) == "native meditation")
 assert(manualCall[1] == world and manualCall[2] == meditation and manualCall[3] == player, "Manual action retains native target and arguments")
 Context.attach(context, player)
-assert(#submenu.options == 5 and manual.subOption == nil, "Repeated menu attachment does not nest or duplicate manual actions")
+assert(#submenu.options == 6 and manual.subOption == nil, "Repeated menu attachment does not nest or duplicate manual actions")
+-- All tier choices are in one row/submenu, with live moodle availability.
+do
+    local window = UI.open(player)
+    local savedMoodles = player.data.LSMoodles
+    local oldMeditation, oldYoga = Controller.state.meditation, Controller.state.yoga
+    player.data.LSMoodles = {MindfulState={Value=.4}, Zen={Value=.25}}
+    Controller.state.meditation,Controller.state.yoga = 10,3
+    local live = ISContextMenu:new()
+    local native = live:addOption("Native meditation", {}, meditation.onAction, meditation, player)
+    Context.attach(live, player); Context.attach(live, player)
+    local actions = live:getSubMenu(native.subOption)
+    local parent = actions.options[5]
+    assert(parent.name=="Meditate to..." and #actions.options==6)
+    local tiers = actions:getSubMenu(parent.subOption)
+    assert(#tiers.options==3 and tiers.options[1].notAvailable and tiers.options[2].notAvailable
+        and not tiers.options[3].notAvailable and tiers.options[3].param2==3)
+    tiers.options[3].onSelect(tiers.options[3].target, tiers.options[3].param1, tiers.options[3].param2)
+    assert(Controller.state.mode=="meditateTo" and Controller.lastTier==3)
+    Controller.state.active=false
+    window.tierButtons[2]:click()
+    local options = ISContextMenu.popup.options
+    assert(#options==4 and options[1].notAvailable and not options[2].notAvailable and not options[3].notAvailable
+        and options[4].notAvailable and options[4].toolTip.description:find("level 6",1,true))
+    options[3].onSelect(options[3].target,options[3].param1,options[3].param2)
+    assert(Controller.state.mode=="yogaTo" and Controller.lastTier==3)
+    window.tierButtons[2]:click()
+    assert(ISContextMenu.popup.options[3].notAvailable, "An active mode cannot be overwritten from a tier menu")
+    Controller.state.active=false
+    Controller.state.mode=nil
+    Controller.state.meditation,Controller.state.yoga=oldMeditation,oldYoga
+    player.data.LSMoodles=savedMoodles
+    window:refresh()
+end
 local wrapper = ZenWellnessContextMenu.doBuildMenu
 Context.install()
 assert(ZenWellnessContextMenu.doBuildMenu == wrapper, "Repeated installation is a no-op")
@@ -370,8 +445,8 @@ local function expectIcons(menu, names)
 end
 assert(rawYoga.iconTexture==art("Mat") and not otherLeaf.iconTexture)
 local yogaQuick=yogaMenu:getSubMenu(rawYoga.subOption)
-expectIcons(yogaQuick,{"Open","Yoga","Supplies","Once"})
-local once=yogaQuick.options[4]
+expectIcons(yogaQuick,{"Open","Yoga","Supplies","Mindful","Once"})
+local once=yogaQuick.options[5]
 assert(once.checkMark and once.toolTip==rawTip and rawTip.contextMenu==yogaQuick)
 assert(once.onSelect(once.target)=="native yoga")
 assert(manualCall[1]==world and manualCall[2]==yoga and manualCall[3]==nil and manualCall[4]==3 and manualCall[11]==10,
@@ -379,7 +454,7 @@ assert(manualCall[1]==world and manualCall[2]==yoga and manualCall[3]==nil and m
 assert(submenu.options[1].iconTexture==art("Open") and submenu.options[2].iconTexture==art("Endurance")
     and submenu.options[3].iconTexture==art("Meditate") and submenu.options[4].iconTexture==art("Supplies")
     and parent.iconTexture=="native meditation icon" and manual.iconTexture==parent.iconTexture)
-Context.attach(yogaMenu,player);expectIcons(yogaQuick,{"Open","Yoga","Supplies","Once"})
+Context.attach(yogaMenu,player);expectIcons(yogaQuick,{"Open","Yoga","Supplies","Mindful","Once"})
 
 local itemMenu=ISContextMenu:new();itemMenu.player=1
 local obj,originalItem={},{}
@@ -393,12 +468,12 @@ assert(itemSub.player==1 and itemSub.options[1].target==player2 and itemSub.opti
 local swatch=itemMenu:addOption("Tinted native yoga",obj,yoga.onAction,yoga,player2)
 swatch.iconTexture,swatch.color="actual swatch",{r=.4,g=.7,b=.2}
 Context.attach(itemMenu,player2)
-local sw=itemMenu:getSubMenu(swatch.subOption).options[4]
+local sw=itemMenu:getSubMenu(swatch.subOption).options[5]
 assert(sw.iconTexture==swatch.iconTexture and sw.color==swatch.color,"Preserve the native swatch and tint")
 local bare=ISContextMenu:new()
 local bareMed=bare:addOption("Bare meditation",world,meditation.onAction,meditation)
 Context.attach(bare,player);assert(bareMed.iconTexture==art("Bowl"))
-expectIcons(bare:getSubMenu(bareMed.subOption),{"Open","Endurance","Meditate","Supplies","Once"})
+expectIcons(bare:getSubMenu(bareMed.subOption),{"Open","Endurance","Meditate","Supplies","Mindful","Once"})
 
 local again,_,last=ZenWellnessContextMenu.doBuildMenu(0,context,world)
 assert(again=="native result" and last==3,"A repeated external builder retains its return values")
@@ -483,9 +558,12 @@ local function assertFooterVisible(view)
         and view.scouting.x + view.scouting.width <= view.nearby.x + .01
         and view.nearby:getBottom() <= view.cycle.y and view.cycle:getBottom() <= view.starts[1].y,
         "Supply choices and cycle selector fit without overlapping the training controls")
-    assert(view.starts[1]:getBottom() <= view.recoveryButton.y
+    assert(view.starts[1]:getBottom() <= view.tierButtons[1].y
+        and view.tierButtons[1].y == view.tierButtons[2].y
+        and view.tierButtons[1].x + view.tierButtons[1].width < view.tierButtons[2].x
+        and view.tierButtons[2]:getBottom() <= view.recoveryButton.y
         and view.recoverEnduranceButton:getBottom() <= view.check.y,
-        "Both recovery controls remain between training and the supply/stop row")
+        "Tier shortcuts share one compact row without covering training or Recovery controls")
     if view.recoveryButton.y == view.recoverEnduranceButton.y then
         assert(view.recoveryButton.x + view.recoveryButton.width < view.recoverEnduranceButton.x,
             "Recovery choices don't overlap on one row")
@@ -539,7 +617,8 @@ do
     assert(not shortWindow.wellnessOpen and #shortWindow.body.children==children and not shortWindow:getIsVisible())
 end
 do
-    local oldModInfo, oldTextManager = getModInfoByID, getTextManager
+    local oldModInfo, oldTextManager, oldScreenWidth = getModInfoByID, getTextManager, core.getScreenWidth
+    local oldWidth=window.width
     getModInfoByID=function(id)
         if id=="LifestyleHobbies" then return {getModVersion=function() return "0.4.0.3" end} end
     end
@@ -547,8 +626,7 @@ do
         return {getFontHeight=function() return 23 end,MeasureStringX=function(_,_,value) return #value*10 end}
     end
     local view=UI.open(player)
-    local oldWidth=view.width
-    view:setWidth(430); view:onResize()
+    core.getScreenWidth=function() return 454 end; view:syncScreen()
     view.skillGuideButton:click()
     assert(#view.wellnessTabs==5 and view.wellnessTabs[5]:getIsVisible())
     assert(view.wellnessTabs[5].y>view.wellnessTabs[1].y,"Tabs wrap instead of overlapping at larger fonts")
@@ -561,7 +639,7 @@ do
     end
     assert(view.wellnessText.contentKey:lower():find("multiplayer",1,true),"Lessons card has verified content")
     for _, width in ipairs({310, 430, 560}) do
-        view:setWidth(width); view:onResize()
+        core.getScreenWidth=function() return width+24 end; view:syncScreen()
         for _, index in ipairs({2, 4}) do
             view.wellnessTabs[index]:click()
             local guide = view.wellnessText
@@ -583,12 +661,23 @@ do
         end
     end
     view.wellnessBack:click()
-    view:setWidth(310); view:onResize()
+    core.getScreenWidth=function() return 334 end; view:syncScreen()
     assert(view.recoveryButton:getBottom() < view.recoverEnduranceButton.y
         and view.recoverEnduranceButton.width == view.body.width and view.recoverEnduranceButton:getBottom() < view.check.y,
         "Large-font recovery choices wrap intact on a narrow window")
-    getModInfoByID, getTextManager=oldModInfo, oldTextManager
-    view:setWidth(oldWidth);view:onResize()
+    for _,tick in ipairs({view.scouting,view.nearby}) do
+        assert(getTextManager():MeasureStringX(UIFont.Small,tick.option)+tick.boxSize+tick.textGap<=tick.width
+            and tick.tooltip:find("supplies",1,true),"A shortened caption still has its complete explanation")
+    end
+    assert(view.scouting.option~=Options.scoutingLabel and view.nearby.option~="Use adjacent supplies")
+    for _,button in ipairs({view.starts[1],view.starts[2],view.starts[3],view.tierButtons[1],view.tierButtons[2],
+            view.recoveryButton,view.recoverEnduranceButton,view.check,view.stopButton}) do
+        assert(getTextManager():MeasureStringX(UIFont.Small,button.name)+12<=button.width,
+            "Narrow large-font button caption fits its own cell")
+    end
+    getModInfoByID, getTextManager, core.getScreenWidth=oldModInfo, oldTextManager, oldScreenWidth
+    view:syncScreen()
+    assert(view.width==oldWidth)
 end
 assert(shortWindow.nearby:isSelected(1) and not shortWindow.scouting:isSelected(1)
         and not window.nearby:isSelected(1),
@@ -705,9 +794,9 @@ window:refresh()
 assert(window.skills[2].bar.text=="MAX" and window.skills[2].bar.progress==1 and window.skills[2].flash.text=="+1 level",
     "Yoga cap uses an honest level indication when upstream does not retain the exact XP award")
 window:setWidth(760); window:setHeight(850); window:onResize()
-assert(window.body.width==736 and window.ledger.width==721 and window.starts[1].width==(736-12)/3)
-assert(window.body:getScrollHeight()<=window.body.height and window.player.data.AutoMindfulPreferences.width==760
-    and window.player.data.AutoMindfulPreferences.height==850,"Resizing reflows content and remembers the chosen dimensions")
+assert(window.body.width==736 and window.ledger.width==721 and math.abs(window.starts[1].width-(736-12)/3)<1)
+assert(window.body:getScrollHeight()<=window.body.height and localLayouts["AutoMindful/window-0.txt"]:find(" 760 850 ",1,true)
+    and not window.player.data.AutoMindfulPreferences.width,"Resizing reflows content and saves dimensions only in the local layout")
 assertFooterVisible(window)
 Controller.state.message="First line\nSecond line\nThird line\nFourth line"
 window:refresh()
@@ -823,6 +912,7 @@ assert(#Events.OnKeyPressed.handlers == 1 and #Events.OnFillWorldObjectContextMe
 -- Fresh Lua environment with no loose asset mount (the default client-only loader).
 -- Known symbolic names come from stock B42.22.2 UI/UI2 pack metadata, not another mod.
 do
+    local previousTexture,previousFileExists=getTexture,fileExists
     local ls = {Open="Item_Clipboard", Supplies="Item_Backpack", Yoga="Item_Dumbbell",
         Meditate="Item_Candle", Endurance="Moodle_Icon_Endurance", Once="ArrowRight",
         Mat="Item_Bathtowel", Bowl="Item_Bowl", Mindful="FavoriteStar"}
@@ -850,7 +940,7 @@ do
         if verified then top.itemForTexture=verified end
         tested.attach(root,who);tested.attach(root,who)
         local sub=root:getSubMenu(top.subOption)
-        assert(#root.options==1 and #sub.options==(mode=="yoga" and 4 or 5))
+        assert(#root.options==1 and #sub.options==(mode=="yoga" and 5 or 6))
         return root,top,sub
     end
     local function verifyKeys(sub,keys)
@@ -861,9 +951,9 @@ do
             assert(not distinct[texture],"duplicate stock glyph");distinct[texture]=true
         end
     end
-    local ym,yt,ys=leaves("yoga",player2);verifyKeys(ys,{"Open","Yoga","Supplies","Once"})
+    local ym,yt,ys=leaves("yoga",player2);verifyKeys(ys,{"Open","Yoga","Supplies","Mindful","Once"})
     assert(yt.iconTexture==native[ls.Mat] and ys.player==1)
-    local mm,mt,ms=leaves("meditation",player);verifyKeys(ms,{"Open","Endurance","Meditate","Supplies","Once"})
+    local mm,mt,ms=leaves("meditation",player);verifyKeys(ms,{"Open","Endurance","Meditate","Supplies","Mindful","Once"})
     assert(mt.iconTexture==native[ls.Bowl] and ms.options[2].param1=="recoverEndurance")
     local g=ISContextMenu:new();settings:getOption("generalContextMenu"):setValue(true)
     tested.generalMenu(0,g,{},false);tested.generalMenu(0,g,{},false)
@@ -874,11 +964,11 @@ do
     ys.options[3].iconTexture=previouslyForeign
     mounted[path("Open")]=customOpen; mounted[path("Mindful")]=customRoot
     tested.attach(ym,player2);tested.generalMenu(0,g,{},false)
-    assert(ys.options[1].iconTexture==customOpen and g.options[1].iconTexture==customRoot and #ys.options==4 and #g.options==1)
+    assert(ys.options[1].iconTexture==customOpen and g.options[1].iconTexture==customRoot and #ys.options==5 and #g.options==1)
     assert(ys.options[3].iconTexture==previouslyForeign,"Never overwrite newer upstream icons")
     -- A late upstream item/tint also outranks our previous provisional art.
-    ys.options[4].itemForTexture={}; tested.attach(ym,player2)
-    assert(not ys.options[4].iconTexture and ys.options[4].itemForTexture~=nil)
+    ys.options[5].itemForTexture={}; tested.attach(ym,player2)
+    assert(not ys.options[5].iconTexture and ys.options[5].itemForTexture~=nil)
     local mis={getName=function() return "EngineErrorTexture" end}
     mounted[path("Yoga")]=mis; mounted[path("Meditate")]={isFailure=function() return true end}
     mounted[path("Endurance")]={isReady=function() return false end}
@@ -889,14 +979,15 @@ do
     native[ls.Yoga]=nil; tested.attach(ym,player2)
     assert(not ys.options[2].iconTexture and ys.options[2].onSelect and ys.options[2].target==player2)
     local customYoga={};mounted[path("Yoga")]=customYoga; tested.attach(ym,player2)
-    assert(ys.options[2].iconTexture==customYoga and #ys.options==4)
+    assert(ys.options[2].iconTexture==customYoga and #ys.options==5)
     -- No VFS API/throwing probe: stock is safe and row callbacks still exist.
     fileExists=function() error("no readable VFS") end
     local realItem={};local _,_,readable=leaves("meditation",player2,realItem)
-    assert(readable.options[3].iconTexture==native[ls.Meditate] and not readable.options[5].iconTexture and readable.options[5].itemForTexture==realItem)
+    assert(readable.options[3].iconTexture==native[ls.Meditate] and not readable.options[6].iconTexture and readable.options[6].itemForTexture==realItem)
     fileExists=nil; native[ls.Meditate]=mis
     local _,_,degraded=leaves("meditation",player)
-    assert(not degraded.options[3].iconTexture and degraded.options[3].onSelect and #degraded.options==5)
+    assert(not degraded.options[3].iconTexture and degraded.options[3].onSelect and #degraded.options==6)
+    getTexture,fileExists=previousTexture,previousFileExists
 end
 -- The callback identity is useful in the console; it cannot establish a
 -- physical click (stock dispatch and forceClick pass the same button).
@@ -969,4 +1060,130 @@ do
     view:close()
     Controller.state,Controller.inventory,Controller.recentDecisions=oldState,oldInventory,oldRecent
 end
-print("ui-contracts: PASS (including bounded decision history, native art, default unmounted stock icons, late mount and unavailable assets)")
+-- Fresh content fit is not a resize preference. Match the native MouseUp
+-- boundary, then simulate a new game/player in the same local display slot.
+do
+    local oldState,oldWidth,oldHeight=Controller.state,core.getScreenWidth,core.getScreenHeight
+    Controller.state={active=false,phase="idle",message="Ready.\nRegular activity line two.\nRegular activity line three."}
+    local function fresh(slot,saved)
+        return {data={AutoMindfulPreferences=saved},getModData=player.getModData,isDead=player.isDead,
+            getPlayerNum=function() return slot end}
+    end
+    local function fullScreen()
+        core.getScreenWidth=function() return 1280 end
+        core.getScreenHeight=function() return 1050 end
+    end
+    local function shortScreen()
+        core.getScreenWidth=function() return 525 end
+        core.getScreenHeight=function() return 475 end
+    end
+    local id="AutoMindful/window-2.txt"
+    fullScreen()
+    local original=fresh(2)
+    local view=UI.open(original)
+    assert(view.body:getScrollHeight()<=view.body.height and not view.body.vscroll:getIsVisible()
+        and not view.guidance.vscroll:getIsVisible() and not view.geometry.height and not localLayouts[id],
+        "First regular opening measures actual contents and does not save automatic height")
+    local left,right=view.tierButtons[1],view.tierButtons[2]
+    for _,pair in ipairs({{view.scouting,view.nearby},{view.recoveryButton,view.recoverEnduranceButton},{view.check,view.stopButton}}) do
+        assert(pair[1].x==left.x and pair[2].x==right.x
+            and pair[1].width==left.width and pair[2].width==right.width,
+            "All paired controls share both columns at normal width")
+    end
+    assert(math.abs(left.width-right.width)<=1 and view.starts[1].x==left.x
+        and view.starts[3].x+view.starts[3].width==right.x+right.width
+        and view.starts[2].x-(view.starts[1].x+view.starts[1].width)==right.x-(left.x+left.width),
+        "The three-way row uses the same full span, integer widths and gaps")
+    local toggle,stop=Settings.toggles,Controller.stops
+    assert(view.settingsButton.image==textureHandles["media/ui/inventoryPanes/Button_Gear.png"]
+        and view.settingsButton.y+view.settingsButton.height<view.body.y)
+    view.settingsButton:click()
+    assert(Settings.toggles==toggle+1 and Settings.parent==view and Controller.stops==stop)
+    view:close()
+    assert(Settings.closedParent==view and not view:getIsVisible() and not localLayouts[id])
+    assert(UI.open(original)==view and not view.body.vscroll:getIsVisible())
+
+    local grip=view.resizeWidget
+    grip.resizing=true
+    grip.resizeFunction(view,650,780)
+    assert(view.width==650 and view.height==780 and not localLayouts[id],
+        "Native resize previews dimensions before one local save on release")
+    grip:onMouseUp(0,0)
+    assert(geometryWrites[id]==1 and not original.data.AutoMindfulPreferences.width)
+    view:onMouseDown(8,8)
+    view:setX(550); view:setY(220)
+    view:onMouseUpOutside(0,0)
+    assert(geometryWrites[id]==2 and localLayouts[id]=="1 550 220 650 780 1\n")
+    view:close(); UI.windows[2]=nil
+    assert(geometryWrites[id]==2,"Closing an unchanged panel does not rewrite")
+    local restored=fresh(2)
+    shortScreen()
+    view=UI.open(restored)
+    assert(view.x+view.width<=525 and view.y+view.height<=475 and view.body.vscroll:getIsVisible())
+    view:close()
+    assert(geometryWrites[id]==2 and not restored.data.AutoMindfulPreferences.height,
+        "The smaller display never clobbers the saved size/position")
+    fullScreen()
+    view=UI.open(restored)
+    assert(view.x==550 and view.y==220 and view.width==650 and view.height==780)
+    shortScreen()
+    view:update()
+    assert(view.x+view.width<=525 and view.y+view.height<=475 and geometryWrites[id]==2)
+    fullScreen()
+    view:update()
+    assert(view.x==550 and view.y==220 and view.width==650 and view.height==780,
+        "A live resolution change is reversible without reopening")
+    view:close(); UI.windows[2]=nil
+    shortScreen()
+    core.getScreenHeight=function() return 570 end
+    view=UI.open(restored)
+    grip=view.resizeWidget2
+    grip.resizing=true; grip.resizeFunction(view,view.width,475); grip:onMouseUp(0,0)
+    assert(localLayouts[id]=="1 550 220 650 475 1\n",
+        "A vertical resize does not save the temporarily narrowed width or repositioned window")
+    view:close(); UI.windows[2]=nil
+
+    local otherID="AutoMindful/window-3.txt"
+    local other=fresh(3)
+    shortScreen()
+    view=UI.open(other)
+    assert(view.body.vscroll:getIsVisible() and not view.geometry.height)
+    view:close(); UI.windows[3]=nil
+    assert(not localLayouts[otherID] and not other.data.AutoMindfulPreferences.height)
+    fullScreen()
+    view=UI.open(other)
+    assert(view.body:getScrollHeight()<=view.body.height and not view.body.vscroll:getIsVisible(),
+        "First opening on a small screen does not turn its fallback into a preference")
+    grip=view.resizeWidget
+    grip.resizing=true; grip.resizeFunction(view,620,view.height); grip:onMouseUpOutside(0,0)
+    assert(localLayouts[otherID]=="1 - - 620 - 1\n","Changing width alone does not freeze the adaptive height")
+    view:close(); UI.windows[3]=nil
+
+    local legacy={x="1130",y=800,width=680,height="720",pin=false,collectNearby=false}
+    localLayouts[otherID]="unrecognized geometry\n"
+    view=UI.open(fresh(3,legacy))
+    assert(view.width==680 and view.height==720 and view.x==600 and view.y==330 and not view.pin
+        and view.pinButton:getIsVisible() and not view.collapseButton:getIsVisible() and not view.nearby:isSelected(1))
+    view:close()
+    assert(legacy.x=="1130" and legacy.y==800 and localLayouts[otherID]=="unrecognized geometry\n",
+        "Legacy values are read and clamped, not replaced by fallback geometry")
+    UI.windows[3]=nil
+
+    local oldDefault={x=70,y=70,width=540,height=832}
+    view=UI.open(fresh(3,oldDefault))
+    assert(not view.geometry.height and view.height~=832 and view.body:getScrollHeight()<=view.body.height,
+        "The exact legacy autosaved default height is measured afresh")
+    view:close(); UI.windows[3]=nil
+    shortScreen()
+    local oldLimited={x=24,y=40,width=501,height=435}
+    view=UI.open(fresh(3,oldLimited))
+    assert(not view.geometry.height and view.body.vscroll:getIsVisible(),
+        "Recognize the old default that was clamped to a small display only at the stock position")
+    view:close(); UI.windows[3]=nil
+    oldLimited.x=17
+    view=UI.open(fresh(3,oldLimited))
+    assert(view.geometry.height==435,"Unclear legacy size stays as saved")
+    view:close(); UI.windows[3]=nil
+    core.getScreenWidth,core.getScreenHeight,Controller.state=oldWidth,oldHeight,oldState
+end
+print("ui-contracts: PASS (local layout persistence, measured fit, aligned buttons, stock gear, decision history and native art)")

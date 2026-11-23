@@ -5,6 +5,7 @@ local UI = require "AutoMindful/UI"
 local Options = require "AutoMindful/Options"
 local Controller = require "AutoMindful/Controller"
 local Progress = require "AutoMindful/Progress"
+local TierMenu = require "AutoMindful/TierMenu"
 
 AutoMindful = AutoMindful or {}
 local Context = AutoMindful.ContextMenu or {}
@@ -82,12 +83,19 @@ local function decorate(menu, option, player, mode)
     if manual.toolTip then manual.toolTip:setContextMenu(submenu) end
     fillIcon(manual, "Once")
     fillIcon(option, mode == "yoga" and "Mat" or "Bowl")
+    local status = Controller.status(player)
+    local target = submenu:addOptionOnTop(TierMenu.title(mode), nil, nil)
+    if target then
+        fillIcon(target, "Mindful")
+        local tiers = ISContextMenu:getNew(submenu)
+        TierMenu.fill(tiers, player, mode, status, UI.startTraining)
+        submenu:addSubMenu(target, tiers)
+    end
     local check = submenu:addOptionOnTop("Check supplies", player, UI.checkFor)
     fillIcon(check, "Supplies")
     tooltip(submenu, check, "Check supplies", "Open the live inventory and nearby supply report. This does not interrupt your current mode or collect items immediately.")
     local train = submenu:addOptionOnTop(mode == "yoga" and "Train yoga" or "Train meditation", player, UI.startTraining, mode)
     fillIcon(train, mode == "yoga" and "Yoga" or "Meditate")
-    local status = Controller.status(player)
     train.notAvailable = status.active
     local level = status[mode] or 0
     local description = (status.progress and status.progress[mode] and Progress.text(status.progress[mode])

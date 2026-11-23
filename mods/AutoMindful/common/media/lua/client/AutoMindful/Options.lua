@@ -1,4 +1,5 @@
 require "PZAPI/ModOptions"
+local Tiers = require "AutoMindful/TierTargets"
 
 local Options = {}
 local settings = PZAPI.ModOptions:getOptions("AutoMindful")
@@ -57,10 +58,64 @@ function Options.cyclePolicy()
     return cycles[Options.cycleIndex()].id
 end
 
+local function saveSettings()
+    local registry = PZAPI.ModOptions
+    local unknown = registry.OtherOptions
+    if not unknown or #unknown == 0 then return registry:save() end
+    -- B42 reads unknown/disabled mods with BufferedReader:readLine but writes
+    -- the raw records with writer:write. Keep their boundaries intact when
+    -- AutoMindful saves, without changing stock persistence or the registry.
+    local records = {}
+    for i, line in ipairs(unknown) do
+        local tail = line:sub(-1)
+        records[i] = (tail == "\r" or tail == "\n") and line or line .. "\r\n"
+    end
+    registry.OtherOptions = records
+    local ok, failure = pcall(registry.save, registry)
+    registry.OtherOptions = unknown
+    if not ok then error(failure) end
+end
+
 function Options.setCycleIndex(index)
     if not cycles[index] or cycle:getValue() == index then return end
     cycle:setValue(index)
-    PZAPI.ModOptions:save()
+    saveSettings()
+end
+
+local minimums = {}
+local minimumHelp = "Defaults to the highest tier and uses the highest unlocked tier at or below your choice. Select No minimum to turn this off. Safety, supplies and your other actions still take priority."
+for _, group in ipairs({
+    {id="recovery", label="Recovery / relief"},
+    {id="capped", label="Capped practice"},
+    {id="rotation", label="Train Both"},
+}) do
+    local modes = {}
+    minimums[group.id] = modes
+    for _, spec in ipairs({
+        {kind="meditation", suffix="MindfulnessTier", label="Mindfulness"},
+        {kind="yoga", suffix="YogaZenTier", label="Yoga Zen"},
+    }) do
+        local id = group.id .. spec.suffix
+        local choices = Tiers.choices(spec.kind)
+        local option = settings:getOption(id)
+        if not option then
+            option = settings:addComboBox(id, group.label .. ": minimum " .. spec.label, minimumHelp)
+            for _, row in ipairs(choices) do
+                local label = row.tier == 0 and row.label or row.label .. " (level " .. row.rank .. ")"
+                option:addItem(label)
+            end
+            option:setValue(#choices)
+        end
+        modes[spec.kind] = {option=option, choices=choices}
+    end
+end
+
+function Options.minimumTier(group, kind)
+    local item = minimums[group] and minimums[group][kind]
+    if not item then return 0 end
+    local index = tonumber(item.option:getValue())
+    local row = index and index % 1 == 0 and item.choices[index]
+    return row and row.tier or 0
 end
 
 function Options.practiceCare()
@@ -74,7 +129,7 @@ end
 function Options.setSearchNearby(enabled)
     if search:getValue() == enabled then return end
     search:setValue(enabled)
-    PZAPI.ModOptions:save()
+    saveSettings()
 end
 
 function Options.searchRadius()
@@ -110,11 +165,58 @@ local function occupied(code)
     return false
 end
 
+function Options.bindableWindowKey(code)
+    return type(code) == "number" and code >= 0 and code % 1 == 0
+        and (code == 0 or (not (Keyboard and code == Keyboard.KEY_ESCAPE) and not occupied(code)))
+end
+
 function Options.windowKey()
     local chosen = tonumber(key:getValue()) or 0
     if chosen == 0 and defaultKey:getValue() == true then chosen = Keyboard and Keyboard.KEY_0 or 0 end
-    if chosen <= 0 or chosen % 1 ~= 0 or (Keyboard and chosen == Keyboard.KEY_ESCAPE) or occupied(chosen) then return 0 end
-    return chosen
+    return Options.bindableWindowKey(chosen) and chosen or 0
+end
+
+function Options.modSettings()
+    return settings
+end
+
+local function validPanelValue(option, value)
+    if option.type == "tickbox" then return type(value) == "boolean" end
+    if option.type == "combobox" then
+        return type(value) == "number" and option.values[value] ~= nil
+    end
+    if option.type == "slider" then
+        return type(value) == "number" and value >= option.min and value <= option.max
+    end
+    return option == key and Options.bindableWindowKey(value)
+end
+
+function Options.applyPanelChanges(changes)
+    local changed, refreshSupplies = false, false
+    for _, edit in ipairs(changes) do
+        local option, value = edit.option, edit.value
+        if option.id and settings:getOption(option.id) == option and option.isEnabled ~= false
+                and option:getValue() ~= value and validPanelValue(option, value) then
+            if option.onChange then option:onChange(value) end
+            if option.onChangeApply then option:onChangeApply(value) end
+            option:setValue(value) -- Updates the stock Mods page widget, if present.
+            if option == key then
+                local element = option.element
+                if element and element.btn then
+                    -- PZAPI updates keyCode but not the already-built button's title.
+                    element.shift, element.ctrl, element.alt = nil, nil, nil
+                    element.btn:setTitle(getKeyName(value))
+                end
+            end
+            changed = true
+            refreshSupplies = refreshSupplies or option == search or option == radius
+        end
+    end
+    if changed then
+        settings:apply()
+        saveSettings()
+    end
+    return changed, refreshSupplies
 end
 
 return Options

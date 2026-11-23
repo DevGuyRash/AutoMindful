@@ -579,5 +579,40 @@ do
     print("PASS capped Yoga can still use Meditation only as an endurance bridge")
 end
 
-print("SCHEDULER INTEGRATION PASS 22 cases; "..(installedGate and "installed Lifestyle predicates; " or "mock Lifestyle predicates; ")
+-- A completed stand is preparation, not a completed Yoga or recovery turn.
+do
+    local p=T.playerNew()
+    p.noXP,p.sitting,p.yoga=true,true,{10,0,0}
+    assert(C.start(p,"yoga",false))
+    local stand=await(p,"stand")
+    stand:perform()
+    step(p)
+    local yoga=queue(p)[1]
+    assert(yoga and yoga.Type=="Yoga","A completed stand must not open another idle window before Yoga")
+    assert(count(p,"stand")==1)
+    yoga:perform()
+    step(p)
+    assert(not queue(p)[1] and C.status(p).phase=="between","A completed Yoga turn still gives other actions an opening")
+    C.stop(p)
+end
+
+-- If other work actually queued during the stand, it wins.
+do
+    local p=T.playerNew()
+    p.noXP,p.sitting,p.yoga=true,true,{10,0,0}
+    assert(C.start(p,"yoga",false))
+    local stand=await(p,"stand")
+    local workout=T.action(p,"IndependentWorkoutAction")
+    ISTimedActionQueue.add(workout)
+    stand:perform()
+    local native=workout.action
+    for _=1,6 do step(p); assertUntouchedFitness(p,workout,native) end
+    assert(count(p,"Yoga")==0)
+    workout:perform()
+    await(p,"Yoga")
+    assert(count(p,"stand")==1)
+    C.stop(p)
+end
+
+print("SCHEDULER INTEGRATION PASS 24 cases; "..(installedGate and "installed Lifestyle predicates; " or "mock Lifestyle predicates; ")
     .."explicit game-boundary doubles, not live player or XP evidence")

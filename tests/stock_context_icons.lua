@@ -18,7 +18,8 @@ function getPlayerContextMenu(n) if not roots[n] then roots[n]=newMenu(n) end;re
 function ISContextMenu:new() return newMenu() end
 local expected={["Open AutoMindful"]={"Open","Item_Clipboard"}, ["Check supplies"]={"Supplies","Item_Backpack"},
     ["Train yoga"]={"Yoga","Item_Dumbbell"},["Train meditation"]={"Meditate","Item_Candle"},
-    ["Recover to Full Endurance"]={"Endurance","Moodle_Icon_Endurance"}}
+    ["Recover to Full Endurance"]={"Endurance","Moodle_Icon_Endurance"},
+    ["Meditate to..."]={"Mindful","FavoriteStar"},["Do Yoga to..."]={"Mindful","FavoriteStar"}}
 local mounted,misses,looseLoads=false,{},0
 function fileExists(key) return mounted and key:match("^media/ui/AutoMindful/%a+%.png$")~=nil end
 function getTexture(key)
@@ -45,7 +46,7 @@ local function visit()
         local row=r:addOption(mode,r,spec.onAction,spec,p);row.itemForTexture={native=true}
         c.attach(r,p);c.attach(r,p)
         local sub=r:getSubMenu(row.subOption);assert(sub.player==i-1)
-        assert(#r.options==1 and #sub.options==(mode=="Yoga" and 4 or 5))
+        assert(#r.options==1 and #sub.options==(mode=="Yoga" and 5 or 6))
         local actual
         sub.drawTextureScaledAspect=function(_,t,x,y,w,h) assert(w==17 and h==17 and t.key);actual=t.key end
         for _,o in ipairs(sub.options) do
@@ -63,5 +64,5 @@ visit()
 for k in pairs(misses) do error("unmounted path poisoned native cache: "..k) end
 assert(items==2 and looseLoads==0)
 mounted=true;visit()
-assert(items==4 and looseLoads==5)
+assert(items==4 and looseLoads==6)
 print("Stock B42 menu rendered the right textures through its real option dispatch; Java texture loading/drawing modeled.")

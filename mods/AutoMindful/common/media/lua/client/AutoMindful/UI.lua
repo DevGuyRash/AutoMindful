@@ -11,6 +11,9 @@ local Decisions = require "AutoMindful/DecisionHistory"
 local Options = require "AutoMindful/Options"
 local Progress = require "AutoMindful/Progress"
 local Wellness = require "AutoMindful/WellnessInfo"
+local TierMenu = require "AutoMindful/TierMenu"
+local Tiers = require "AutoMindful/TierTargets"
+local Settings = require "AutoMindful/SettingsPanel"
 
 AutoMindful = AutoMindful or {}
 local UI = ISCollapsableWindow:derive("AutoMindfulWindow")
@@ -36,6 +39,64 @@ local function preferences(player)
     local data = player:getModData()
     data.AutoMindfulPreferences = data.AutoMindfulPreferences or {}
     return data.AutoMindfulPreferences
+end
+
+-- Native local Lua config, not server-owned character data. A short
+-- screen clamps the displayed bounds without replacing the requested ones.
+local function geometryFile(player)
+    return "AutoMindful/window-" .. tostring(player:getPlayerNum()) .. ".txt"
+end
+
+local function dimension(value, minimum)
+    local n=tonumber(value)
+    if not n or not (n >= minimum and n <= 65535) then return nil end
+    return math.floor(n + .5)
+end
+
+local function readGeometry(player)
+    if getFileReader then
+        local ok, line=pcall(function()
+            local reader=getFileReader(geometryFile(player),false)
+            if not reader then return nil end
+            local value=reader:readLine()
+            reader:close()
+            return value
+        end)
+        if ok and type(line)=="string" and #line<64 then
+            local x,y,w,h,pin=line:match("^1 ([%d-]+) ([%d-]+) ([%d-]+) ([%d-]+) ([01])$")
+            if pin then return {x=dimension(x,-65535),y=dimension(y,-65535),
+                width=dimension(w,1),height=dimension(h,1),pin=pin=="1"} end
+        end
+    end
+    local previous=preferences(player)
+    local x,y=dimension(previous.x,-65535),dimension(previous.y,-65535)
+    local width,height=dimension(previous.width,1),dimension(previous.height,1)
+    local core=getCore()
+    local sw,sh=core:getScreenWidth(),core:getScreenHeight()
+    local oldDefaultWidth=math.min(540,sw-24)
+    local oldDefaultHeight=math.max(832,getTextManager():getFontHeight(UIFont.Small)*38+183)
+    local clampedHeight=math.min(oldDefaultHeight,sh-40)
+    -- The old pane wrote its automatic size on ordinary hide. Migrate only
+    -- a recognizable default pair; a screen-limited pair must also be at
+    -- the original automatic position. Local explicit bounds always win.
+    if width==oldDefaultWidth and (height==oldDefaultHeight
+            or (height==clampedHeight and x==math.max(0,math.min(70,sw-oldDefaultWidth))
+                and y==math.max(0,math.min(70,sh-clampedHeight)))) then height=nil end
+    return {x=x,y=y,width=width,height=height,pin=previous.pin~=false}
+end
+
+local function writeGeometry(player,geometry)
+    if not getFileWriter then return end
+    local function field(value) return value and string.format("%d",value) or "-" end
+    local ok,written=pcall(function()
+        local writer=getFileWriter(geometryFile(player),true,false)
+        if not writer then return end
+        writer:write(table.concat({"1",field(geometry.x),field(geometry.y),
+            field(geometry.width),field(geometry.height),geometry.pin and "1" or "0"}," ") .. "\n")
+        writer:close()
+        return true
+    end)
+    return ok and written==true
 end
 
 local function useAdjacent(player)
@@ -161,26 +222,162 @@ end
 local function updateFooter(window)
     local code = Options.windowKey()
     local keyName = code ~= 0 and getKeyName and getKeyName(code) or nil
-    local shortcut = keyName and keyName ~= "" and ("Open with " .. keyName .. "; change in Mod Options.")
-        or "Shortcut: set a key in Mod Options."
+    local shortcut = keyName and keyName ~= "" and ("Open with " .. keyName .. ". Change it in AutoMindful settings.")
+        or "Set a shortcut in AutoMindful settings."
     setText(window.footer, colored(palette.muted, "Close to hide. Your current mode continues.") .. " <LINE> "
         .. colored(palette.muted, shortcut))
 end
 
-local function recoveryWidths(width)
-    local font, gap = getTextManager(), 6
-    local primary = font:MeasureStringX(UIFont.Small, "Recovery") + 20
-    local full = font:MeasureStringX(UIFont.Small, "Recover to Full Endurance") + 20
-    if primary + full + gap > width then return width, width, true end
-    primary = math.min(width - full - gap, math.max(primary, width * .38))
-    return primary, width - primary - gap, false
+local pad, buttonGap = 12, 6
+local recoveryLabel = "Recover to Full Endurance"
+
+local function column(width,index,count)
+    local start=math.floor((width+buttonGap)*(index-1)/count)
+    local finish=math.floor((width+buttonGap)*index/count)-buttonGap
+    return pad+start,math.max(1,finish-start)
+end
+
+local function recoveryLabelWidth()
+    return getTextManager():MeasureStringX(UIFont.Small,recoveryLabel)+20
+end
+
+local function clamp(value, low, high)
+    return math.max(low,math.min(value,high))
+end
+
+local function caption(width, ...)
+    local font=getTextManager()
+    for i=1,select("#",...) do
+        local label=select(i,...)
+        if font:MeasureStringX(UIFont.Small,label)<=width then return label end
+    end
+    return ""
+end
+
+local function tickCaption(box,width,full,short,compact)
+    local reserve=(box.leftMargin or 0)+(box.boxSize or 26)+(box.textGap or 6)+4
+    local label=caption(width-reserve,full,short,compact)
+    if box.layoutCaption==label then return end
+    local selected=box:isSelected(1)
+    box:clearOptions()
+    box:addOption(label)
+    box:setSelected(1,selected)
+    box.layoutCaption=label
+end
+
+local function buttonCaption(button,width,full,short,compact)
+    local label=caption(width-12,full,short,compact)
+    if label~=button.layoutCaption then
+        button:setTitle(label)
+        button.layoutCaption=label
+    end
 end
 
 function UI:savePreferences()
-    local saved = preferences(self.player)
-    saved.x, saved.y, saved.pin = self:getX(), self:getY(), self.pin
-    saved.width, saved.height = self.width, self.height
-    saved.collectNearby = self.nearby:isSelected(1)
+    if not self.nearby then return end
+    local saved,geometry=preferences(self.player),self.geometry
+    saved.collectNearby=self.nearby:isSelected(1)
+    if self.pin~=geometry.pin then
+        geometry.pin=self.pin
+        self.geometryDirty=true
+    end
+    if self.geometryDirty then
+        if not writeGeometry(self.player,geometry) then
+            -- Legacy fallback for a client without the native local cache.
+            saved.x,saved.y,saved.width,saved.height,saved.pin=geometry.x,geometry.y,geometry.width,geometry.height,geometry.pin
+        end
+        self.geometryDirty=nil
+    end
+end
+
+function UI:applyGeometry(x,y,width,height)
+    width=clamp(width,self.minimumWidth,self.maximumWidth)
+    height=clamp(height,self.minimumHeight,self.maximumHeight)
+    self.applyingGeometry=true
+    self.appliedWidth,self.appliedHeight=width,height
+    if self.width~=width then self:setWidth(width) end
+    if self.height~=height then self:setHeight(height) end
+    self:setX(clamp(x,0,math.max(0,self.screenWidth-width)))
+    self:setY(clamp(y,0,math.max(0,self.screenHeight-height)))
+    self.applyingGeometry=nil
+end
+
+function UI:syncScreen()
+    local core=getCore()
+    local sw,sh=core:getScreenWidth(),core:getScreenHeight()
+    local line=getTextManager():getFontHeight(UIFont.Small)
+    if self.screenWidth==sw and self.screenHeight==sh and self.screenFont==line then return end
+    self.screenWidth,self.screenHeight,self.screenFont=sw,sh,line
+    self.maximumWidth,self.maximumHeight=math.max(1,sw-24),math.max(1,sh-40)
+    self.minimumWidth=math.min(480,self.maximumWidth)
+    self.minimumHeight=math.min(math.max(440,line*17+100),self.maximumHeight)
+    local geometry=self.geometry
+    local defaultWidth=math.max(560,pad*2+buttonGap+recoveryLabelWidth()*2)
+    self:applyGeometry(geometry.x or 70,geometry.y or 70,geometry.width or defaultWidth,
+        geometry.height or self.fittedHeight or self.minimumHeight)
+    self:layout()
+end
+
+function UI:fitRegularContents()
+    if self.geometry.height or self.wellnessOpen or self.historyOpen or not self.regularHeight then return end
+    self.fittedHeight=math.max(self.fittedHeight or 0,self.regularHeight)
+    if self.height<math.min(self.maximumHeight,self.fittedHeight) then
+        self:applyGeometry(self.geometry.x or 70,self.geometry.y or 70,self.width,self.fittedHeight)
+        self:layout()
+    end
+end
+
+function UI:resizePanel(width,height)
+    local geometry=self.geometry
+    width=clamp(math.floor(width+.5),self.minimumWidth,self.maximumWidth)
+    height=clamp(math.floor(height+.5),self.minimumHeight,self.maximumHeight)
+    if width~=self.appliedWidth then geometry.width=width; self.geometryDirty=true end
+    if height~=self.appliedHeight then geometry.height=height; self.geometryDirty=true end
+    self:applyGeometry(self:getX(),self:getY(),width,height)
+    self:layout()
+end
+
+local function saveOnResizeRelease(widget)
+    if not widget then return end
+    widget.resizeFunction=UI.resizePanel
+    for _,method in ipairs({"onMouseUp","onMouseUpOutside"}) do
+        local original=widget[method]
+        widget[method]=function(control,...)
+            local moving=control.resizing
+            local result=original(control,...)
+            if moving then control.target:savePreferences() end
+            return result
+        end
+    end
+end
+
+function UI:onMouseDown(x,y)
+    local result=ISCollapsableWindow.onMouseDown(self,x,y)
+    if self.moving then self.dragOrigin={x=self:getX(),y=self:getY()} end
+    return result
+end
+
+function UI:finishMove()
+    local before=self.dragOrigin
+    if not before then return end
+    self.dragOrigin=nil
+    local geometry=self.geometry
+    local x,y=self:getX(),self:getY()
+    if x~=before.x then geometry.x=dimension(x,-65535); self.geometryDirty=true end
+    if y~=before.y then geometry.y=dimension(y,-65535); self.geometryDirty=true end
+    self:savePreferences()
+end
+
+function UI:onMouseUp(x,y)
+    local result=ISCollapsableWindow.onMouseUp(self,x,y)
+    self:finishMove()
+    return result
+end
+
+function UI:onMouseUpOutside(x,y)
+    local result=ISCollapsableWindow.onMouseUpOutside(self,x,y)
+    self:finishMove()
+    return result
 end
 
 function UI:onNearbyChanged()
@@ -207,9 +404,9 @@ function UI:checkSupplies()
     self:refresh()
 end
 
-function UI.startTraining(player, mode)
+function UI.startTraining(player, mode, tier)
     local collect = mode ~= "endurance" and useAdjacent(player)
-    local started, message = Controller.start(player, mode, collect)
+    local started, message = Controller.start(player, mode, collect, tier)
     local window = UI.windows[player:getPlayerNum()]
     if not started then window = UI.open(player) end
     if window then
@@ -218,6 +415,13 @@ function UI.startTraining(player, mode)
         window:refresh()
     end
     return started, message
+end
+
+function UI:openTierMenu(button)
+    if not ISContextMenu.get then return end
+    self:savePreferences()
+    local menu = ISContextMenu.get(self.player:getPlayerNum(), button:getAbsoluteX(), button:getAbsoluteY() + button.height)
+    TierMenu.fill(menu, self.player, button.practiceKind, Controller.status(self.player), UI.startTraining)
 end
 
 function UI:onStart(button)
@@ -470,6 +674,12 @@ function UI:refresh()
     local activityColor = status.active and palette.meditation or (self.startError and palette.missing or palette.text)
     local phase = status.active and (status.mode == "both" and "Training both" or status.mode == "yoga" and "Training yoga" or "Training meditation") or "Ready"
     local endurance = endurancePercent(status.endurance)
+    if status.active and (status.mode == "meditateTo" or status.mode == "yogaTo") then
+        local goal = status.tierGoal
+        local name = goal and Tiers.label(goal.kind, goal.target)
+        phase = name and ("Target: " .. name)
+            or (status.mode == "meditateTo" and "Meditating to a tier" or "Doing Yoga to a tier")
+    end
     if recovering then
         phase = status.mode == "recoverEndurance" and "Recovery until full endurance" or "Recovery on"
         if status.careWaiting then phase = phase .. " (paused for care)"
@@ -508,6 +718,11 @@ function UI:refresh()
     end
     if activityMessage and activityMessage ~= status.decisionLabel then
         activity = activity .. " <LINE> " .. colored(palette.text, activityMessage)
+    end
+    local goal = status.active and status.tierGoal
+    local targetLabel = goal and Tiers.label(goal.kind, goal.target)
+    if targetLabel and status.mode ~= "meditateTo" and status.mode ~= "yogaTo" then
+        activity = activity .. " <LINE> " .. colored(palette.value, "Target: " .. targetLabel)
     end
     if endurance and (recovering or (recovery and status.phase == "complete")) then
         activity = activity .. " <LINE> " .. colored(palette.water, "Endurance: " .. endurance)
@@ -579,16 +794,34 @@ function UI:refresh()
     if self.wellnessOpen then self:refreshSkillGuide() end
     updateFooter(self)
     self:layout()
+    self:fitRegularContents()
 end
 
 function UI:createChildren()
     ISCollapsableWindow.createChildren(self)
-    local pad, line = 12, getTextManager():getFontHeight(UIFont.Small)
-    local row = math.max(28, line + 10)
+    saveOnResizeRelease(self.resizeWidget)
+    saveOnResizeRelease(self.resizeWidget2)
+    -- Same stock gear used by the native chat window. Leave the close/pin
+    -- buttons native and expose only this mod's settings from this button.
+    local gearSize=self:titleBarHeight()-2
+    local icon=getTexture("media/ui/inventoryPanes/Button_Gear.png")
+    self.settingsButton=ISButton:new(self.width-gearSize*2-5,1,gearSize,gearSize,
+        icon and "" or "...",self,Settings.toggle)
+    self.settingsButton.anchorRight,self.settingsButton.anchorLeft=true,false
+    self.settingsButton.tooltip="AutoMindful settings"
+    self.settingsButton:initialise()
+    if icon then self.settingsButton:setImage(icon) end
+    self:addChild(self.settingsButton)
+    if not self.pin and self.collapseButton and self.pinButton then
+        self.collapseButton:setVisible(false)
+        self.pinButton:setVisible(true)
+    end
+    local line = getTextManager():getFontHeight(UIFont.Small)
+    local row = math.max(26, line + 8)
     local width = self.width - pad * 2
     local bodyY = self:titleBarHeight() + 10
-    local controlsHeight = row * 5 + line * 3 + 38
-    self.body = ScrollPanel:new(pad, bodyY, width, self.height - bodyY - controlsHeight - 8)
+    local controlsHeight = row * 6 + line * 3 + 38
+    self.body = ScrollPanel:new(pad, bodyY, width, math.max(1,self.height - bodyY - controlsHeight - 8))
     self.body:initialise()
     self:addChild(self.body)
     self.body:setScrollChildren(true)
@@ -659,13 +892,15 @@ function UI:createChildren()
     self.scouting:initialise()
     self.scouting:addOption(Options.scoutingLabel)
     self.scouting:setSelected(1, Options.searchNearby())
-    self.scouting.tooltip = Options.scoutingHelp
+    self.scouting.tooltip = Options.scoutingLabel .. ". " .. Options.scoutingHelp
+    self.scouting.layoutCaption=Options.scoutingLabel
     self:addChild(self.scouting)
     self.nearby = ISTickBox:new(pad + width * 0.53, y, width * 0.47, row, "Adjacent supplies", self, UI.onNearbyChanged)
     self.nearby:initialise()
     self.nearby:addOption("Use adjacent supplies")
     self.nearby:setSelected(1, useAdjacent(self.player))
-    self.nearby.tooltip = "When scouting is off, allow borrowing from adjacent supplies without walking away. Scouting already includes adjacent supplies."
+    self.nearby.tooltip = "Use adjacent supplies. When scouting is off, allow borrowing from adjacent supplies without walking away. Scouting already includes adjacent supplies."
+    self.nearby.layoutCaption="Use adjacent supplies"
     self:addChild(self.nearby)
     y = y + row + 4
     self.cycleLabel = ISLabel:new(pad, y + math.floor((row - line) / 2), line,
@@ -685,10 +920,24 @@ function UI:createChildren()
         local button = ISButton:new(pad + (index - 1) * (buttonWidth + 6), y, buttonWidth, row, entry[1], self, UI.onStart)
         button:initialise()
         button.mode = entry[2]
+        button.layoutCaption=entry[1]
         button.tooltip = entry[2] == "both" and "Train unfinished skills to level 10. If both are already maxed, alternate when idle."
             or "Train " .. entry[1]:lower() .. " toward level 10, or practice when idle if already maxed."
         self:addChild(button)
         self.starts[index] = button
+    end
+    y = y + row + 4
+    self.tierButtons = {}
+    for index, kind in ipairs({"meditation", "yoga"}) do
+        local button = ISButton:new(pad + (index - 1) * (width / 2 + 3), y, width / 2 - 3, row,
+            TierMenu.title(kind), self, UI.openTierMenu)
+        button:initialise()
+        button.practiceKind = kind
+        button.layoutCaption=TierMenu.title(kind)
+        button.tooltip = button.layoutCaption .. " Choose a moodle tier to reach, then stop."
+        button.textColor = kind == "yoga" and palette.yoga or palette.meditation
+        self:addChild(button)
+        self.tierButtons[index] = button
     end
     y = y + row + 4
     self.recoveryButton = ISButton:new(pad, y, width, row, "Recovery", self, UI.onStart)
@@ -698,7 +947,7 @@ function UI:createChildren()
     self.recoveryButton.borderColor, self.recoveryButton.textColor = palette.water, palette.water
     self.recoveryButton.backgroundColor = {r=.13, g=.20, b=.24, a=1}
     self:addChild(self.recoveryButton)
-    self.recoverEnduranceButton = ISButton:new(pad, y, width, row, "Recover to Full Endurance", self, UI.onStart)
+    self.recoverEnduranceButton = ISButton:new(pad, y, width, row, recoveryLabel, self, UI.onStart)
     self.recoverEnduranceButton:initialise()
     self.recoverEnduranceButton.mode = "recoverEndurance"
     self.recoverEnduranceButton.tooltip = "Run Recovery until endurance is full, then stop. Useful care and existing supply settings still apply."
@@ -727,15 +976,22 @@ end
 
 function UI:layout()
     if not self.footer then return end
-    local pad, line = 12, getTextManager():getFontHeight(UIFont.Small)
-    local row = math.max(28, line + 10)
+    local line = getTextManager():getFontHeight(UIFont.Small)
+    local row = math.max(26, line + 8)
     local width = self.width - pad * 2
-    local recoveryWidth, fullWidth, stackRecovery = recoveryWidths(width)
+    local leftX,leftWidth=column(width,1,2)
+    local rightX,rightWidth=column(width,2,2)
+    local stackRecovery=rightWidth<recoveryLabelWidth()
     local bodyY = self:titleBarHeight() + 10
-    self.footer:setWidth(width)
-    self.footer:paginate()
+    local gearSize=self:titleBarHeight()-2
+    self.settingsButton:setX(self.width-gearSize*2-5)
+    if self.footer.width~=width or self.footer.lineHeight~=line then
+        self.footer:setWidth(width)
+        self.footer.lineHeight=line
+        self.footer:paginate()
+    end
     self.footer:setHeight(math.max(line * 2 + 4, self.footer:getScrollHeight()))
-    local controlsHeight = row * 5 + line + self.footer.height + 34 + (stackRecovery and row + 4 or 0)
+    local controlsHeight = row * 6 + line + self.footer.height + 34 + (stackRecovery and row + 4 or 0)
     self.body:setWidth(width)
     self.body:setHeight(math.max(1, self.height - bodyY - controlsHeight - 8))
     local contentWidth = width - 15
@@ -779,40 +1035,49 @@ function UI:layout()
         self.body:setScrollHeight(self.wellnessFrame:getBottom() + 4)
     else
         self.body:setScrollHeight(self.guideFrame:getBottom() + 4)
+        local reserve=self.recovering and (self.progressFrame.fullHeight-self.progressFrame.height) or 0
+        self.regularHeight=bodyY+controlsHeight+8+self.body:getScrollHeight()+reserve
+    end
+    if self.body.vscroll then self.body.vscroll:setVisible(self.body:getScrollHeight()>self.body.height) end
+    if self.guidance.vscroll then self.guidance.vscroll:setVisible(self.guidance:getScrollHeight()>self.guidance.height) end
+    local function place(control,x,at,w)
+        control:setX(x); control:setY(at); control:setWidth(w); control:setHeight(row)
     end
     y = self.body:getBottom() + 6
-    self.scouting:setY(y)
-    self.scouting:setWidth(width * 0.53)
-    self.nearby:setX(pad + width * 0.53)
-    self.nearby:setY(y)
-    self.nearby:setWidth(width * 0.47)
+    tickCaption(self.scouting,leftWidth,Options.scoutingLabel,"Scout nearby","Scout")
+    tickCaption(self.nearby,rightWidth,"Use adjacent supplies","Adjacent supplies","Adjacent")
+    place(self.scouting,leftX,y,leftWidth)
+    place(self.nearby,rightX,y,rightWidth)
     y = y + row + 4
     self.cycleLabel:setY(y + math.floor((row - line) / 2))
-    self.cycle:setX(pad + width * 0.46)
-    self.cycle:setY(y)
-    self.cycle:setWidth(width * 0.54)
+    self.cycleLabel:setName(getTextManager():MeasureStringX(UIFont.Small,Options.cycleLabel)<=leftWidth
+        and Options.cycleLabel or "Cycling")
+    place(self.cycle,rightX,y,rightWidth)
     y = y + row + 4
-    local buttonWidth = (width - 12) / 3
-    for index, button in ipairs(self.starts) do
-        button:setX(pad + (index - 1) * (buttonWidth + 6))
-        button:setY(y)
-        button:setWidth(buttonWidth)
+    for index,button in ipairs(self.starts) do
+        local x,w=column(width,index,3)
+        if index==1 then buttonCaption(button,w,"Train both","Both","Both")
+        elseif index==2 then buttonCaption(button,w,"Meditation","Meditate","Med.")
+        else buttonCaption(button,w,"Yoga","Yoga","Yoga") end
+        place(button,x,y,w)
     end
     y = y + row + 4
-    self.recoveryButton:setY(y)
-    self.recoveryButton:setWidth(recoveryWidth)
-    self.recoveryButton:setHeight(row)
-    self.recoverEnduranceButton:setX(stackRecovery and pad or pad + recoveryWidth + 6)
-    self.recoverEnduranceButton:setY(stackRecovery and y + row + 4 or y)
-    self.recoverEnduranceButton:setWidth(fullWidth)
-    self.recoverEnduranceButton:setHeight(row)
-    if stackRecovery then y = y + row + 4 end
+    buttonCaption(self.tierButtons[1],leftWidth,TierMenu.title("meditation"),"Mindfulness","Mindful")
+    buttonCaption(self.tierButtons[2],rightWidth,TierMenu.title("yoga"),"Zen","Zen")
+    place(self.tierButtons[1],leftX,y,leftWidth)
+    place(self.tierButtons[2],rightX,y,rightWidth)
     y = y + row + 4
-    self.check:setY(y)
-    self.check:setWidth(width / 2 - 3)
-    self.stopButton:setX(pad + width / 2 + 3)
-    self.stopButton:setY(y)
-    self.stopButton:setWidth(width / 2 - 3)
+    local recoveryWidth,fullWidth=stackRecovery and width or leftWidth,stackRecovery and width or rightWidth
+    buttonCaption(self.recoveryButton,recoveryWidth,"Recovery","Recover","Rest")
+    buttonCaption(self.recoverEnduranceButton,fullWidth,recoveryLabel,"Full endurance","Full rest")
+    place(self.recoveryButton,leftX,y,recoveryWidth)
+    if stackRecovery then y = y + row + 4 end
+    place(self.recoverEnduranceButton,stackRecovery and leftX or rightX,y,fullWidth)
+    y = y + row + 4
+    buttonCaption(self.check,leftWidth,"Check supplies","Check","Check")
+    buttonCaption(self.stopButton,rightWidth,"Stop All","Stop","Stop")
+    place(self.check,leftX,y,leftWidth)
+    place(self.stopButton,rightX,y,rightWidth)
     y = y + row + 6
     self.checked:setY(y)
     self.footer:setY(y + line + 2)
@@ -820,14 +1085,18 @@ end
 
 function UI:onResize()
     ISCollapsableWindow.onResize(self)
-    self:layout()
-    if self.footer then self:savePreferences() end
+    if self.applyingGeometry or not self.footer then return end
+    if self.width~=self.appliedWidth or self.height~=self.appliedHeight then
+        self:resizePanel(self.width,self.height)
+        self:savePreferences()
+    else self:layout() end
 end
 
 function UI:update()
     ISCollapsableWindow.update(self)
     if not self:getIsVisible() then return end
     if self.player:isDead() then self:close(); return end
+    self:syncScreen()
     local now = getTimestampMs()
     if now < self.nextRefresh then return end
     self.nextRefresh = now + 500
@@ -835,6 +1104,8 @@ function UI:update()
 end
 
 function UI:close()
+    Settings.close(self)
+    self:finishMove()
     if self.wellnessOpen then self:toggleSkillGuide() end
     self:savePreferences()
     self.progressObserved = false
@@ -852,23 +1123,16 @@ function UI.open(player)
     local window = UI.windows[index]
     if window and window.player ~= player then window:close(); window = nil end
     if not window then
-        local saved = preferences(player)
-        local line = getTextManager():getFontHeight(UIFont.Small)
-        local minimumWidth = math.min(480, getCore():getScreenWidth() - 24)
-        local minimumHeight = math.min(math.max(440, line * 17 + 100), getCore():getScreenHeight() - 40)
-        local width = math.min(math.max(minimumWidth, tonumber(saved.width) or 540), getCore():getScreenWidth() - 24)
-        local height = math.min(math.max(minimumHeight, tonumber(saved.height) or math.max(800, line * 37 + 171)), getCore():getScreenHeight() - 40)
-        local x = math.max(0, math.min(tonumber(saved.x) or 70, getCore():getScreenWidth() - width))
-        local y = math.max(0, math.min(tonumber(saved.y) or 70, getCore():getScreenHeight() - height))
-        window = UI:new(x, y, width, height)
-        window.player, window.title = player, "AutoMindful"
-        window.backgroundColor, window.borderColor = palette.background, palette.border
-        window.resizable, window.pin = true, saved.pin ~= false
-        window.minimumWidth, window.minimumHeight = minimumWidth, minimumHeight
-        window.nextRefresh = 0
+        window=UI:new(0,0,1,1)
+        window.player,window.title=player,"AutoMindful"
+        window.backgroundColor,window.borderColor=palette.background,palette.border
+        window.geometry=readGeometry(player)
+        window.resizable,window.pin=true,window.geometry.pin
+        window.nextRefresh=0
+        window:syncScreen()
         window:initialise()
-        UI.windows[index] = window
-    end
+        UI.windows[index]=window
+    else window:syncScreen() end
     window:addToUIManager()
     window:setVisible(true)
     window:bringToTop()

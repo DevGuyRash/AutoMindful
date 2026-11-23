@@ -17,6 +17,7 @@ local Nearby = require "AutoMindful/Nearby"
 local Storage = require "AutoMindful/Storage"
 require "Vehicles/TimedActions/ISPathFindAction"
 local Options = require "AutoMindful/Options"
+local Tiers = require "AutoMindful/TierTargets"
 local ActionYield = require "AutoMindful/ActionYield"
 local EnduranceGoal = require "AutoMindful/EnduranceGoal"
 local PainCare = require "AutoMindful/PainCare"
@@ -29,7 +30,11 @@ AutoMindful = AutoMindful or {}
 local Controller = {}
 AutoMindful.Controller = Controller
 local states = {}
-local modeTitles = {both = "Training", meditation = "Meditation", yoga = "Yoga", endurance = "Endurance meditation", recovery = "Recovery", recoverEndurance = "Endurance recovery"}
+local modeTitles = {both = "Training", meditation = "Meditation", yoga = "Yoga", endurance = "Endurance meditation",
+    recovery = "Recovery", recoverEndurance = "Endurance recovery", meditateTo = "Meditation", yogaTo = "Yoga"}
+local tierModes = {meditateTo="meditation", yogaTo="yoga"}
+local tierAttempts, tierWorkMs, tierWaitingMs = 4, 480000, 480000
+local recoveryTierMs = {[1]=90000, [2]=240000, [3]=420000}
 local practiceClasses = {meditation="LSMeditateAction", yoga="LSYogaAction"}
 local aimStopMessage = "Cancelled because you started aiming."
 local homeCancel = "The return walk was cancelled. Start again when you are ready."
@@ -100,7 +105,7 @@ local function levels(player)
 end
 
 local function atSkillGoal(player, state)
-    if state.backgroundPractice then return false end
+    if state.backgroundPractice or state.tierGoal then return false end
     local meditation, yoga = levels(player)
     return (state.mode == "yoga" or meditation >= 10) and (state.mode == "meditation" or yoga >= 10)
 end
@@ -124,6 +129,15 @@ local function setCycleDebt(cycle, kind)
     if kind ~= cycle.owed then
         cycle.owed, cycle.bridgeUsed = kind, nil
     end
+end
+
+local function completeTurn(player,state,kind)
+    local cycle=state.cycle
+    local completed,owed=TrainingCycle.complete(cycle.lastCompleted,cycle.owed,kind)
+    cycle.lastCompleted=completed
+    cycle.cooperativeKind,cycle.cooperativeTurns=nil,nil
+    setCycleDebt(cycle,owed)
+    player:getModData().AutoMindfulLastCompleted=completed
 end
 
 local function noteCycle(state, reason, preferred, selected)
@@ -197,7 +211,8 @@ local function yieldPractice(player, state, cooperative)
     if not cycle or not work then return end
     if cooperative then
         observePractice(player,state,queueFor(player),getTimestampMs(),false)
-        if state.mode=="both" and work.started and not work.bridge then
+        if state.mode=="both" and work.started and not work.bridge
+                and not (state.turnTier and state.turnTier.kind==work.kind) then
             local fairRetryExhausted=false
             if cycle.policy=="alternate" then
                 cycle.cooperativeTurns=cycle.cooperativeKind==work.kind and (cycle.cooperativeTurns or 0)+1 or 1
@@ -258,6 +273,9 @@ local function showSessionEnd(player, state)
     local hud = PZActionCompletionHUD
     local detail = {hud.duration((getTimestampMs() - session.startedAt) / 1000)}
     if (state.endurance or state.recoveryFull) and state.endPhase == "complete" then detail[#detail+1] = "100% endurance" end
+    if state.tierGoal and state.endPhase=="complete" then
+        detail[#detail+1]=Tiers.label(state.tierGoal.kind,state.tierGoal.target) or "Requested tier"
+    end
     local progress = Progress.snapshot(player)
     for _, kind in ipairs({"meditation", "yoga"}) do
         if state.mode == "both" or state.mode == kind then
@@ -283,6 +301,7 @@ end
 function Controller.stop(player, reason, cause, nativeReason)
     local state = stateFor(player)
     state.active, state.trainingStopReason, state.trainingKind = false, nil, nil
+    state.turnTier=nil
     closePractice(state)
     state.excursion, state.lifestyleCourse, state.lifestylePickup, state.practiceCare, state.mindfulnessWatch = nil, nil, nil, nil, nil
     state.yielding, state.idleSince, state.cycleUntil = nil, nil, nil
@@ -668,6 +687,8 @@ local function yieldToPlayer(player, state, unexplained, walking, settling)
         or unexplained and "interrupted" or settling and "settling-action" or "current-action"
     local entering = not state.yielding
     if entering then
+        local tier=state.tierGoal or state.turnTier
+        if tier then tier.head,tier.sampleAt,tier.waitAt=nil,nil,nil end
         yieldPractice(player,state,not unexplained and not walking)
         state.yielding = true
         if state.practiceCare then state.practiceCareNext=getTimestampMs()+120000 end
@@ -676,6 +697,7 @@ local function yieldToPlayer(player, state, unexplained, walking, settling)
         resetSupply(state)
         state.collectingItem, state.contextInterrupted, state.travelScan = nil, nil, nil
         state.lifestyleCourse, state.lifestylePickup, state.lifestyleScan, state.practiceCare, state.mindfulnessWatch = nil, nil, nil, nil, nil
+        state.utilityTierRetry=nil
         state.furnitureAttempted, state.cycleUntil, state.cooperativePending = nil, nil, nil
         state.careNeeds = {}
         -- Keep the exact way home and any real failure budget, never the old
@@ -1310,6 +1332,15 @@ local function careGearSafe(player,kind,rank)
     return true
 end
 
+function Controller.suspendTurnTier(state,goal,reason)
+    state.tierSuppressed=state.tierSuppressed or {}
+    state.tierSuppressed[goal.kind]={group=goal.group,chosen=goal.chosen}
+    state.turnTier=nil
+    if goal.addedDebt and state.cycle.owed==goal.kind then setCycleDebt(state.cycle,nil) end
+    state.tierNotice=reason.." Continuing normal "..modeTitles[goal.kind].." without this minimum for now."
+    state.tierNoticeUntil=getTimestampMs()+15000
+end
+
 local function train(player, state, kind, bridge, course)
     if state.cycleUntil then
         local remaining = state.cycleUntil - getTimestampMs()
@@ -1366,6 +1397,19 @@ local function train(player, state, kind, bridge, course)
     -- not just at the beginning of the controller tick.
     if #queueFor(player) > 0 or ActionYield.nativeBusy(player) then yieldToPlayer(player, state); return end
     local cycle=state.cycle
+    local target=not course and not bridge and (state.tierGoal or state.turnTier)
+    if target and target.kind==kind then
+        local current=Tiers.current(player,kind)
+        if current==nil then
+            local reason="Could not read the current Lifestyle tier."
+            if state.tierGoal then Controller.stop(player,reason); return false end
+            Controller.suspendTurnTier(state,target,reason)
+            target=nil
+        else
+            target.belowAtAdmission=current<target.target
+            target.waitAt,target.waitMs=nil,nil
+        end
+    else target=nil end
     if course then
         if not careGearSafe(player,kind,course.rank) then return false end
         state.practiceCare=course
@@ -1379,6 +1423,8 @@ local function train(player, state, kind, bridge, course)
     end
     local queued=ownBatch(player, state, course and "practice-care" or kind,
         course and ((kind=="yoga" and "Practicing Yoga" or "Meditating").." for "..course.need..(state.recovery and "; other actions can take over." or "; training resumes afterward."))
+            or target and ((kind=="yoga" and "Practicing Yoga" or "Meditating").." toward "
+                ..(Tiers.label(kind,target.target) or "the selected tier")..".")
             or kind == "yoga" and "Practicing yoga. Poses may fail normally; completed sessions restart automatically."
             or state.endurance and "Meditating until endurance reaches 100%."
             or bridge == yogaEnduranceBridge and "Meditating only while Lifestyle blocks Yoga for low endurance."
@@ -1649,7 +1695,10 @@ function Controller.observeMindfulness(player,state,head,now)
 end
 
 local function practiceCare(player,state,now,m,y,meditation,yoga,training,reading,pain)
-    if state.excursion or (state.practiceCareNext and now<state.practiceCareNext and not state.recovery)
+    local retry=state.utilityTierRetry
+    if retry and (now<retry.startedAt or now>=retry.expires) then state.utilityTierRetry=nil; retry=nil end
+    local cooling=state.practiceCareNext and now<state.practiceCareNext
+    if state.excursion or (cooling and not retry and not state.recovery)
             or not WellnessInfo.supported() or (Options.practiceCare and not Options.practiceCare()) then return false end
     local seated=state.recovery and player:isSittingOnFurniture()
     local readings=practiceReadings(player,meditation)
@@ -1658,7 +1707,9 @@ local function practiceCare(player,state,now,m,y,meditation,yoga,training,readin
             and player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)<3 then
         confirmedFood=comfortSupplyAvailable(player,state,"food")
     end
-    local course,passive=PracticeCare.choose({now=now,nextAt=state.practiceCareNext,
+    local nextAt=state.practiceCareNext
+    if retry then nextAt=nil end
+    local course,passive=PracticeCare.choose({now=now,nextAt=nextAt,
         meditationRank=meditation,yogaRank=yoga,
         meditationReady=not seated and m.ready and careGearSafe(player,"meditation",meditation),
         yogaReady=not seated and y.ready and careGearSafe(player,"yoga",yoga),
@@ -1668,16 +1719,36 @@ local function practiceCare(player,state,now,m,y,meditation,yoga,training,readin
         panic=readings.PANIC,health=readings.HEALTH,healthSafe=readings.healthSafe,
         sleepBlocked=state.recoverySleepBlocked,confirmedFood=confirmedFood,mindfulEnabled=Controller.mindfulnessEnabled()})
     if passive then Controller.armMindfulnessWatch(player,state,now,passive,readings) end
-    if not course then return false end
+    if not course then
+        if retry then state.utilityTierRetry=nil end
+        return false
+    end
     course.startedAt,course.before=now,readings
     course.rank=course.kind=="yoga" and yoga or meditation
-    if train(player,state,course.kind,false,course) then return true end
+    if Options.minimumTier then
+        local desired=Tiers.clamp(course.kind,Options.minimumTier("recovery",course.kind),course.rank)
+        if desired>0 and Tiers.current(player,course.kind)~=nil then
+            course.tierMinimum={kind=course.kind,target=desired}
+            course.tierMaxMs=math.max(course.maxMs,course.kind=="meditation" and recoveryTierMs[desired] or 0)
+            course.tierSleepBlocked=state.recoverySleepBlocked
+        end
+    end
+    if retry then
+        local tier=course.tierMinimum
+        if not tier or course.kind~=retry.kind or course.need~=retry.need or course.target~=retry.effect
+                or tier.target~=retry.tier then
+            state.utilityTierRetry=nil
+            if cooling then return false end
+        else course.tierRetry=true end
+    end
+    if train(player,state,course.kind,false,course) then state.utilityTierRetry=nil; return true end
     -- Posture changes are their own native batches and must settle before
     -- choosing again. Failed admission is not a successful care attempt.
     if state.pending and #state.pending>0 then return true end
     if state.practiceCare then
         state.pending,state.practiceCare=nil,nil
     end
+    state.utilityTierRetry=nil
     return false
 end
 
@@ -1734,14 +1805,118 @@ local function advanceRecovery(player,state,now)
     end
 end
 
+function Controller.finishTierGoal(player,state)
+    local goal=state.tierGoal
+    state.active,state.trainingKind=false,nil
+    closePractice(state)
+    if state.pending then clearOwned(player,state) end
+    state.endPhase,state.endMessage="complete","Reached "..(Tiers.label(goal.kind,goal.target) or "the selected tier")..". Practice finished."
+    setPhase(state,state.endPhase,state.endMessage)
+    showSessionEnd(player,state)
+end
+
+-- Count only observed idle time at the native gate, and only elapsed time
+-- with the same owned practice. Human work and pauses aren't failed attempts.
+local function budget(goal,now,key,elapsed)
+    local before=goal[key]
+    if before and now>=before and now-before<=2500 then goal[elapsed]=(goal[elapsed] or 0)+now-before end
+    goal[key]=now
+    return goal[elapsed] or 0
+end
+
+function Controller.waitTierGate(player,state,goal,gate)
+    if (not state.tierGoal and not gate.temporary)
+            or budget(goal,getTimestampMs(),"waitAt","waitMs")>=tierWaitingMs then
+        local reason="Lifestyle kept blocking the selected tier practice."
+        if state.tierGoal then Controller.stop(player,reason.." Check its requirements, then start again.",
+            goal.kind.."-gate",gate.reason)
+        else Controller.suspendTurnTier(state,goal,reason) end
+        return
+    end
+    if goal.kind=="yoga" and gate.temporary then waitForYoga(player,state,gate,false)
+    else setPhase(state,"recovering","Waiting for Lifestyle to allow the tier practice. Other actions can take over.",
+        goal.kind.."-gate",gate.reason) end
+end
+
+local function advanceTierGoal(player,state)
+    local goal=state.tierGoal
+    local now=getTimestampMs()
+    local current=Tiers.current(player,goal.kind)
+    if (goal.met or current and current>=goal.target)
+            and not (criticalNeed(player,"water") or criticalNeed(player,"food") or needSleep(player)) then
+        Controller.finishTierGoal(player,state)
+        return
+    end
+    if care(player,state) then return end
+    if lifestyleCare(player,state,lifestyleReady(player,state,now),now) then return end
+    if painAvailable(player,state,now) and supply(player,state,"pain") then return end
+    if goal.kind=="meditation" and stat(player,"BOREDOM")>=20 and supply(player,state,"literature") then return end
+    local med,yoga=levels(player)
+    local rank=goal.kind=="meditation" and med or yoga
+    if goal.met or current and current>=goal.target then Controller.finishTierGoal(player,state); return end
+    if Tiers.clamp(goal.kind,goal.target,rank)~=goal.target or current==nil then
+        Controller.stop(player,"The selected tier is no longer available. Check the current skill and Lifestyle settings.")
+        return
+    end
+    if goal.failure then Controller.stop(player,goal.failure); return end
+    local gate=goal.kind=="meditation" and meditationGate(player) or yogaAdmission(player)
+    if gate.ready then train(player,state,goal.kind); return end
+    if gate.temporary then Controller.waitTierGate(player,state,goal,gate); return end
+    Controller.stop(player,gate.reason or "Lifestyle blocked the selected practice.",goal.kind.."-gate",gate.reason)
+end
+
+local function configuredTierGroup(state)
+    if state.backgroundPractice then return "capped" end
+    if state.mode=="both" then return "rotation" end
+end
+
+local function pinTurnTier(player,state,kind,rank)
+    if state.turnTier or not Options.minimumTier then return end
+    local group=configuredTierGroup(state)
+    if not group then return end
+    local chosen=Options.minimumTier(group,kind)
+    local suppressed=state.tierSuppressed and state.tierSuppressed[kind]
+    if suppressed and suppressed.group==group and suppressed.chosen==chosen then return end
+    if suppressed then state.tierSuppressed[kind]=nil end
+    local minimum=Tiers.clamp(kind,chosen,rank)
+    if minimum<=0 then return end
+    local goal={kind=kind,target=minimum,chosen=chosen,group=group}
+    if Tiers.current(player,kind)==nil then
+        Controller.suspendTurnTier(state,goal,"Could not read the current Lifestyle tier.")
+        return
+    end
+    state.turnTier=goal
+    if not state.cycle.owed then
+        goal.addedDebt=true
+        setCycleDebt(state.cycle,kind)
+    end
+end
+
+local function recheckTurnTier(state,meditation,yoga)
+    local goal=state.turnTier
+    if not goal then return end
+    local rank=goal.kind=="meditation" and meditation or yoga
+    -- Level 10 is still the end of an XP session, not a reason to keep
+    -- practicing the finished skill. A level gain otherwise affects the
+    -- next turn, not an already pinned reachable target.
+    if (not state.backgroundPractice and rank>=10) or Tiers.clamp(goal.kind,goal.target,rank)~=goal.target
+            or Options.minimumTier(goal.group,goal.kind)~=goal.chosen then
+        state.turnTier=nil
+        return
+    end
+    return goal
+end
+
 local function advance(player, state)
     if state.recovery then advanceRecovery(player,state,getTimestampMs()); return end
     if state.endurance then train(player, state, "meditation"); return end
+    if state.tierGoal then advanceTierGoal(player,state); return end
     local cycle=state.cycle
     local meditation,yoga=levels(player)
     local needsMeditation=state.mode~="yoga" and (state.backgroundPractice or meditation<10)
     local needsYoga=state.mode~="meditation" and (state.backgroundPractice or yoga<10)
     if not needsMeditation and not needsYoga then
+        state.turnTier=nil
         setCycleDebt(cycle,nil)
         noteCycle(state,"complete",nil,nil)
         state.active = false
@@ -1757,6 +1932,12 @@ local function advance(player, state)
         setCycleDebt(cycle,nil)
         state.trainingKind=nil
     end
+    if state.tierSuppressed then
+        for kind,blocked in pairs(state.tierSuppressed) do
+            if Options.minimumTier(blocked.group,kind)~=blocked.chosen then state.tierSuppressed[kind]=nil end
+        end
+    end
+    local pinned=recheckTurnTier(state,meditation,yoga)
     local m,y=meditationGate(player),yogaAdmission(player)
     cycle.gates.meditation,cycle.gates.yoga=m,y
     local progress=Progress.snapshot(player)
@@ -1780,12 +1961,18 @@ local function advance(player, state)
             kind,preferred,reason="yoga","yoga","ready"
         end
     end
-    local recovering=cycle.owed=="yoga" and needsYoga and y.temporary
+    if pinned then
+        local input=pinned.kind=="meditation" and medInput or yogaInput
+        preferred=pinned.kind
+        kind=input.eligible and preferred or nil
+        reason=kind and "retained" or "blocked"
+    end
+    local recovering=(pinned and pinned.kind=="yoga" or not pinned and cycle.owed=="yoga") and needsYoga and y.temporary
     local useBridge
     if recovering and m.ready then
         if state.mode=="yoga" and y.kind=="endurance" and careGearSafe(player,"meditation",meditation) then
             useBridge=yogaEnduranceBridge
-        elseif kind=="meditation" and not cycle.bridgeUsed then
+        elseif (kind=="meditation" or pinned and needsMeditation) and not cycle.bridgeUsed then
             useBridge=true -- Preserve Train Both's one bounded fallback.
         end
     end
@@ -1828,11 +2015,20 @@ local function advance(player, state)
             -- One bounded native Meditation is enough during a single owed
             -- Yoga turn; further waits use ordinary seated recovery.
             state.trainingKind=nil
-            waitForYoga(player,state,y,boredBlock)
+            if pinned then Controller.waitTierGate(player,state,pinned,y)
+            else waitForYoga(player,state,y,boredBlock) end
         end
         return
     end
-    if kind then train(player,state,kind);return end
+    if kind then
+        pinTurnTier(player,state,kind,kind=="meditation" and meditation or yoga)
+        train(player,state,kind)
+        return
+    end
+    if pinned then
+        Controller.waitTierGate(player,state,pinned,pinned.kind=="yoga" and y or m)
+        return
+    end
     if needsYoga and y.temporary then waitForYoga(player,state,y,boredBlock);return end
     if state.backgroundPractice then
         local gate=preferred=="yoga" and y or m
@@ -1872,6 +2068,8 @@ local function finishPending(player, state, now)
             end
         end
         local readings=practiceReadings(player)
+        local minimum=course.tierMinimum
+        local current=minimum and Tiers.current(player,minimum.kind)
         local acquired=not failed and realPractice and course.need=="mindfulness" and PracticeCare.acquired(course,readings)
         if acquired then Controller.armMindfulnessWatch(player,state,now,course,readings,true) end
         local improved=not failed and realPractice and course.need~="mindfulness" and PracticeCare.improved(course,readings)
@@ -1882,11 +2080,21 @@ local function finishPending(player, state, now)
         end
         state.practiceCare,state.pending=nil,nil
         state.practiceCareNext=now+120000
+        if minimum and current and current<minimum.target and not failed and realPractice and not course.tierRetry
+                and Controller.tierCareNeed(course,readings) then
+            -- At most one retry, reselected through normal care after the
+            -- queue and higher-priority needs have been checked again.
+            state.utilityTierRetry={kind=course.kind,need=course.need,effect=course.target,tier=minimum.target,
+                startedAt=now,expires=now+15000}
+        end
         state.practiceCareRelieved=improved and course.need=="boredom" or nil
         state.practiceCareNotice=acquired and "Mindfulness is active. Checking for the matching effect."
             or improved and "The game showed relief after the care practice."
             or (state.recovery and "The care practice did not confirm relief; continuing to monitor needs."
                 or "The care practice did not confirm relief; returning to training.")
+        if minimum and not (current and current>=minimum.target) then
+            state.practiceCareNotice=state.practiceCareNotice.." The selected tier was not confirmed."
+        end
         state.practiceCareNoticeUntil=now+5000
         return false
     elseif state.lifestylePickup then
@@ -2061,6 +2269,69 @@ local function updateEndurance(player, state, now, quiet)
     return true
 end
 
+local function missedTier(goal)
+    goal.attempts=(goal.attempts or 0)+1
+    if goal.attempts>=tierAttempts then
+        goal.failure="Lifestyle did not reach "..(Tiers.label(goal.kind,goal.target) or "the selected tier")
+            .." after four completed practices."
+    end
+end
+
+function Controller.observeTierHead(player,state,head,now)
+    local goal=state.tierGoal or state.turnTier
+    if not goal or not head or state.phase~=goal.kind or head.autoMindfulOwner~=state
+            or not isPractice(head,goal.kind) or head.autoMindfulStopped
+            or (state.practiceWork and state.practiceWork.bridge) then return false end
+    if state.turnTier and recheckTurnTier(state,levels(player))~=goal then return false end
+    if state.tierGoal then
+        local med,yoga=levels(player)
+        local rank=goal.kind=="meditation" and med or yoga
+        if Tiers.clamp(goal.kind,goal.target,rank)~=goal.target then
+            Controller.stop(player,"The selected tier is no longer unlocked for this survivor.")
+            return true
+        end
+    end
+    local current=Tiers.current(player,goal.kind)
+    if current==nil then
+        local reason="Could not read the current Lifestyle tier."
+        if state.tierGoal then Controller.stop(player,reason); return true end
+        Controller.suspendTurnTier(state,goal,reason)
+        return false
+    end
+    if goal.head~=head then goal.head,goal.sampleAt,goal.launchAt,goal.launchMs=head,nil,nil,nil end
+    if not head:isStarted() then
+        if budget(goal,now,"launchAt","launchMs")<30000 then return false end
+        local reason="Lifestyle did not start the selected tier practice."
+        if state.tierGoal then Controller.stop(player,reason); return true end
+        Controller.suspendTurnTier(state,goal,reason)
+        return false
+    end
+    -- Yoga's success writes Zen in native perform, never cut it short for
+    -- a pre-existing badge or merely a pose/XP gain.
+    if goal.kind=="meditation" and current>=goal.target and (state.tierGoal or goal.belowAtAdmission) then
+        if state.tierGoal then Controller.finishTierGoal(player,state)
+        else
+            completeTurn(player,state,goal.kind)
+            state.turnTier,state.trainingKind=nil,nil
+            closePractice(state)
+            state.unknownPauses,state.quietMs,state.lostWithoutAction=nil,nil,nil
+            state.cooperativePending={}
+            state.careHandoff=true
+            clearOwned(player,state)
+            setPhase(state,"between",(Tiers.label(goal.kind,goal.target) or "The selected tier")
+                .." is active. Leaving a short opening for other actions.")
+        end
+        return true
+    end
+    if not goal.best or current>goal.best then goal.best,goal.workMs=current,0 end
+    if budget(goal,now,"sampleAt","workMs")>=tierWorkMs then
+        local reason="Lifestyle did not make tier progress during eight minutes of practice."
+        if state.tierGoal then Controller.stop(player,reason); return true end
+        Controller.suspendTurnTier(state,goal,reason)
+    end
+    return false
+end
+
 -- Consume a receipt before yielding to a foreign successor. A queued or
 -- stopped action, an empty admission or an individual finished prep action
 -- does not advance Both's turn or reset its interruption budget.
@@ -2078,17 +2349,32 @@ local function observeTrainingBatch(player, state, queue, now)
     if not practiced then return not queue[1] end
     local cycle,kind=state.cycle,state.trainingKind
     local bridge=state.practiceWork and state.practiceWork.bridge
+    local goal=state.tierGoal
+    if not goal and state.turnTier then goal=recheckTurnTier(state,levels(player)) end
+    local reached
+    if not bridge and goal and goal.kind==kind then
+        local current=Tiers.current(player,kind)
+        reached=current and current>=goal.target
+        goal.head,goal.sampleAt=nil,nil
+        if reached and state.tierGoal then goal.met=true end
+        if not reached then
+            missedTier(goal)
+            if state.turnTier and (current==nil or goal.failure) then
+                Controller.suspendTurnTier(state,goal,current==nil and "Could not read the current Lifestyle tier." or goal.failure)
+                goal=nil
+            end
+        end
+    end
     if cycle then
         state.stalledSkill=observePractice(player,state,queue,now,true)
-        -- Lifestyle can naturally finish a short bridge before the next
-        -- poll. Keep its native XP, but don't mark a scheduled turn served.
+        -- A native completion may leave a requested tier turn unserved.
+        -- Record the real action, but only a live tier receipt can spend it.
         if not bridge then
-            local completed,owed=TrainingCycle.complete(cycle.lastCompleted,cycle.owed,kind)
-            cycle.lastCompleted=completed
-            cycle.cooperativeKind,cycle.cooperativeTurns=nil,nil
-            setCycleDebt(cycle,owed)
             cycle.skills[kind].completed=cycle.skills[kind].completed+1
-            player:getModData().AutoMindfulLastCompleted=completed
+            if not goal or goal.kind~=kind or reached then
+                completeTurn(player,state,kind)
+                if goal and goal.kind==kind then state.turnTier=nil end
+            end
         end
     end
     state.trainingKind=nil
@@ -2151,17 +2437,48 @@ function Controller.waitCooperativeWindow(player,state,now)
     return false
 end
 
+-- A configured minimum can extend an active care practice only while its
+-- original need is still actionable. A badge is neither a need nor relief.
+function Controller.tierCareNeed(course,readings)
+    local need=course.need=="mindfulness" and course.target or course.need
+    if course.kind=="yoga" then
+        if need=="boredom" then return (readings.BOREDOM or 0)>30 or (course.rank>=3 and (readings.BOREDOM or 0)>=25) end
+        if need=="stiffness" then return (readings.stiffness or 0)>=(course.rank>=3 and 12.5 or 20) end
+        if need=="pain" then return not readings.painReliefActive and (readings.PAIN or 0)>=(course.rank>=3 and 15 or 25) end
+    end
+    if need=="stress" then return (readings.STRESS or 0)>=(course.kind=="yoga" and 0.65 or 0.50) end
+    if need=="withdrawal" then return (readings.withdrawal or 0)>=0.35 end
+    if need=="panic" then return (readings.PANIC or 0)>=(course.tierSleepBlocked and 5 or 25) end
+    if need=="pain" then return not readings.painReliefActive and (readings.PAIN or 0)>=10 and readings.PAIN<20 end
+    if need=="hunger" then return (readings.HUNGER or 0)>=0.15 and readings.HUNGER<=0.30 end
+    if need=="health" then
+        return readings.healthSafe and (readings.HUNGER or 1)<0.15
+            and (readings.PAIN or 100)<=5 and (readings.PANIC or 100)<5
+    end
+    return false
+end
+
 function Controller.updateCarePractice(player,state,head,now,urgent)
     local course=state.practiceCare
+    local minimum=course.tierMinimum
+    local configured=minimum and Options.minimumTier and Options.minimumTier("recovery",course.kind)
+    local target=minimum and Tiers.clamp(course.kind,configured,course.rank)
+    local current=target and target>0 and Tiers.current(player,course.kind)
+    local minimumActive=current~=nil and current~=false
+    local ordinaryCare=state.recovery or minimumActive
     local priority=urgent or (needSleep(player) and not (state.recovery and Controller.sleepBlockedByMood(player)))
-        or (stat(player,"HUNGER")>=(state.recovery and Consumables.careThreshold or 0.60) and comfortSupplyAvailable(player,state,"food"))
-        or (stat(player,"THIRST")>=(state.recovery and Consumables.careThreshold or 0.50) and comfortSupplyAvailable(player,state,"water"))
-        or (state.recovery and not state.contextVisible and (painAvailable(player,state,now)
+        or (stat(player,"HUNGER")>=(ordinaryCare and Consumables.careThreshold or 0.60) and comfortSupplyAvailable(player,state,"food"))
+        or (stat(player,"THIRST")>=(ordinaryCare and Consumables.careThreshold or 0.50) and comfortSupplyAvailable(player,state,"water"))
+        or (ordinaryCare and not state.contextVisible and (painAvailable(player,state,now)
             or (stat(player,"BOREDOM")>=20 and comfortSupplyAvailable(player,state,"literature"))))
-    local relief, drawback, acquired, readings
+    local relief, drawback, acquired, readings, waitingForTier, careResolved
     if course.kind=="meditation" and head.autoMindfulOwner==state and isPractice(head,course.kind)
             and head:isStarted() and not head.autoMindfulStopped then
         readings=practiceReadings(player,nil,true)
+        if minimumActive then
+            careResolved=not Controller.tierCareNeed(course,readings)
+            waitingForTier=not careResolved and current<math.min(minimum.target,target)
+        end
         if course.need=="mindfulness" then
             acquired=PracticeCare.acquired(course,readings)
             drawback=not Controller.mindfulnessEnabled() or (readings.BOREDOM or 0)>20
@@ -2173,7 +2490,7 @@ function Controller.updateCarePractice(player,state,head,now,urgent)
             relief=PracticeCare.improved(course,readings)
             drawback=(readings.BOREDOM or 0)>10 or (readings.PAIN or 0)>=10
         end
-        if state.recovery and course.need~="mindfulness" and not (priority or relief or drawback) then
+        if state.recovery and course.need~="mindfulness" and not (priority or relief or drawback or waitingForTier) then
             Controller.offerRecoveryHandoff(player,state,head,now)
             if not state.pending then
                 state.practiceCare=nil
@@ -2182,13 +2499,18 @@ function Controller.updateCarePractice(player,state,head,now,urgent)
             end
         end
     end
-    if priority or relief or acquired or drawback or now-course.startedAt>=course.maxMs
+    if priority or drawback or careResolved or (relief or acquired) and not waitingForTier
+            or now-course.startedAt>=(waitingForTier and course.tierMaxMs or course.maxMs)
             or (Options.practiceCare and not Options.practiceCare()) then
         state.practiceCare=nil
         state.practiceCareNext=now+120000
+        if waitingForTier and not priority and not drawback then
+            state.practiceCareNotice="The selected tier was not confirmed before the care practice ended."
+            state.practiceCareNoticeUntil=now+5000
+        end
         if acquired and not priority and not drawback then
             Controller.armMindfulnessWatch(player,state,now,course,readings,true)
-        elseif relief and not priority then
+        elseif relief and not priority and not waitingForTier then
             state.practiceCareNotice="The game showed relief after the care practice."
             state.practiceCareNoticeUntil=now+5000
         end
@@ -2388,11 +2710,12 @@ function Controller.update(player)
             local drinking = stat(player, "THIRST") >= 0.2 and comfortSupplyAvailable(player, state, "water")
             local pain = not state.contextVisible and painAvailable(player, state, now)
             local lifestyle = not state.contextVisible and lifestyleReady(player,state,now)
-            if (meditation >= 10 and not state.backgroundPractice and not enduranceOnly) or reading or eating or drinking or pain or lifestyle
+            if (meditation >= 10 and not state.backgroundPractice and not state.tierGoal and not enduranceOnly) or reading or eating or drinking or pain or lifestyle
                     or urgent or needSleep(player) then
                 breakForCare(player, state, "Taking a care break before resuming training.")
             elseif not state.contextVisible or enduranceOnly then
                 local head=queue[1]
+                if Controller.observeTierHead(player,state,head,now) then return end
                 if cycle and work and work.bridge and head.autoMindfulOwner==state and isPractice(head,"meditation")
                         and not head.autoMindfulStopped and (enduranceOnly or work.bridgeStartedAt and head:isStarted()) then
                     local gate=yogaAdmission(player)
@@ -2416,10 +2739,11 @@ function Controller.update(player)
                 end
                 if not enduranceOnly then Controller.offerRecoveryHandoff(player,state,head,now) end
             end
-        elseif state.phase == "yoga" and (urgent
-                or (stat(player, "HUNGER") >= 0.6 and comfortSupplyAvailable(player, state, "food"))
-                or (stat(player, "THIRST") >= 0.5 and comfortSupplyAvailable(player, state, "water"))) then
-            breakForCare(player, state, "Taking an urgent care break. Lifestyle may apply its normal early-stop yoga penalty.")
+        elseif state.phase == "yoga" then
+            if urgent or (stat(player, "HUNGER") >= 0.6 and comfortSupplyAvailable(player, state, "food"))
+                    or (stat(player, "THIRST") >= 0.5 and comfortSupplyAvailable(player, state, "water")) then
+                breakForCare(player, state, "Taking an urgent care break. Lifestyle may apply its normal early-stop yoga penalty.")
+            elseif not state.contextVisible then Controller.observeTierHead(player,state,queue[1],now) end
         elseif state.phase == "standing" and now - state.actionStarted > 15000 then
             Controller.stop(player, "Could not stand up here. Move to clear ground and start again.")
         end
@@ -2544,7 +2868,11 @@ function Controller.update(player)
         Nearby.invalidate(player)
     end
     local endedTraining = state.pending and (state.phase == "meditation" or state.phase == "yoga")
-    local endedRecovery = (state.recovery or state.backgroundPractice) and state.pending and not state.excursion and not state.collectingItem and not state.preparation
+    -- Standing is preparation, not a completed practice or care turn.
+    -- At this point the normal foreign-action and native drain checks have
+    -- passed; advance can recheck care and Lifestyle's gate immediately.
+    local endedRecovery = (state.recovery or state.backgroundPractice) and state.pending and state.phase ~= "standing"
+        and not state.excursion and not state.collectingItem and not state.preparation
     if state.pending and finishPending(player, state, now) then return end
     if state.active and endedRecovery and not state.pending then
         state.cooperativePending={}
@@ -2562,7 +2890,7 @@ function Controller.update(player)
     advance(player, state)
 end
 
-function Controller.start(player, mode, collectNearby)
+function Controller.start(player, mode, collectNearby, tier)
     if not player or not player:isLocalPlayer() then return false, "Choose a local survivor." end
     if not modeTitles[mode] then return false, "Unknown training mode." end
     local old = stateFor(player)
@@ -2577,6 +2905,17 @@ function Controller.start(player, mode, collectNearby)
         if initialEndurance == nil then return false, "Could not read the survivor's endurance." end
         if EnduranceGoal.full(initialEndurance) then return false, "Endurance is already full." end
     end
+    local tierKind=tierModes[mode]
+    if tierKind then
+        local med,yoga=levels(player)
+        local rank=tierKind=="meditation" and med or yoga
+        if type(tier)~="number" or tier<1 or Tiers.clamp(tierKind,tier,rank)~=tier then
+            return false, "That tier is not unlocked for this survivor."
+        end
+        local current=Tiers.current(player,tierKind)
+        if current==nil then return false,"The Lifestyle tier is unavailable or could not be read." end
+        if current>=tier then return false,(Tiers.label(tierKind,tier) or "That tier").." is already active." end
+    end
     local danger = unsafeReason(player)
     if danger then return false, danger end
     if player:isAsleep() then return false, "Wait until the survivor wakes up." end
@@ -2590,6 +2929,9 @@ function Controller.start(player, mode, collectNearby)
         state.cooperativePending={}
         state.message="Watching for recovery needs and leaving room for other actions."
     elseif initialEndurance then state.endurance = {best=initialEndurance}
+    elseif tierKind then
+        state.tierGoal={kind=tierKind,target=tier}
+        state.message="Checking the requirements for "..(Tiers.label(tierKind,tier) or "the selected Lifestyle tier").."."
     else
         state.cycle=newCycle(player)
         if atSkillGoal(player,state) then
@@ -2599,7 +2941,7 @@ function Controller.start(player, mode, collectNearby)
             state.message="Practicing at max rank when idle. Other actions take priority."
         end
     end
-    if state.recoveryFull or state.endurance or (not state.recovery
+    if state.recoveryFull or state.endurance or state.tierGoal or (not state.recovery
             and ((mode ~= "yoga" and player:getPerkLevel(Perks.Meditation) < 10) or (mode ~= "meditation" and yoga[1] < 10))) then
         state.session = {startedAt=getTimestampMs(), progress=Progress.snapshot(player)}
     end
@@ -2620,12 +2962,15 @@ function Controller.status(player)
     local cycleStatus=cycle and {policy=cycle.policy,due=cycle.owed,nextKind=cycle.nextKind,reason=cycle.reason,bridge=cycle.bridge,
         preferred=cycle.preferred,lastCompleted=cycle.lastCompleted,gates=cycle.gates,skills=cycle.skills} or nil
     local decisionCode,decisionLabel,decisionDetail=Decisions.current(state)
+    local goal=state.active and (state.tierGoal or state.turnTier or (state.practiceCare and state.practiceCare.tierMinimum))
+    local tierGoal=goal and {kind=goal.kind,target=goal.target,current=Tiers.current(player,goal.kind)} or nil
+    local tierNotice=state.active and state.tierNoticeUntil and getTimestampMs()<state.tierNoticeUntil and state.tierNotice or nil
     return {active = state.active, phase = state.phase, message = state.careWait or state.message,
         decisionCode=decisionCode, decisionLabel=decisionLabel, decisionDetail=decisionDetail, decisionRevision=Decisions.revision(state),
-        careWaiting = state.careWait ~= nil, meditation = meditation, yoga = yoga, cycle=cycleStatus,
+        careWaiting = state.careWait ~= nil, meditation = meditation, yoga = yoga, cycle=cycleStatus,tierGoal=tierGoal,tierNotice=tierNotice,
         progress = Progress.snapshot(player), mode = state.mode, backgroundPractice=state.backgroundPractice, collectNearby = state.collectNearby,
         endurance = (state.endurance or state.recovery) and EnduranceGoal.read(player) or nil,
-        returnNotice = state.returnNotice or state.fluidNotice, careNotice = (state.practiceCareNoticeUntil and getTimestampMs()<state.practiceCareNoticeUntil and state.practiceCareNotice) or state.careNotice or state.lifestyleNotice, painNotice = state.painNotice, pendingReturns = #state.loans}
+        returnNotice = state.returnNotice or state.fluidNotice, careNotice = (state.practiceCareNoticeUntil and getTimestampMs()<state.practiceCareNoticeUntil and state.practiceCareNotice) or tierNotice or state.careNotice or state.lifestyleNotice, painNotice = state.painNotice, pendingReturns = #state.loans}
 end
 
 function Controller.recentDecisions(player)

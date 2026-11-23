@@ -26,6 +26,9 @@ local search = settings:getOption("searchNearby") or settings:addTickBox("search
 local practice = settings:getOption("practiceCare") or settings:addTickBox("practiceCare",
     "Use Yoga or Meditation for relief when useful", true,
     "When a suitable practice is likely to help, take a bounded care break without using up a training turn. Food, water, medicine and ready reading still take priority.")
+local strictRecovery = settings:getOption("strictRecoveryTier") or settings:addTickBox("strictRecoveryTier",
+    "Recovery: strict tier targets", false,
+    "Once Recovery starts a useful practice, keep its minimum tier pending even if that need clears. Your actions, urgent needs, and native requirements still take priority. This does not start a practice just to renew a buff.")
 local radius = settings:getOption("searchRadius") or settings:addSlider("searchRadius",
     "Nearby search radius (tiles)", 2, 30, 1, 10,
     "Search distance from the original training spot for each care trip. Default: 10 tiles. The route itself may be longer.")
@@ -85,9 +88,9 @@ end
 local minimums = {}
 local minimumHelp = "Defaults to the highest tier and uses the highest unlocked tier at or below your choice. Select No minimum to turn this off. Safety, supplies and your other actions still take priority."
 for _, group in ipairs({
-    {id="recovery", label="Recovery / relief"},
-    {id="capped", label="Capped practice"},
-    {id="rotation", label="Train Both"},
+    {id="recovery", label="Recovery / relief", scope="A practice must already be useful for a need. The Recovery strict option keeps a started target even if that need clears."},
+    {id="capped", label="Capped practice", scope="Regular practice turns started at the level cap, not endurance-only rest breaks."},
+    {id="rotation", label="Train Both", scope="Regular Yoga and Meditation turns in Train Both, not endurance-only rest breaks."},
 }) do
     local modes = {}
     minimums[group.id] = modes
@@ -99,7 +102,7 @@ for _, group in ipairs({
         local choices = Tiers.choices(spec.kind)
         local option = settings:getOption(id)
         if not option then
-            option = settings:addComboBox(id, group.label .. ": minimum " .. spec.label, minimumHelp)
+            option = settings:addComboBox(id, group.label .. ": minimum " .. spec.label, group.scope .. " " .. minimumHelp)
             for _, row in ipairs(choices) do
                 local label = row.tier == 0 and row.label or Tiers.providerCompatible() and row.label .. " (level " .. row.rank .. ")" or row.label
                 option:addItem(label)
@@ -116,6 +119,10 @@ function Options.minimumTier(group, kind)
     local index = tonumber(item.option:getValue())
     local row = index and index % 1 == 0 and item.choices[index]
     return row and row.tier or 0
+end
+
+function Options.strictRecoveryTier()
+    return strictRecovery:getValue() == true
 end
 
 function Options.practiceCare()

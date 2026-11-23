@@ -296,6 +296,53 @@ test("a genuinely unrelated native handle during a held handoff has no timeout a
     assert(C.status(p).active and p.nativeHead.lua.Type=="Meditation" and #p.cards==0)
     C.stop(p,"test cleanup")
 end)
+for _,input in ipairs({"aim","run","cancel"}) do
+    test("Recovery owns only its drink at a native stop boundary ("..input..")",function()
+        local p=player()
+        T.add(p.inventory,T.water({thirst=-0.8}))
+        p.values.THIRST,p.thirstMoodle,p.values.ENDURANCE=.48,4,.6
+        assert(C.start(p,"recoverEndurance",false)); step(p,4)
+        local q=ISTimedActionQueue.getTimedActionQueue(p)
+        local own=q.queue[1]
+        assert(own and own.Type=="drink" and own.autoMindfulOwner)
+        local first,second=T.action(p,"ISChopTreeAction"),T.action(p,"UnrelatedToolJob")
+        ISTimedActionQueue.add(first); ISTimedActionQueue.add(second)
+        if input=="aim" then p.aiming=true
+        elseif input=="run" then p.running,p.rawMovementInput=true,true
+        elseif input=="cancel" then p.cancelInput=true end
+        own:stop() -- Java calls Lua before its handle has drained
+        p.aiming,p.running,p.rawMovementInput,p.cancelInput=false,false,false,false
+        assert(q.queue[1]==own and q.queue[2]==first and q.queue[3]==second
+            and not first.starts and not second.starts,"A stock stop erased or started someone else's work")
+        p.nativeHead=nil; q:tick(); step(p)
+        assert(first.starts==1 and not second.starts and not first.autoMindfulOwner and not first.cancels)
+        assert(C.status(p).active==(input~="cancel") and #p.cards==(input=="cancel" and 1 or 0))
+        finish(p,first); assert(q.queue[1]==second and second.starts==1 and not second.cancels)
+        finish(p,second); step(p,5)
+        if input=="cancel" then
+            assert(not C.status(p).active and not q.queue[1] and #p.cards==1)
+        else
+            assert(C.status(p).active and #p.cards==0 and q.queue[1]~=own and q.queue[1].Type=="drink")
+            C.stop(p,"test cleanup")
+        end
+    end)
+end
+test("Recovery waits out an unrelated Java-only action with no Lua queue entry",function()
+    local p=player()
+    local nativeOnly={}
+    p.nativeHead=nativeOnly
+    p.values.THIRST,p.thirstMoodle=.48,4
+    T.add(p.inventory,T.water({thirst=-0.8}))
+    assert(C.start(p,"recovery",false)); step(p,5)
+    local q=ISTimedActionQueue.getTimedActionQueue(p)
+    assert(C.status(p).active and p.nativeHead==nativeOnly and #q.queue==0)
+    p.nativeHead=nil
+    step(p)
+    assert(#q.queue==0)
+    step(p,3)
+    assert(q.queue[1] and q.queue[1].Type=="drink")
+    C.stop(p)
+end)
 print("stock aim/controller integration: "..passed.." passed (native/player boundaries doubled)")
 
 assert(failed==0,tostring(failed).." stock aim integration regression(s)")

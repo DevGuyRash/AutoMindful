@@ -139,7 +139,7 @@ for _,why in ipairs({"rank","native","disabled","sleep","thirst","unsafe","held"
     assert(count(p,"Meditation")==0 and not head(p),why)
     if why=="thirst" then assert(C.status(p).message:lower():find("water",1,true))
     elseif why=="sleep" then assert(p:isAsleep(),C.status(p).message)
-    elseif why=="unsafe" then assert(not C.status(p).active) end
+    elseif why=="unsafe" then assert(C.status(p).active and C.status(p).phase=="recovery-paused") end
     C.stop(p); enabled=true
 end
 print("PASS lower rank, native gate, option, sleep, critical thirst, danger and held gear")

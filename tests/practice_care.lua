@@ -151,7 +151,7 @@ test("the new policy is opt-in and honors ordinary care and the existing cooldow
 end)
 
 test("direct nicotine withdrawal relief is real at novice rank, with bounded native choices", function()
-    assertNone({recovery=true, withdrawal=0.349})
+    assertNone({recovery=true, withdrawal=0.249})
     assertNone({recovery=true, withdrawal=35, meditationRank=10, yogaRank=10})
     assertNone({recovery=true, withdrawal=0.35, meditationReady=false, yogaReady=false})
     local meditation = assertCourse({recovery=true, withdrawal=0.35, mindfulEnabled=false},
@@ -265,7 +265,7 @@ end)
 test("panic needs native Basic; blocked-sleep panic may qualify, Yoga is not a substitute", function()
     assertNone(strongInput({hunger=0.05, meditationRank=2, panic=35}))
     assertNone(strongInput({hunger=0.05, meditationRank=10, panic=35, meditationReady=false}))
-    assertNone(strongInput({hunger=0.05, meditationRank=3, panic=24.99}))
+    assertNone(strongInput({hunger=0.05, meditationRank=3, panic=11.99}))
     local basic=assertCourse(strongInput({hunger=0.05,meditationRank=3,panic=25}),"meditation","mindfulness","PANIC")
     assert(basic.target=="panic" and basic.targetTier==1 and basic.fromTier==0 and basic.maxMs==90000)
     basic=assertCourse(strongInput({hunger=0.05,meditationRank=3,panic=5,sleepBlocked=true}),"meditation","mindfulness","PANIC")

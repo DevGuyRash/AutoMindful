@@ -229,16 +229,11 @@ local function updateFooter(window)
 end
 
 local pad, buttonGap = 12, 6
-local recoveryLabel = "Recover to Full Endurance"
 
 local function column(width,index,count)
     local start=math.floor((width+buttonGap)*(index-1)/count)
     local finish=math.floor((width+buttonGap)*index/count)-buttonGap
     return pad+start,math.max(1,finish-start)
-end
-
-local function recoveryLabelWidth()
-    return getTextManager():MeasureStringX(UIFont.Small,recoveryLabel)+20
 end
 
 local function clamp(value, low, high)
@@ -312,7 +307,7 @@ function UI:syncScreen()
     self.minimumWidth=math.min(480,self.maximumWidth)
     self.minimumHeight=math.min(math.max(440,line*17+100),self.maximumHeight)
     local geometry=self.geometry
-    local defaultWidth=math.max(560,pad*2+buttonGap+recoveryLabelWidth()*2)
+    local defaultWidth=560
     self:applyGeometry(geometry.x or 70,geometry.y or 70,geometry.width or defaultWidth,
         geometry.height or self.fittedHeight or self.minimumHeight)
     self:layout()
@@ -668,7 +663,6 @@ function UI:refresh()
     self.recovering = recovering
     for _, button in ipairs(self.starts) do button:setEnable(not status.active) end
     self.recoveryButton:setEnable(not status.active)
-    self.recoverEnduranceButton:setEnable(not status.active)
     self.stopButton:setEnable(status.active)
     self.nearby.enable = true
     local activityColor = status.active and palette.meditation or (self.startError and palette.missing or palette.text)
@@ -943,16 +937,10 @@ function UI:createChildren()
     self.recoveryButton = ISButton:new(pad, y, width, row, "Recovery", self, UI.onStart)
     self.recoveryButton:initialise()
     self.recoveryButton.mode = "recovery"
-    self.recoveryButton.tooltip = "Stay on in the background. Handle needs and use Yoga or Meditation only when useful. Other actions take priority."
+    self.recoveryButton.tooltip = "Rest and handle needs during downtime. Your actions always take priority. Keep Recovery on until you explicitly stop it."
     self.recoveryButton.borderColor, self.recoveryButton.textColor = palette.water, palette.water
     self.recoveryButton.backgroundColor = {r=.13, g=.20, b=.24, a=1}
     self:addChild(self.recoveryButton)
-    self.recoverEnduranceButton = ISButton:new(pad, y, width, row, recoveryLabel, self, UI.onStart)
-    self.recoverEnduranceButton:initialise()
-    self.recoverEnduranceButton.mode = "recoverEndurance"
-    self.recoverEnduranceButton.tooltip = "Run Recovery until endurance is full, then stop. Useful care and existing supply settings still apply."
-    self.recoverEnduranceButton.borderColor = palette.water
-    self:addChild(self.recoverEnduranceButton)
     y = y + row + 4
     self.check = ISButton:new(pad, y, width / 2 - 3, row, "Check supplies", self, UI.checkSupplies)
     self.check:initialise()
@@ -981,7 +969,6 @@ function UI:layout()
     local width = self.width - pad * 2
     local leftX,leftWidth=column(width,1,2)
     local rightX,rightWidth=column(width,2,2)
-    local stackRecovery=rightWidth<recoveryLabelWidth()
     local bodyY = self:titleBarHeight() + 10
     local gearSize=self:titleBarHeight()-2
     self.settingsButton:setX(self.width-gearSize*2-5)
@@ -991,7 +978,7 @@ function UI:layout()
         self.footer:paginate()
     end
     self.footer:setHeight(math.max(line * 2 + 4, self.footer:getScrollHeight()))
-    local controlsHeight = row * 6 + line + self.footer.height + 34 + (stackRecovery and row + 4 or 0)
+    local controlsHeight = row * 6 + line + self.footer.height + 34
     self.body:setWidth(width)
     self.body:setHeight(math.max(1, self.height - bodyY - controlsHeight - 8))
     local contentWidth = width - 15
@@ -1067,12 +1054,8 @@ function UI:layout()
     place(self.tierButtons[1],leftX,y,leftWidth)
     place(self.tierButtons[2],rightX,y,rightWidth)
     y = y + row + 4
-    local recoveryWidth,fullWidth=stackRecovery and width or leftWidth,stackRecovery and width or rightWidth
-    buttonCaption(self.recoveryButton,recoveryWidth,"Recovery","Recover","Rest")
-    buttonCaption(self.recoverEnduranceButton,fullWidth,recoveryLabel,"Full endurance","Full rest")
-    place(self.recoveryButton,leftX,y,recoveryWidth)
-    if stackRecovery then y = y + row + 4 end
-    place(self.recoverEnduranceButton,stackRecovery and leftX or rightX,y,fullWidth)
+    buttonCaption(self.recoveryButton,width,"Recovery","Recover","Rest")
+    place(self.recoveryButton,leftX,y,width)
     y = y + row + 4
     buttonCaption(self.check,leftWidth,"Check supplies","Check","Check")
     buttonCaption(self.stopButton,rightWidth,"Stop All","Stop","Stop")

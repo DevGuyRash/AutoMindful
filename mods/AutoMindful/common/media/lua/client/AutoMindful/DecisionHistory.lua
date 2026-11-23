@@ -11,6 +11,7 @@ local labels = {
     transferring="Preparing a drink", opening="Opening a supply", care="Taking a care break",
     resuming="Rechecking after a pause", stopped="AutoMindful stopped", complete="Mode complete",
     ["current-action"]="Waiting for your current action", walking="Waiting for movement to settle",
+    ["manual-input"]="Waiting for your controls to settle", ["recovery-danger"]="Recovery paused for safety",
     ["inspection-open"]="Waiting for the map or dialog to close", interrupted="Checking an interrupted action",
     ["settling-action"]="Waiting for the previous action to settle",
     ["admission-retry"]="Lifestyle did not start the practice",
@@ -27,6 +28,8 @@ local liveDetails = {
     ["inspection-open"]="Close the window to continue. Your mode stays on.",
     interrupted="AutoMindful will check before trying the action again.",
     ["settling-action"]="AutoMindful will resume when the queue is clear.",
+    ["manual-input"]="Recovery will resume when you are idle.",
+    ["recovery-danger"]="Recovery stays armed and will wait until it is safe.",
 }
 
 local function nativeText(value)

@@ -106,13 +106,13 @@ local function decorate(menu, option, player, mode)
             or "Uses your saved adjacent-supply setting. The window can stay closed.")
     tooltip(submenu, train, "Automatic " .. mode, description)
     if mode == "meditation" then
-        local endurance = submenu:addOptionOnTop("Recover to Full Endurance", player, UI.startTraining, "recoverEndurance")
+        local endurance = submenu:addOptionOnTop("Recovery", player, UI.startTraining, "recovery")
         if endurance then
             fillIcon(endurance, "Endurance")
             endurance.notAvailable = status.active
-            tooltip(submenu, endurance, "Recover to Full Endurance", status.active
+            tooltip(submenu, endurance, "Recovery", status.active
                 and "Use Stop All before changing AutoMindful modes."
-                or "Run Recovery until your endurance is full, then stop. Useful care and your supply settings still apply.")
+                or "Rest and handle needs during downtime. Recovery stays on when you start another action or reach full endurance.")
         end
     end
     local open = submenu:addOptionOnTop("Open AutoMindful", player, UI.open)

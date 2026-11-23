@@ -119,7 +119,7 @@ local function perform(p,a,apply)
 end
 local function tick(p,count) for _=1,count or 1 do T.tick(p,false) end end
 local nearby, options=require "AutoMindful/Nearby",require "AutoMindful/Options"
-local function route()
+local function route(mode)
     local p=player(); p.values.THIRST=.35
     options.searchNearby=function() return true end
     local square=T.square(3,0)
@@ -131,7 +131,22 @@ local function route()
         ISTimedActionQueue.add(ISPathFindAction:pathToNearest(walker,{2.5,0.5,0}))
         return true
     end}
-    assert(C.start(p,"meditation",false));tick(p)
+    assert(C.start(p,mode or "meditation",false))
+    if mode=="recovery" then
+        -- Recovery must not send an outbound walk until a continuous idle gap.
+        local function idleSample()
+            T.now=T.now+250
+            C.update(p)
+        end
+        for _=1,7 do idleSample() end
+        assert(not head(p),"Recovery scouted before the idle grace elapsed")
+        for _=1,12 do
+            if head(p) then break end
+            idleSample()
+        end
+    else
+        tick(p,mode and 3 or 1)
+    end
     assert(head(p) and head(p).Type=="ISPathFindAction")
     return p,head(p)
 end
@@ -205,6 +220,25 @@ test("a waiter appended inside outbound stop survives; released world cancel sta
     p.nativeHead=nil; tick(p)
     assert(head(p)==map and map.starts==1 and not C.status(p).active)
     perform(p,map); tick(p,4); assert(not head(p) and not C.status(p).active and #p.cards==1)
+end)
+
+test("manual movement interrupts a Recovery route without an automatic walk back",function()
+    local p,walk=route("recovery")
+    local job=action(p,"UnrelatedWalkAndChop")
+    ISTimedActionQueue.add(job)
+    p.movementInput,p.running=true,true
+    walk:update(); assert(walk.nativeRequestedStop and not walk.autoMindfulPathFailed)
+    walk:stop()
+    p.movementInput,p.running=false,false
+    p.square=T.square(5,2,1)
+    local relocated=p.square
+    p.values.THIRST=0
+    p.nativeHead=nil; tick(p)
+    assert(C.status(p).active and head(p)==job and job.starts==1 and not job.autoMindfulOwner)
+    perform(p,job); tick(p,6)
+    assert(C.status(p).active and not head(p) and p.square==relocated
+        and C.status(p).phase=="recovery-idle" and #p.cards==0)
+    C.stop(p)
 end)
 
 test("stock wear restores only the exact temporarily removed mask after a workout",function()

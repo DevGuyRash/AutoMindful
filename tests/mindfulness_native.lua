@@ -205,6 +205,28 @@ for _, fixture in ipairs({{3,"PANIC",45,"panic ease",1},{6,"HUNGER",0.23,"hunger
     C.stop(p)
 end
 
+-- Actual installed Meditation can reduce Unhappiness when starting
+-- calm. Confirm the matching native stat; stress or a tier is not evidence.
+do
+    for _,couch in ipairs({false,true}) do
+        local p=prepare(0,"UNHAPPINESS",21)
+        p.traits.couchpotato=couch
+        SandboxVars.Meditation.StrengthMultiplier=couch and 1 or 2
+        for second=1,64 do
+            step(p,second)
+            if p.values.UNHAPPINESS<21 and not head(p) then break end
+        end
+        assert((C.status(p).careNotice or ""):find("showed relief",1,true)
+            and p.values.UNHAPPINESS<21 and count(p,"LSMeditateAction")==1 and not head(p)
+            and p.data.LSMoodles.MindfulState.Value==0 and C.status(p).cycle==nil,
+            "Expected direct native Unhappiness relief, not a tier or a training turn")
+        print(("NATIVE PASS calm rank-0 %s: Unhappiness 21 -> %.3f"):
+            format(couch and "Couch Potato at x0.5 strength" or "Meditation at default strength",p.values.UNHAPPINESS))
+        C.stop(p)
+    end
+    SandboxVars.Meditation.StrengthMultiplier=nil
+end
+
 -- Only speculative MP loot is visible. This replay uses the installed menu,
 -- Meditation action, per-minute tier decay, mood accumulator and delayed receiver.
 -- It does not model ordinary metabolism or assert a guaranteed duration/meal.
@@ -246,7 +268,7 @@ do
     end
     nearby.find,opts.searchNearby=previous,search
 end
-print("PASS 7 pinned Lifestyle utility cases with actual tier/effect/flush Lua and explicit game/network doubles")
+print("PASS 9 pinned Lifestyle utility cases with actual tier/effect/flush Lua and explicit game/network doubles")
 
 -- Run this combined leg when the stock game *and* Lifestyle references exist.
 -- The installed water action calculates the drink amount and completes it. The

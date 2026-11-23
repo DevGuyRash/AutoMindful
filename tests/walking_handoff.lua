@@ -196,7 +196,7 @@ test("walking out of a planned care excursion cancels our old route and never wa
     getGameSpeed,luautils,ISWalkToTimedAction=priorSpeed,priorUtils,priorWalk
 end)
 
-test("actual running, sprinting, aiming, attacking, and a world cancel remain terminal",function()
+test("active training still stops for combat or running; Recovery yields unless explicitly canceled",function()
     local controls={
         function(p) p.running,p.rawMovementInput=true,true end,
         function(p) p.sprinting,p.rawMovementInput=true,true end,
@@ -205,17 +205,19 @@ test("actual running, sprinting, aiming, attacking, and a world cancel remain te
         function(p) p.cancelInput=true end,
     }
     for _,mode in ipairs({"meditation","recovery"}) do
-        for _,control in ipairs(controls) do
+        for input,control in ipairs(controls) do
             local p=T.playerNew()
             p.sitting=true
             start(p,mode); steps(p,10)
             active(p,mode)
             control(p); steps(p,2)
-            assert(not C.status(p).active and C.status(p).phase=="stopped" and not head(p))
+            local terminal=mode=="meditation" or input==#controls
+            assert(C.status(p).active==not terminal and C.status(p).phase==(terminal and "stopped" or "manual")
+                and not head(p))
             p.running,p.sprinting,p.rawMovementInput,p.aiming,p.attacking,p.cancelInput=false,false,false,false,false,false
             local queued=#p.history
             steps(p,12)
-            assert(not C.status(p).active and #p.history==queued and not head(p))
+            assert(C.status(p).active==not terminal and #p.history==queued and not head(p))
         end
     end
 end)

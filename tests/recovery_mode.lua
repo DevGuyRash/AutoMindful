@@ -320,23 +320,118 @@ test("one-shot recovery ignores a transient full sample during foreign work and 
     assert(not C.status(p).active and not head(p) and #p.cards==cards, "Full is terminal, not a loop")
 end)
 
-test("true Stop and confirmed aim never rearm and never cancel an unrelated action", function()
-    for _, stop in ipairs({"button","aim"}) do
+test("Stop All and world cancel disarm without clearing unrelated native work", function()
+    for _, stop in ipairs({"button","world"}) do
         local p = survivor(10)
         started(p,"recovery")
         local job=T.action(p,"OtherModsTimedWork")
         Q.add(job); step(p)
         untouched(p,job)
-        if stop=="button" then C.stop(p) else p.aiming=true; step(p) end
+        if stop=="button" then C.stop(p) else p.cancelInput=true; step(p) end
         assert(not C.status(p).active and C.status(p).phase=="stopped")
         untouched(p,job)
-        p.aiming=false
+        p.cancelInput=false
         job:perform()
         water(p); p.values.THIRST,p.thirstMoodle=0.46,4
         steps(p,16)
         assert(not C.status(p).active and not head(p) and count(p,"drink")==0)
         noTraining(p)
     end
+end)
+
+test("Recovery leaves sequential chopping, walks, and short empty gaps alone", function()
+    local p=survivor(10)
+    started(p,"recovery")
+    local first=T.action(p,"ISChopTreeAction")
+    local second=T.action(p,"OtherModsNextToolAction")
+    Q.add(first)
+    local bottle=water(p)
+    p.values.THIRST,p.thirstMoodle=.46,4
+    p.aiming=true
+    steps(p,8)
+    untouched(p,first)
+    assert(C.status(p).active and not p.cards[1] and count(p,"drink")==0,
+        "Actual aim must yield without disarming while the first action runs")
+    p.aiming=false
+    first:perform()
+    steps(p,3)
+    assert(not head(p), "Do not insert care into a brief empty queue")
+    p.running,p.rawMovementInput,p.moving=true,true,true
+    p.square=T.square(7,0,1)
+    steps(p,8)
+    assert(C.status(p).active and not head(p) and count(p,"drink")==0,
+        "Raw running and moving to the next floor must not cancel or start care")
+    p.rawMovementInput,p.moving=false,false
+    -- A lingering run animation flag, without movement, doesn't keep us
+    -- waiting. Let an unrelated second action use the ordinary idle gap.
+    steps(p,4)
+    assert(not head(p))
+    Q.add(second)
+    steps(p,9)
+    untouched(p,second); second:perform()
+    p.attacking=true -- normal axe swings need not create a Lua timed action
+    steps(p,8)
+    assert(C.status(p).active and not head(p) and count(p,"drink")==0)
+    p.attacking=false
+    local care=awaitHead(p,"drink")
+    assert(care.autoMindfulOwner and bottle.fluid:getAmount()==1)
+    p.aimInput=true -- raw aim is visible before actual aiming takes hold
+    step(p)
+    assert(C.status(p).active and care.stopped and not head(p))
+    steps(p,8)
+    assert(not head(p) and not p.cards[1] and count(p,"drink")==1)
+    p.aimInput=false
+    local nextCare=awaitHead(p,"drink")
+    assert(nextCare~=care and count(p,"drink")==2)
+    nextCare:perform()
+    assert(bottle.fluid:getAmount()<1)
+    C.stop(p)
+end)
+
+test("temporary danger pauses Recovery, but a dead survivor stays disarmed", function()
+    local p=survivor(10)
+    local originalSquare=p.getSquare
+    function p:getSquare() if not self.unloaded then return originalSquare(self) end end
+    function p:isOnFire() return self.fire end
+    function p:getVehicle() return self.vehicle end
+    function p:getBodyDamage()
+        return {getOverallBodyHealth=function() return p.health or 100 end,
+                getNumPartsBleeding=function() return p.bleeding or 0 end}
+    end
+    started(p,"recovery")
+    local bottle=water(p)
+    p.values.THIRST,p.thirstMoodle=.46,4
+    for _,danger in ipairs({{"zombies",1},{"bleeding",1},{"health",49},{"fire",true},{"vehicle",{}},{"unloaded",true}}) do
+        local care=awaitHead(p,"drink")
+        p[danger[1]]=danger[2]
+        step(p)
+        assert(care.stopped and C.status(p).active and C.status(p).phase=="recovery-paused")
+        local work=T.action(p,"ForeignJobDuringDanger"); Q.add(work)
+        steps(p,6); untouched(p,work); work:perform()
+        steps(p,8); assert(not head(p) and bottle.fluid:getAmount()==1)
+        p[danger[1]]=nil
+    end
+    awaitHead(p,"drink")
+    p.dead=true; Events.OnPlayerDeath.callback(p); steps(p,8)
+    assert(not C.status(p).active and C.status(p).phase=="stopped" and not head(p)
+        and bottle.fluid:getAmount()==1)
+end)
+
+test("arming Recovery with controls held and dismissing a context menu never queue over the player",function()
+    local p=survivor(10)
+    p.running,p.rawMovementInput,p.aiming=true,true,true
+    p.values.THIRST,p.thirstMoodle=.46,4
+    water(p)
+    started(p,"recovery"); steps(p,8)
+    assert(C.status(p).active and not head(p))
+    p.running,p.rawMovementInput,p.aiming=false,false,false
+    p.contextOpen=true; step(p)
+    p.contextOpen=false; p.cancelInput=true; step(p) -- closes between polls
+    assert(C.status(p).active and not head(p))
+    p.cancelInput=false
+    local drink=awaitHead(p,"drink")
+    assert(drink.autoMindfulOwner)
+    C.stop(p)
 end)
 
 test("eligible Yoga is allowed at rank zero or cap, but relief is not credited as training", function()

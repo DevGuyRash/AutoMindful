@@ -5,6 +5,7 @@ local PracticeCare = {}
 
 local effects = {
     boredom={stat="BOREDOM", read="BOREDOM", max=100},
+    unhappiness={stat="UNHAPPINESS", read="UNHAPPINESS", max=100},
     stiffness={stat="STIFFNESS", max=100}, -- BodyPart stiffness is not the PAIN stat.
     pain={stat="PAIN", read="PAIN", max=100, tier=2},
     stress={stat="STRESS", read="STRESS", max=1, tier=1},
@@ -67,6 +68,33 @@ local function calmMeditation(boredom, pain)
     return boredom and boredom <= 5 and pain and pain <= 5
 end
 
+-- Lower start thresholds belong to passive Recovery only. Keep the same
+-- trigger when rechecking an active course with an optional tier target.
+function PracticeCare.needsRelief(need,kind,level,value,recovery,sleepBlocked)
+    local effect=effects[need]
+    if not effect or not number(value,effect.max) then return false end
+    if need=="stress" then
+        if kind=="yoga" then return value>=(recovery and 0.55 or 0.65) end
+        return value>=(recovery and 0.30 or 0.50)
+    end
+    if need=="withdrawal" then return value>=(recovery and 0.25 or 0.35) end
+    if need=="panic" then return value>=(sleepBlocked and 5 or recovery and 12 or 25) end
+    if need=="unhappiness" then return recovery==true and value>=20 end
+    if need=="stiffness" then return value>=(level>=3 and (recovery and 10 or 12.5) or (recovery and 15 or 20)) end
+    if need=="boredom" then
+        if recovery then return value>=(level>=3 and 18 or 24) end
+        return value>30 or (level>=3 and value>=25)
+    end
+    return false
+end
+
+-- In the pinned native Meditation action, Boredom <= 5 neutralizes even
+-- Couch Potato's aversion. The resulting Unhappiness delta is negative
+-- at any rank and positive strength setting. Yoga doesn't change this stat.
+function PracticeCare.unhappinessContext(boredom,pain)
+    return calmMeditation(boredom,pain)==true
+end
+
 -- The ordinary supply trigger is not an upper limit on the native effect.
 function PracticeCare.hungry(value)
     return number(value,1)~=nil and value>=0.15
@@ -125,7 +153,7 @@ local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
     -- Basic is for substantial panic, or enough residual panic to prevent sleep.
     local attempt, passive, passivePanic
     if (input.recovery==true or input.sleepRelief==true) and not input.hungerOnly then
-        attempt, passive = match("panic", panic and (panic>=25 or (input.sleepBlocked==true and panic>=5)), true)
+        attempt, passive = match("panic", PracticeCare.needsRelief("panic","meditation",level,panic,input.recovery,input.sleepBlocked), true)
         if attempt then return attempt end
         passivePanic=passive -- Basic is already easing panic; building Strong need not displace it.
     end
@@ -148,9 +176,9 @@ local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
     attempt, passive = match("health", PracticeCare.healingEnabled(input.healFactor) and input.healthSafe==true and health and health>=75 and health<95
         and hunger and hunger<0.15 and pain and pain<=5 and panic and panic<5, true)
     if attempt or passive then return attempt, passive end
-    attempt, passive = match("withdrawal", withdrawal and withdrawal>=0.35, false)
+    attempt, passive = match("withdrawal", PracticeCare.needsRelief("withdrawal","meditation",level,withdrawal,true), false)
     if passive then return nil, passive end
-    return match("stress", stress and stress>=0.50, false)
+    return match("stress", PracticeCare.needsRelief("stress","meditation",level,stress,true), false)
 end
 
 -- "confirmed" literature and painTreatment=true mean ordinary care wins.
@@ -168,8 +196,8 @@ function PracticeCare.choose(input)
     local yogaNeed
     if y then
         -- Lifestyle applies the same boredom relief per successful pose.
-        if boredom and (boredom > 30 or (y >= 3 and boredom >= 25)) then yogaNeed = "boredom"
-        elseif stiffness and stiffness >= (y >= 3 and 12.5 or 20) then yogaNeed = "stiffness" end
+        if PracticeCare.needsRelief("boredom","yoga",y,boredom,input.recovery) then yogaNeed="boredom"
+        elseif PracticeCare.needsRelief("stiffness","yoga",y,stiffness,input.recovery) then yogaNeed="stiffness" end
     end
     -- Only a real, actionable hunger fallback may outrank optional comfort Yoga.
     -- A native Meditation blocker, confirmed treatment or helpful scheduled leg still wins.
@@ -197,13 +225,19 @@ function PracticeCare.choose(input)
     end
     if input.recovery == true then
         local withdrawal = measure(input, "withdrawal")
-        if withdrawal and withdrawal >= 0.35 then
+        if PracticeCare.needsRelief("withdrawal","meditation",m,withdrawal,true) then
             local attempt = direct("withdrawal", true)
             if attempt then attempt.recovery=true; return attempt end
             if y and input.preferTraining=="yoga" or comfortable and input.preferTraining=="meditation" then return nil end
         end
     end
-    if stress and stress >= 0.50 then return direct("stress", stress >= 0.65) end
+    if PracticeCare.needsRelief("stress","meditation",m,stress,input.recovery) then
+        return direct("stress",PracticeCare.needsRelief("stress","yoga",y,stress,input.recovery))
+    end
+    if input.recovery==true and input.unhappinessReady==true and comfortable
+            and PracticeCare.needsRelief("unhappiness","meditation",m,measure(input,"unhappiness"),true) then
+        return direct("unhappiness",false)
+    end
 end
 
 function PracticeCare.acquired(attempt, readings)

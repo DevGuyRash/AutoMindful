@@ -407,7 +407,7 @@ function Info.guide(player, progress)
         "Direct relief: Reduces stress and, for smokers, nicotine withdrawal while you meditate. It can also ease unhappiness. The rate varies with focus, mood, traits and settings.",
         "Trade-offs: Boredom and neck pain can build. Boredom above 30/100 blocks starting, and high boredom reduces Meditation XP.",
         "Focus and traits: Uninterrupted practice builds focus. Disciplined reaches Mindfulness sooner; Couch Potato makes Meditation less effective.",
-        "Endurance: Recover to Full Endurance watches for normal recovery to reach 100%; Lifestyle does not directly refill endurance.",
+        "Endurance: Recovery makes room for normal rest when you are idle. Lifestyle meditation does not directly refill endurance.",
     }
     if meditationOptions.KeepBags then
         meditation[#meditation + 1] = "Bags: Your settings keep worn bags on at all ranks. Heavy items in your hands may still be put down."

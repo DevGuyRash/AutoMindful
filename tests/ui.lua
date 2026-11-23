@@ -332,12 +332,15 @@ freshBoth:close()
 UI.windows[1]=nil
 assert(not Options.generalMenu() and Options.windowKey() == Keyboard.KEY_0, "Idle menu stays opt-in; free number-row zero opens the pane")
 local practice = settings:getOption("practiceCare")
+local strict=settings:getOption("strictRecoveryTier")
+assert(strict and not Options.strictRecoveryTier(), "Strict Recovery tiers are off by default")
+strict:setValue(true)
 assert(Options.practiceCare(), "Practice relief is enabled by default")
 practice:setValue(false)
 search:setValue(false)
 package.loaded["AutoMindful/Options"] = nil
 require "AutoMindful/Options"
-assert(settings.count == 13 and not Options.searchNearby() and not Options.practiceCare(), "Reload reuses an existing off preference")
+assert(settings.count == 14 and not Options.searchNearby() and not Options.practiceCare() and Options.strictRecoveryTier(), "Reload reuses an existing off preference")
 
 local context, world = ISContextMenu:new(), {"clicked square"}
 local first, second, third = ZenWellnessContextMenu.doBuildMenu(0, context, world)
@@ -346,9 +349,9 @@ local parent = context:getSubMenu(context.options[1].subOption).options[1]
 local submenu = context:getSubMenu(parent.subOption)
 assert(parent.onSelect == nil and not parent.notAvailable, "A blocked native action still allows submenu navigation")
 assert(parent.toolTip == nil, "Parent tooltips do not cover the quick-action submenu")
-assert(submenu.options[1].name == "Open AutoMindful" and submenu.options[2].name == "Recover to Full Endurance"
+assert(submenu.options[1].name == "Open AutoMindful" and submenu.options[2].name == "Recovery"
     and submenu.options[3].name == "Train meditation" and submenu.options[4].name == "Check supplies",
-    "Open precedes the new finite Recovery shortcut and other quick actions")
+    "Open precedes the Recovery shortcut and other quick actions")
 assert(submenu.options[3].toolTip.description:find("25 / 200 XP",1,true), "Quick-action tooltips include progress toward the next level")
 local trainQuick = submenu.options[3]
 assert(trainQuick.onSelect(trainQuick.target, trainQuick.param1))
@@ -358,14 +361,14 @@ Controller.state.active = false
 local endurance = submenu.options[2]
 player.data.AutoMindfulPreferences = {collectNearby=true}
 assert(endurance.onSelect(endurance.target, endurance.param1))
-assert(Controller.state.mode == "recoverEndurance" and Controller.state.collectNearby == true,
-    "Finite Recovery launched from context respects saved adjacent collection")
+assert(Controller.state.mode == "recovery" and Controller.state.collectNearby == true,
+    "Recovery launched from context respects saved adjacent collection")
 player.data.AutoMindfulPreferences = nil
 local occupiedMenu = ISContextMenu:new()
 ZenWellnessContextMenu.doBuildMenu(0, occupiedMenu, world)
 local occupiedWellness = occupiedMenu:getSubMenu(occupiedMenu.options[1].subOption)
 assert(occupiedMenu:getSubMenu(occupiedWellness.options[1].subOption).options[2].notAvailable,
-    "The endurance menu action cannot replace an active session")
+    "The Recovery menu action cannot replace an active session")
 Controller.state.active = false
 local manual = submenu.options[6]
 assert(manual.notAvailable and manual.iconTexture == "native meditation icon" and manual.toolTip, "Native availability and presentation are retained")
@@ -562,15 +565,10 @@ local function assertFooterVisible(view)
         and view.tierButtons[1].y == view.tierButtons[2].y
         and view.tierButtons[1].x + view.tierButtons[1].width < view.tierButtons[2].x
         and view.tierButtons[2]:getBottom() <= view.recoveryButton.y
-        and view.recoverEnduranceButton:getBottom() <= view.check.y,
+        and view.recoveryButton:getBottom() <= view.check.y,
         "Tier shortcuts share one compact row without covering training or Recovery controls")
-    if view.recoveryButton.y == view.recoverEnduranceButton.y then
-        assert(view.recoveryButton.x + view.recoveryButton.width < view.recoverEnduranceButton.x,
-            "Recovery choices don't overlap on one row")
-    else
-        assert(view.recoveryButton:getBottom() < view.recoverEnduranceButton.y,
-            "Recovery choices wrap onto separately visible rows")
-    end
+    assert(view.recoveryButton.width==view.body.width and not view.recoverEnduranceButton,
+        "There is one full-width Recovery control")
     local plain = footer.text:gsub("<LINE>", "\n"):gsub("<[^>]+>", "")
     for line in plain:gmatch("[^\n]+") do
         assert(getTextManager():MeasureStringX(UIFont.Small, line) <= footer.width, "Footer instructions fit on two unwrapped lines")
@@ -662,16 +660,15 @@ do
     end
     view.wellnessBack:click()
     core.getScreenWidth=function() return 334 end; view:syncScreen()
-    assert(view.recoveryButton:getBottom() < view.recoverEnduranceButton.y
-        and view.recoverEnduranceButton.width == view.body.width and view.recoverEnduranceButton:getBottom() < view.check.y,
-        "Large-font recovery choices wrap intact on a narrow window")
+    assert(view.recoveryButton.width == view.body.width and view.recoveryButton:getBottom() < view.check.y,
+        "Recovery stays directly accessible on a narrow window")
     for _,tick in ipairs({view.scouting,view.nearby}) do
         assert(getTextManager():MeasureStringX(UIFont.Small,tick.option)+tick.boxSize+tick.textGap<=tick.width
             and tick.tooltip:find("supplies",1,true),"A shortened caption still has its complete explanation")
     end
     assert(view.scouting.option~=Options.scoutingLabel and view.nearby.option~="Use adjacent supplies")
     for _,button in ipairs({view.starts[1],view.starts[2],view.starts[3],view.tierButtons[1],view.tierButtons[2],
-            view.recoveryButton,view.recoverEnduranceButton,view.check,view.stopButton}) do
+            view.recoveryButton,view.check,view.stopButton}) do
         assert(getTextManager():MeasureStringX(UIFont.Small,button.name)+12<=button.width,
             "Narrow large-font button caption fits its own cell")
     end
@@ -688,14 +685,14 @@ shortWindow:close()
 UI.windows[1] = nil
 core.getScreenHeight = screenHeight
 assert(window.recoveryButton.enable and window.recoveryButton.name == "Recovery" and window.recoveryButton.mode == "recovery"
-    and window.recoverEnduranceButton.enable and window.recoverEnduranceButton.mode == "recoverEndurance",
-    "The window offers persistent and finite Recovery while idle")
+    and not window.recoverEnduranceButton,
+    "The window offers one persistent Recovery mode while idle")
 assert(window.stopButton.name == "Stop All" and window.stopButton.tooltip:find("workouts from other mods keep running",1,true))
 scout:click()
 assert(Options.searchNearby() and not window.nearby:isSelected(1), "Enabling global scouting does not enable this survivor's adjacent preference")
 window.recoveryButton:click()
 assert(Controller.state.mode == "recovery" and not Controller.state.collectNearby
-    and not window.recoveryButton.enable and not window.recoverEnduranceButton.enable,
+    and not window.recoveryButton.enable,
     "Persistent Recovery respects adjacent preference and cannot be replaced while active")
 Controller.state.phase, Controller.state.endurance = "recovery-idle", .999
 window:refresh()
@@ -711,23 +708,23 @@ assert(Controller.state.active and Controller.stops==previousRecoveryStops)
 assert(UI.open(player)==window and Controller.state.mode=="recovery", "Hide/reopen does not change Recovery")
 Controller.state.active = false
 window:refresh()
-window.nearby:click() -- Explicitly enable saved adjacent collection for the full-endurance branch.
-window.recoverEnduranceButton:click()
-assert(Controller.state.mode == "recoverEndurance" and Controller.state.collectNearby and not window.recoverEnduranceButton.enable,
-    "The finite mode respects saved supplies and stays active until its controller stops it")
+window.nearby:click() -- Explicitly enable saved adjacent collection for Recovery.
+window.recoveryButton:click()
+assert(Controller.state.mode == "recovery" and Controller.state.collectNearby,
+    "Recovery respects saved supplies and stays active")
 window.nearby:click()
 scout:click() -- Restore existing off preference for the remainder of the UI contracts.
 Controller.state.endurance = .999
 window:refresh()
-assert(window.activity.text:find("Recovery until full endurance", 1, true) and window.activity.text:find("Endurance: 99%",1,true),
+assert(window.activity.text:find("Recovery on", 1, true) and window.activity.text:find("Endurance: 99%",1,true),
     "Active endurance is rounded down and does not show 100% early")
 Controller.state.endurance = nil
 window:refresh()
-assert(window.activity.text:find("Recovery until full endurance", 1, true) and not window.activity.text:find("Endurance:", 1, true),
+assert(window.activity.text:find("Recovery on", 1, true) and not window.activity.text:find("Endurance:", 1, true),
     "An unreadable stat does not claim a percentage")
 Controller.state.careWaiting=true
 window:refresh()
-assert(window.activity.text:find("Recovery until full endurance (paused for care)",1,true) and window.stopButton.enable)
+assert(window.activity.text:find("Recovery on (paused for care)",1,true) and window.stopButton.enable)
 Controller.state.active, Controller.state.careWaiting, Controller.state.phase, Controller.state.endurance=false,false,"complete",1
 window:refresh()
 assert(window.activity.text:find("Recovery complete",1,true) and window.activity.text:find("Endurance: 100%",1,true)
@@ -740,7 +737,7 @@ careFixtureState.message="Care is paused while the context menu is open."
 window:refresh()
 assert(window.activity.text:find("Paused for care",1,true) and not window.activity.text:find("Training both",1,true),
     "An armed care wait must look paused while Stop remains available")
-assert(window.stopButton.enable and not window.recoveryButton.enable and not window.recoverEnduranceButton.enable)
+assert(window.stopButton.enable and not window.recoveryButton.enable)
 careFixtureState.cycle = {due="yoga", gates={yoga={ready=false, reason="Too exhausted"}}}
 window:refresh()
 assert(window.activity.text:find("Yoga is still next: Too exhausted",1,true), "The native blocker is visible while the Yoga turn is owed")
@@ -954,7 +951,7 @@ do
     local ym,yt,ys=leaves("yoga",player2);verifyKeys(ys,{"Open","Yoga","Supplies","Mindful","Once"})
     assert(yt.iconTexture==native[ls.Mat] and ys.player==1)
     local mm,mt,ms=leaves("meditation",player);verifyKeys(ms,{"Open","Endurance","Meditate","Supplies","Mindful","Once"})
-    assert(mt.iconTexture==native[ls.Bowl] and ms.options[2].param1=="recoverEndurance")
+    assert(mt.iconTexture==native[ls.Bowl] and ms.options[2].param1=="recovery")
     local g=ISContextMenu:new();settings:getOption("generalContextMenu"):setValue(true)
     tested.generalMenu(0,g,{},false);tested.generalMenu(0,g,{},false)
     assert(#g.options==1 and g.options[1].iconTexture==native[ls.Mindful])
@@ -1085,7 +1082,7 @@ do
         and not view.guidance.vscroll:getIsVisible() and not view.geometry.height and not localLayouts[id],
         "First regular opening measures actual contents and does not save automatic height")
     local left,right=view.tierButtons[1],view.tierButtons[2]
-    for _,pair in ipairs({{view.scouting,view.nearby},{view.recoveryButton,view.recoverEnduranceButton},{view.check,view.stopButton}}) do
+    for _,pair in ipairs({{view.scouting,view.nearby},{view.check,view.stopButton}}) do
         assert(pair[1].x==left.x and pair[2].x==right.x
             and pair[1].width==left.width and pair[2].width==right.width,
             "All paired controls share both columns at normal width")

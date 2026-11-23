@@ -187,8 +187,10 @@ r.searchNearby.control:forceClick()
 r.searchRadius.control:setCurrentValue(18)
 r.cyclePolicy.control:setSelected(2)
 r.rotationYogaZenTier.control:setSelected(2)
+assert(r.strictRecoveryTier and not Options.strictRecoveryTier())
+r.strictRecoveryTier.control:forceClick()
 assert(Options.searchNearby() and Options.searchRadius()==10 and Options.cyclePolicy()=="alternate"
-    and Options.minimumTier("rotation","yoga")==4 and saves==0,"Draft edits do not mutate the game or disk")
+    and Options.minimumTier("rotation","yoga")==4 and not Options.strictRecoveryTier() and saves==0,"Draft edits do not mutate the game or disk")
 -- Simulate the native UI manager's callback-before-isKeyConsumed ordering.
 r.openWindow.control:forceClick()
 assert(pane.wantsKeys and pane:isKeyConsumed(Keyboard.KEY_J) and key:getValue()==0)
@@ -218,7 +220,7 @@ assert(saves==1 and stockApplies==1 and owner.refreshes==1 and owner.forceSupply
 assert(Options.searchNearby()==false and not stockScout:isSelected(1) and appliedScout==false)
 assert(Options.searchRadius()==18 and stockRadius:getCurrentValue()==18)
 assert(Options.cyclePolicy()=="lowest" and stockCycle:getSelected()==2)
-assert(Options.minimumTier("rotation","yoga")==1 and not Options.practiceCare())
+assert(Options.minimumTier("rotation","yoga")==1 and not Options.practiceCare() and Options.strictRecoveryTier())
 assert(Options.windowKey()==Keyboard.KEY_K and key.element.keyCode==Keyboard.KEY_K and stockKey:getTitle()=="K" and not key.element.shift)
 assert(outsider:getValue()==true and scout.element==stockScout and cycle.element==stockCycle)
 assert(disk:find("slider|AutoMindful|searchRadius|18",1,true)
@@ -232,8 +234,9 @@ assert(disk:find(unknown1.."\r\n"..unknown2.."\r\n",1,true),
 scout:setValue(true)
 cycle:setValue(3)
 radius:setValue(4)
+group:getOption("strictRecoveryTier"):setValue(false)
 stock:load()
-assert(not Options.searchNearby() and Options.cyclePolicy()=="lowest" and Options.searchRadius()==18)
+assert(not Options.searchNearby() and Options.cyclePolicy()=="lowest" and Options.searchRadius()==18 and Options.strictRecoveryTier())
 assert(#stock.OtherOptions==2 and stock.OtherOptions[1]==unknown1 and stock.OtherOptions[2]==unknown2,
     "Reloading the saved INI keeps both disabled-mod records")
 local reloaded=stock.OtherOptions

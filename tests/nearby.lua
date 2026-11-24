@@ -294,3 +294,33 @@ assert(find("food").unknown and find("food").part==part, "unknown MP vehicle con
 assert(find("food").key=="unknown:8:0:0:vehicle:12:0")
 assert(not find("food",10,{["unknown:8:0:0:vehicle:12:0"]=true}))
 print("Nearby discovery and snapshot contracts passed; no native network/pathfinding exercised")
+
+-- A proven path failure is not a failed sip. Cooldown expiry alone must not
+-- turn the same disconnected rooms back into an opportunity to abandon care.
+do
+    reset()
+    local Routes=require "AutoMindful/SurvivalRoute"
+    local first=object(square(3,0)); first.water=true
+    local second=object(square(5,0)); second.water=true
+    local gate=object(square(2,0)); gate.kind="IsoDoor"
+    function gate:IsOpen() return self.open end
+    function gate:isBarricaded() return self.barricaded end
+    local rejected={}
+    local function fail(want)
+        local target=find("water",10,rejected,true)
+        assert(target and target.object==want)
+        Routes.reject(rejected,target,"water",now)
+    end
+    fail(first); fail(second)
+    for _,wait in ipairs({16000,60000,3600000}) do
+        now=now+wait; refresh()
+        assert(not find("water",10,rejected,true),"unchanged native layout must leave all failed sources exhausted")
+    end
+    -- A genuinely new fixture on the SAME tile is not its neighbor's route.
+    local third=object(first.square); third.water=true; refresh()
+    assert(find("water",10,rejected,true).object==third)
+    fail(third); assert(not find("water",10,rejected,true))
+    gate.open=true; refresh()
+    assert(find("water",10,rejected,true).object==first,"opening a door must re-admit a previously disconnected setup")
+end
+print("PASS: exhausted known fixtures remain exhausted on unchanged terrain; new fixture and native door change re-arm")

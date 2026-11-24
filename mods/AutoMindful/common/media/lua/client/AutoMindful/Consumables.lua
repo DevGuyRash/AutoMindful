@@ -2,11 +2,12 @@ require "ISUI/ISInventoryPaneContextMenu"
 require "TimedActions/ISDrinkFluidAction"
 local Fluids = require "AutoMindful/Fluids"
 local IntakeGuard = require "AutoMindful/IntakeGuard"
+local Needs = require "AutoMindful/SurvivalNeeds"
 
 AutoMindful = AutoMindful or {}
 -- Zero is satisfied; negative hunger is the game's stuffed range. Only ignore
 -- floating-point residue, never an entire percentage point of unmet need.
-local Consumables = {careThreshold = 0.15, restoredThreshold = 0.000001,
+local Consumables = {careThreshold = Needs.careThreshold, restoredThreshold = Needs.restoredThreshold,
     pairedNeedThreshold = 0.01}
 AutoMindful.Consumables = Consumables
 

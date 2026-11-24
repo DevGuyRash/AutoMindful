@@ -280,4 +280,112 @@ test("brief walk cancellations between updates never spend the unknown interrupt
     C.stop(p)
 end)
 
+
+test("crate egress uses a genuine adjacent indoor route, rechecks drinking, and never paths back onto the crate",function()
+    local options,nearby=require "AutoMindful/Options",require "AutoMindful/Nearby"
+    local priorSearch,priorFind,priorBehavior=options.searchNearby,nearby.find,BehaviorResult
+    BehaviorResult={Failed="Failed"}
+    local priorSpeed,priorUtils,priorWalk,priorPath,priorCell=getGameSpeed,luautils,ISWalkToTimedAction,ISPathFindAction,getCell
+    local function setup()
+        local p=T.playerNew()
+        p.values.THIRST,p.thirstMoodle=.38,1
+        local room={}
+        local function tile(x,y,standable,inside)
+            local s=T.square(x,y)
+            function s:canStand() return standable end
+            function s:getRoom() return inside and room end
+            T.loadSquare(p,s)
+            return s
+        end
+        -- Three boarded windows. Two crates and a lamp on the inside.
+        -- Survivor starts ON the right/middle crate, with one legal exit.
+        tile(-1,-1,true,false); local outside=tile(0,-1,true,false); tile(1,-1,true,false)
+        tile(-1,0,false,true)
+        local origin=tile(0,0,false,true)
+        tile(1,0,false,true)
+        local exit=tile(0,1,true,true)
+        function origin:isWindowTo(other) return other==outside end
+        p.square=origin
+        local stock=T.container(1,2)
+        T.add(stock,T.water())
+        p.available={stock}
+        options.searchNearby=function() return true end
+        nearby.find=function(player,kind,_,_,rejected)
+            if player==p and kind=="water" and player:getSquare()==origin and not rejected.stock then
+                return {square=stock.square,container=stock,key="stock"}
+            end
+        end
+        getCell=function()
+            return {getGridSquare=function(_,x,y,z) return p.loadedSquares[x..":"..y..":"..z] end}
+        end
+        getGameSpeed=function() return 1 end
+        ISPathFindAction={pathToNearest=function(_,player,goals)
+            assert(#goals==3 and goals[1]==.5 and goals[2]==1.5 and goals[3]==0,
+                "The only legal endpoint is clear floor inside the room")
+            return T.action(player,"ISPathFindAction",function() player.square=exit end)
+        end}
+        ISWalkToTimedAction={new=function(_,player,square)
+            assert(square~=origin,"Never try to enter the occupied crate again")
+            return T.action(player,"ISWalkToTimedAction",function() player.square=square end)
+        end}
+        luautils={walkAdj=function(player,square,keep)
+            assert(square==stock.square and keep)
+            Q.add(ISWalkToTimedAction:new(player,exit))
+            return true
+        end}
+        start(p,"meditation")
+        step(p)
+        assert(head(p) and head(p).Type=="ISPathFindAction" and p:getSquare()==origin,
+            "The mod may queue but may not teleport off the crate")
+        return p,origin,exit
+    end
+
+    local p,origin,exit=setup()
+    head(p):perform()
+    local drink
+    for _=1,16 do
+        step(p)
+        local a=head(p)
+        if a then if a.Type=="drink" then drink=a end; a:perform() end
+        if drink and C.status(p).phase=="meditation" then break end
+    end
+    assert(drink and p:getSquare()==exit and p.values.THIRST<.38 and count(p,"ISPathFindAction")==1)
+
+    p,origin,exit=setup()
+    local route=head(p)
+    route.result=BehaviorResult.Failed
+    route:stop()
+    step(p)
+    assert(head(p) and head(p).Type=="ISWalkToTimedAction" and p:getSquare()==origin,
+        "A failed egress leaves the supply route eligible rather than poisoning this source's identity")
+    head(p):perform()
+    for _=1,16 do step(p); if head(p) then head(p):perform() end end
+    assert(p:getSquare()==exit and p.values.THIRST<.38 and count(p,"ISPathFindAction")==1)
+
+    p,origin=setup()
+    route=head(p)
+    route.result=BehaviorResult.Failed
+    route:stop()
+    -- Available in hand by the time the game settles the failed route.
+    T.add(p.inventory,T.water())
+    step(p)
+    assert(head(p) and head(p).Type=="drink" and p:getSquare()==origin,
+        "A failed native step must not prevent genuinely in-place survival care")
+    head(p):perform()
+    step(p)
+    assert(p.values.THIRST<.38 and count(p,"ISPathFindAction")==1)
+    C.stop(p)
+
+    p,origin=setup()
+    p.cancelInput=true
+    head(p):stop()
+    p.cancelInput=false
+    step(p)
+    assert(not C.status(p).active and not head(p) and p:getSquare()==origin,
+        "A deliberate cancel is never treated as native path failure")
+
+    options.searchNearby,nearby.find,BehaviorResult=priorSearch,priorFind,priorBehavior
+    getGameSpeed,luautils,ISWalkToTimedAction,ISPathFindAction,getCell=priorSpeed,priorUtils,priorWalk,priorPath,priorCell
+end)
+
 print("PASS "..cases.." walking handoff integration cases (explicit game-boundary doubles)")

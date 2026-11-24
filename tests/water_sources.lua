@@ -233,6 +233,10 @@ test("safehouse and locked-object rules remain native boundaries", function()
     local ground = source(p.square, true); p.square.noLoot = true
     local locked = source(square(0,1)); locked.kind, locked.locked = "IsoThumpable", true
     assert(#Sources.scan(p) == 0)
+    local p2=player(); client=true
+    local master=source(square(2,0))
+    local part=source(square(1,0)); part.master=master; part.square.noInteract=true
+    assert(#Sources.scan(p2)==0, "network restriction on the accessible part cannot be bypassed through its master")
 end)
 
 test("standing, mouth equipment, validity and rejected-source retries are controlled", function()

@@ -401,7 +401,7 @@ test("temporary danger pauses Recovery, but a dead survivor stays disarmed", fun
     started(p,"recovery")
     local bottle=water(p)
     p.values.THIRST,p.thirstMoodle=.46,4
-    for _,danger in ipairs({{"zombies",1},{"bleeding",1},{"health",49},{"fire",true},{"vehicle",{}},{"unloaded",true}}) do
+    for _,danger in ipairs({{"zombies",1},{"bleeding",1},{"fire",true},{"vehicle",{}},{"unloaded",true}}) do
         local care=awaitHead(p,"drink")
         p[danger[1]]=danger[2]
         step(p)
@@ -666,7 +666,7 @@ test("Perfect needs safe health, the full native tier, and a real health increas
         function p:getBodyDamage() return body end
         return p
     end
-    for _, p in ipairs({injured(9,87),injured(10,70),injured(10,87,1)}) do
+    for _, p in ipairs({injured(9,87),injured(10,4,1),injured(10,87,1)}) do
         started(p,"recovery"); steps(p,8); noTraining(p); C.stop(p)
     end
     local p=injured(10,85)
@@ -686,6 +686,30 @@ test("Perfect needs safe health, the full native tier, and a real health increas
     assert((C.status(p).careNotice or ""):find("health improve",1,true))
     noTraining(p,0,1)
     C.stop(p)
+    SandboxVars.Text=beforeText
+end)
+
+test("falling health suppresses Perfect acquisition and interrupts if it starts falling", function()
+    local beforeText=SandboxVars.Text
+    SandboxVars.Text={DividerMeditationNew=true}
+    for _,name in ipairs({"POISON","SICKNESS","FOOD_SICKNESS","ZOMBIE_INFECTION","ZOMBIE_FEVER"}) do CharacterStat[name]=name end
+    for _,mode in ipairs({"recovery","both"}) do
+        local p=survivor(10)
+        p.hp=12
+        function p:getBodyDamage()
+            return {getOverallBodyHealth=function() return p.hp end,getNumPartsBleeding=function() return 0 end,
+                isInfected=function() return false end,getNumPartsBitten=function() return 0 end}
+        end
+        assert(C.start(p,mode,false))
+        for _=1,12 do p.hp=p.hp-.1; step(p); assert(not head(p),C.status(p).message) end
+        local meditate=awaitHead(p,"Meditation")
+        assert(C.status(p).phase=="practice-care")
+        p.hp=p.hp-.1; step(p)
+        assert(meditate.stopped and not head(p) and C.status(p).active)
+        steps(p,12)
+        assert(count(p,"Meditation")==1,"Low health must not spin up another native action after a failed attempt")
+        C.stop(p)
+    end
     SandboxVars.Text=beforeText
 end)
 

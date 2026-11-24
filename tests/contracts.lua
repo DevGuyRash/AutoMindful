@@ -568,7 +568,8 @@ test("low stamina does not cut off permitted yoga; critical thirst still takes p
     p.values.THIRST=.9; p.thirstMoodle=4; T.tick(p,false)
     assert(C.status(p).phase=="care" and yoga.stopped)
     T.tick(p,false)
-    assert(not C.status(p).active and C.status(p).message:find("Dying of Thirst",1,true))
+    assert(C.status(p).active and not q.queue[1] and C.status(p).message:find("Dying of Thirst",1,true))
+    C.stop(p)
 end)
 test("Lifestyle mat and embarrassment requirements still govern yoga",function()
     for _,reason in ipairs({"Tooltip_Yoga_MissingMat","ContextMenu_Embarrassed"}) do
@@ -613,13 +614,14 @@ test("empty food and drink reserves allow mild needs and low calories without in
         C.stop(p)
     end
 end)
-test("native maximum hunger and thirst moodles stop only when that critical need cannot be restored",function()
+test("native maximum hunger and thirst pause the objective while missing a safe supply",function()
     for _, kind in ipairs({"food","water"}) do
         local p=T.playerNew()
         if kind=="food" then p.values.HUNGER=.8; p.hungerMoodle=4 else p.values.THIRST=.9; p.thirstMoodle=4 end
         assert(C.start(p,"yoga",false)); T.tick(p,false)
-        assert(not C.status(p).active and not hasHistory(p,"Yoga"))
+        assert(C.status(p).active and not hasHistory(p,"Yoga"))
         assert(C.status(p).message:find(kind=="food" and "Starving to Death" or "Dying of Thirst",1,true))
+        C.stop(p)
     end
 end)
 test("boredom alone cannot cut short an already admitted meditation; native re-entry still blocks",function()
@@ -763,6 +765,31 @@ test("infinite water completion uses hydration not constant advertised reserve",
     C.stop(p); sources.scan,sources.drink=scan,drink
 end)
 
+test("unconfirmed fixture intake has one delayed retry and rearms on real supply change",function()
+    local sources=require "AutoMindful/WaterSources"
+    local scan,drink=sources.scan,sources.drink
+    local p=T.playerNew(); p.values.THIRST,p.thirstMoodle=.8,4
+    local amount,attempts=10000,0
+    local tap={object={},remainingLiters=amount,directDrink=true,
+        description={remainingLiters=amount,hungerEffect=0,thirstEffect=5000,hungerRelief=0,thirstRelief=5000,food=false,water=true,calories=0}}
+    function tap.object:getFluidAmount() return amount end
+    sources.scan=function() return {tap} end
+    sources.drink=function(player)
+        ISTimedActionQueue.add(T.action(player,"world-drink",function()
+            attempts=attempts+1
+            if amount<10000 then player.values.THIRST=0; player.thirstMoodle=0 end
+        end))
+        return true
+    end
+    assert(C.start(p,"recovery",true))
+    for _=1,250 do T.tick(p) end -- several retry windows with no hydration
+    assert(attempts==2 and C.status(p).active and p.values.THIRST==.8)
+    amount=9999
+    for _=1,8 do T.tick(p) end
+    assert(attempts==3 and C.status(p).active and p.values.THIRST==0)
+    C.stop(p); sources.scan,sources.drink=scan,drink
+end)
+
 test("water uses native fluid portions and waits for the native fullness gate",function()
     local p=T.playerNew(); p.values.THIRST=0.2; p.foodMoodle=3
     T.add(p.inventory,T.water()); assert(C.start(p,"yoga",false)); T.tick(p)
@@ -793,7 +820,22 @@ test("refused care cannot loop indefinitely",function()
         local p=T.playerNew(); p.refuseCare=true; p.yogaBlocked="mat"
         if kind == "food" then p.values.HUNGER=0.3 elseif kind == "water" then p.values.THIRST=0.3 else p.values.BOREDOM=40 end
         for i=1,3 do T.add(p.inventory,kind == "food" and T.item("Food") or kind == "water" and T.water() or T.item("Literature")) end
-        assert(C.start(p,"meditation",false)); local s=T.run(p,40); assert(s.phase == "stopped")
+        if kind=="literature" then
+            assert(C.start(p,"meditation",false)); local s=T.run(p,40); assert(s.phase=="stopped")
+        else
+            if kind=="food" then p.hungerMoodle=4 else p.thirstMoodle=4 end
+            assert(C.start(p,"meditation",false))
+            for _=1,80 do T.tick(p) end
+            local actionType=kind=="food" and "eat" or "drink"
+            local attempts=0; for _,k in ipairs(p.history) do if k==actionType then attempts=attempts+1 end end
+            assert(attempts==3 and C.status(p).active and not ISTimedActionQueue.getTimedActionQueue(p).queue[1])
+            p.refuseCare=false
+            T.add(p.inventory,kind=="food" and T.item("Food") or T.water())
+            for _=1,8 do T.tick(p) end
+            assert(C.status(p).active and p.values[kind=="food" and "HUNGER" or "THIRST"]<.3,
+                "A fourth, fresh candidate gives real native relief; three misses never disarm the session")
+            C.stop(p)
+        end
     end
 end)
 test("zero XP watchdog spans completed sessions",function()
@@ -1997,6 +2039,36 @@ test("unknown MP stock never preempts an admissible or already running selected 
     C.stop(p); T.client,roaming.enabled,nearbyTarget=false,false,nil
 end)
 
+test("first hunger and thirst moodles interrupt optional Training or Recovery for bounded opted-in discovery",function()
+    local previous=SafeHouse
+    SafeHouse={isSafehouseAllowInteract=function() return true end,isSafehouseAllowLoot=function() return true end}
+    T.client=true
+    for _,mode in ipairs({"yoga","recovery"}) do
+        for _,kind in ipairs({"food","water"}) do
+            roaming.enabled=true
+            local p=T.playerNew(); p.meditation=0; local home=p:getSquare()
+            local shelf=T.container(5,0); p.available={shelf}
+            nearbyTarget={square=shelf.square,key="unknown:5:0:0",unknown=true,container=shelf}
+            assert(C.start(p,mode,false)); for _=1,5 do T.tick(p,false) end
+            if kind=="water" then p.values.THIRST,p.thirstMoodle=.08,1
+            else p.values.HUNGER,p.hungerMoodle=.08,1 end
+            for _=1,12 do T.tick(p,false); if hasHistory(p,"ISWalkToTimedAction") then break end end
+            assert(hasHistory(p,"ISWalkToTimedAction") and C.status(p).active,mode..":"..kind)
+            for _=1,20 do T.tick(p) end
+            assert(p:getSquare()==home and not hasHistory(p,"eat") and not hasHistory(p,"drink"),
+                "An empty response never becomes a meal or drink, and walking is bounded")
+            C.stop(p)
+            local off=T.playerNew(); roaming.enabled=false
+            off.values.HUNGER,off.values.THIRST,off.hungerMoodle,off.thirstMoodle=.08,.08,1,1
+            assert(C.start(off,mode,false)); for _=1,12 do T.tick(off,false) end
+            assert(not hasHistory(off,"ISWalkToTimedAction"),"Moodles cannot grant new trip permissions")
+            C.stop(off)
+        end
+    end
+    T.client,roaming.enabled,nearbyTarget=false,false,nil
+    SafeHouse=previous
+end)
+
 test("critical care exhausts bounded alternate known paths, never an unknown substitute",function()
     local original=luautils.walkAdj
     roaming.enabled=true
@@ -2060,6 +2132,29 @@ test("an owned route ignores a 31-second pause, but times out after witnessed la
     roaming.enabled=false; nearbyTarget=nil
 end)
 
+test("a continuously stalled known water walk releases only itself and tries the next source",function()
+    roaming.enabled=true
+    local p=T.playerNew(); p.values.THIRST=.7; p.thirstMoodle=4
+    local origin=p:getSquare()
+    local cupboard=T.container(7,0); T.add(cupboard,T.water()); p.available={cupboard}
+    nearbyTarget={square=T.square(3,0),key="water:stall",routeLayout="standing room",
+        next={square=cupboard.square,key="water:cupboard",container=cupboard}}
+    assert(C.start(p,"meditation",false)); T.tick(p,false)
+    local stuck=ISTimedActionQueue.getTimedActionQueue(p).queue[1]; assert(stuck.Type=="ISWalkToTimedAction")
+    for i=1,35 do
+        T.tick(p,false)
+        if stuck.stopped then break end
+    end
+    assert(stuck.stopped and C.status(p).active and not hasHistory(p,"drink"))
+    for i=1,25 do
+        T.tick(p)
+        if p.values.THIRST<.7 then p.thirstMoodle=0 end -- native moodle follows actual intake
+        if hasHistory(p,"Meditation") then break end
+    end
+    assert(hasHistory(p,"drink") and p.values.THIRST<.7 and p:getSquare()==origin and hasHistory(p,"Meditation"))
+    C.stop(p); roaming.enabled=false; nearbyTarget=nil
+end)
+
 test("critical needs do not enter repeated unknown-container scouting", function()
     roaming.enabled=true
     local p=T.playerNew(); p.values.HUNGER=.8; p.hungerMoodle=4
@@ -2067,7 +2162,8 @@ test("critical needs do not enter repeated unknown-container scouting", function
     nearbyTarget={square=shelf.square,key="unknown:6:0:0",unknown=true,container=shelf}
     assert(C.start(p,"meditation",false))
     for i=1,100 do T.tick(p) end
-    assert(not C.status(p).active and C.status(p).message:find("Starving"))
+    assert(C.status(p).active and C.status(p).message:find("Starving"))
+    C.stop(p)
     assert(not hasHistory(p,"ISWalkToTimedAction"), "Critical care must not gamble on unknown containers")
     roaming.enabled=false; nearbyTarget=nil
 end)

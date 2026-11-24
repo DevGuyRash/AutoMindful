@@ -9,6 +9,7 @@ local PainCare = require "AutoMindful/PainCare"
 
 AutoMindful = AutoMindful or {}
 local Supplies = {}
+local Needs = require "AutoMindful/SurvivalNeeds"
 AutoMindful.Supplies = Supplies
 local refreshes = {}
 
@@ -239,13 +240,7 @@ function Supplies.findCareItem(player, eligible, includeNearby)
     end
 end
 
-local function rejectedItem(rejected, key)
-    local rejection = rejected[key]
-    if type(rejection) == "number" and getTimestampMs() >= rejection then
-        rejected[key], rejection = nil, nil
-    end
-    return rejection
-end
+local rejectedItem=Needs.supplyRejected
 
 local function preparationCost(player, entry)
     if entry.source then return 1 + (player:isSitOnGround() and 1 or 0) end

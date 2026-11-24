@@ -6,7 +6,9 @@ local Fluids = require "AutoMindful/Fluids"
 local Storage = require "AutoMindful/Storage"
 local PainCare = require "AutoMindful/PainCare"
 local ScoutMemory = require "AutoMindful/ScoutMemory"
+local SurvivalRoute = require "AutoMindful/SurvivalRoute"
 local Nearby = {}
+local Needs = require "AutoMindful/SurvivalNeeds"
 local snapshots = {}
 
 local function key(square)
@@ -103,9 +105,11 @@ function Nearby.scan(player, originSquare, radius, force)
         for index=0,items:size()-1 do visitItem(items:get(index),square,container,part,scopedKey,suffix~=nil) end
     end
     local function visitObjects(objects, square, ground)
+        local edges=""
         local loot = permitted(player, square, true)
         for index = 0, objects:size() - 1 do
             local object = objects:get(index)
+            if not ground then edges=edges..SurvivalRoute.edgeState(object) end
             local locked = instanceof(object, "IsoThumpable") and object:isLockedToCharacter(player)
             if not locked then
                 local item = ground and object:getItem() or nil
@@ -132,7 +136,9 @@ function Nearby.scan(player, originSquare, radius, force)
                 end
             end
         end
+        return edges
     end
+    local layout={originKey,"/",tostring(radius),"/"}
     local ox, oy, z = originSquare:getX(), originSquare:getY(), originSquare:getZ()
     local cell = getCell()
     for x = ox - radius, ox + radius do
@@ -140,9 +146,9 @@ function Nearby.scan(player, originSquare, radius, force)
             local dx, dy = x - ox, y - oy
             if dx * dx + dy * dy <= radius * radius then
                 local square = cell:getGridSquare(x, y, z)
-                if not square then result.unloadedSquares = result.unloadedSquares + 1
+                if not square then result.unloadedSquares = result.unloadedSquares + 1; layout[#layout+1]="?"
                 elseif permitted(player, square, false) then
-                    visitObjects(square:getObjects(), square, false)
+                    local edges=visitObjects(square:getObjects(), square, false)
                     visitObjects(square:getWorldObjects(), square, true)
                     if permitted(player, square, true) and square.getStaticMovingObjects then
                         local bodies = square:getStaticMovingObjects()
@@ -152,6 +158,7 @@ function Nearby.scan(player, originSquare, radius, force)
                         end
                     end
                     local vehicle = square.getVehicleContainer and square:getVehicleContainer()
+                    layout[#layout+1]=SurvivalRoute.tileState(square,vehicle)..edges
                     if vehicle and not seenVehicles[vehicle] then
                         seenVehicles[vehicle] = true
                         for index = 0, vehicle:getPartCount() - 1 do
@@ -166,12 +173,19 @@ function Nearby.scan(player, originSquare, radius, force)
                             end
                         end
                     end
-                end
+                else layout[#layout+1]="!" end
             end
         end
     end
+    result.routeLayout=table.concat(layout)
     snapshots[player] = {originKey = originKey, radius = radius, client = isClient(), time = now, result = result}
     return result
+end
+
+function Nearby.routeEvidence(player,origin,radius,area)
+    local here=player:getSquare()
+    area=area or Nearby.scan(player,origin,radius)
+    if here and area and area.routeLayout then return area.routeLayout..":"..key(here), area.routeLayout end
 end
 
 function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWorldWater, rejectedItems)
@@ -181,12 +195,14 @@ function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWo
     local snapshot = Nearby.scan(player, originSquare, radius)
     rejectedTargets = rejectedTargets or {}
     rejectedItems=rejectedItems or {}
+    local now=getTimestampMs()
+    local routeLayout,routeScope=Nearby.routeEvidence(player,originSquare,radius,snapshot)
+    if kind=="food" or kind=="water" then SurvivalRoute.scope(rejectedTargets,routeScope) end
     local probe
     local function usable(entry)
         if entry.unknown then return true end
         if entry.object then
-            local reject=rejectedItems[entry.object]
-            if type(reject)=="number" and getTimestampMs()>=reject then rejectedItems[entry.object],reject=nil,nil end
+            local reject=Needs.supplyRejected(rejectedItems,entry.object)
             return not reject and Nearby.waterObject(player,entry)~=nil
         end
         if not Storage.permitted(player,entry.square) then return false end
@@ -198,21 +214,19 @@ function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWo
             local square = entry.square
             local dx, dy = square:getX() - here:getX(), square:getY() - here:getY()
             local targetKey = (entry.unknown and "unknown:" or kind .. ":") .. entry.key
-            local rejection = rejectedTargets[targetKey]
-            if type(rejection) == "number" and getTimestampMs() >= rejection then
-                rejectedTargets[targetKey], rejection = nil, nil
-            end
-            -- Geometric neighbors behind a wall are not in the native adjacent
-            -- supply pass. Ask normal pathfinding to approach them.
+            local rejection=SurvivalRoute.blocked(rejectedTargets,targetKey,entry,routeLayout,now)
+            -- The adjacent drink pass uses native wall-corrected reach to a
+            -- fixture's part, not just distance to its uncorrected tile.
             if not rejection and (allowAdjacent or math.abs(dx)>1 or math.abs(dy)>1
+                    or (entry.object and not SurvivalRoute.waterInReach(player,here,square))
                     or (entry.part and not Storage.vehicleAccessible(player,entry.part))
-                    or (not entry.part and square~=here and not here:canReachTo(square))) then
+                    or (not entry.object and not entry.part and square~=here and not here:canReachTo(square))) then
                 local distance = dx * dx + dy * dy
                 if (not best or distance < best.distance or (distance == best.distance and (targetKey < best.key
                         or (targetKey == best.key and entry.object and entry.item and entry.item == best.item and not best.object))))
                         and usable(entry) then
                     -- Do not mutate the shared snapshot while choosing targets.
-                    best = {square = square, key = targetKey, distance = distance,
+                    best = {square = square, key = targetKey, distance = distance, routeLayout=routeLayout, routeScope=routeScope,
                         unknown = entry.unknown, container = entry.container, storageScoped = entry.storageScoped,
                         item = entry.item, object = entry.object, part = entry.part}
                 end

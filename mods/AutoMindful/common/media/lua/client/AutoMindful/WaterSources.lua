@@ -6,17 +6,14 @@ local Fluids = require "AutoMindful/Fluids"
 local IntakeGuard = require "AutoMindful/IntakeGuard"
 
 AutoMindful = AutoMindful or {}
+local SurvivalRoute = require "AutoMindful/SurvivalRoute"
 local WaterSources = {}
+local Needs = require "AutoMindful/SurvivalNeeds"
 AutoMindful.WaterSources = WaterSources
 
 local function reachable(player, object)
     local here, square = player:getSquare(), object:getSquare()
-    if not here or not square then return false end
-    square = luautils.getCorrectSquareForWall(player, square)
-    return square and square:getZ() == here:getZ()
-        and math.abs(square:getX() - here:getX()) <= 1
-        and math.abs(square:getY() - here:getY()) <= 1
-        and (square == here or here:canReachTo(square))
+    return SurvivalRoute.waterInReach(player,here,square)
 end
 
 function WaterSources.inspect(player, object, part)
@@ -25,8 +22,11 @@ function WaterSources.inspect(player, object, part)
     local square = object:getSquare()
     if not square then return nil end
     local ground = instanceof(object, "IsoWorldInventoryObject")
+    local partSquare=part:getSquare()
     if isClient() and (not SafeHouse.isSafehouseAllowInteract(square, player)
-            or (ground and not SafeHouse.isSafehouseAllowLoot(square, player))) then return nil end
+            or not SafeHouse.isSafehouseAllowInteract(partSquare,player)
+            or (ground and (not SafeHouse.isSafehouseAllowLoot(square, player)
+                or not SafeHouse.isSafehouseAllowLoot(partSquare, player)))) then return nil end
     if instanceof(object, "IsoThumpable") and object:isLockedToCharacter(player) then return nil end
     if object:getFluidAmount() <= 0 or object:isTaintedWater() then return nil end
     local item = ground and object:getItem() or nil
@@ -89,11 +89,7 @@ end
 function WaterSources.choose(player, rejected, object)
     local best
     for _, source in ipairs(WaterSources.scan(player)) do
-        local rejection = rejected[source.object]
-        if type(rejection) == "number" and getTimestampMs() >= rejection then
-            rejected[source.object] = nil
-            rejection = nil
-        end
+        local rejection=Needs.supplyRejected(rejected,source.object)
         if source.directDrink and not rejection and (not object or source.object == object)
                 and (not best or source.remainingLiters > best.remainingLiters) then best = source end
     end

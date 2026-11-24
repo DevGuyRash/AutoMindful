@@ -118,7 +118,7 @@ local function prepare(rank, stat, value, mode)
     return p
 end
 
-local function step(p,second)
+local function step(p,second,stepRoute)
     local previous=math.floor(world+0.0001)
     T.now,world=T.now+1000,second/5
     local minute=math.floor(world+0.0001)
@@ -128,6 +128,7 @@ local function step(p,second)
         elseif action.Type=="stand" then action:perform()
         elseif action.Type=="ISTakeWaterAction" then
             assert(action:isValid() and action:complete()); action:perform()
+        elseif stepRoute and stepRoute(action) then -- route callback delivered at the Java boundary
         else error("Unexpected action: "..tostring(action.Type)) end
     end
     if minute>previous then
@@ -171,7 +172,7 @@ for _, fixture in ipairs({{0,"STRESS",0.70},{0,"NICOTINE_WITHDRAWAL",0.60}}) do
 end
 
 for _, fixture in ipairs({{3,"PANIC",45,"panic ease",1},{6,"HUNGER",0.23,"hunger ease",2},
-        {10,"HEALTH",85,"health improve",3}}) do
+        {10,"HEALTH",85,"health improve",3},{10,"HEALTH",4,"health improve",3}}) do
     local rank,stat,before,label,wanted=fixture[1],fixture[2],fixture[3],fixture[4],fixture[5]
     local p=prepare(rank,stat,before)
     local lastTier,acquiredAt,observedAt,pose=0
@@ -292,14 +293,11 @@ if loadStockLua then
     -- Keep the real native Yoga admission out of this scenario, without manufacturing a turn.
     local opts=require "AutoMindful/Options"
     opts.searchNearby=function() return true end
-    for _,mode in ipairs({"recovery","both"}) do
-        local p=prepare(6,"HUNGER",.8,mode)
-        p.hungerMoodle=4
-        local sq=T.square(1,0)
-        local tap={kind="IsoObject",sample=nil,refills=0}
+    local function tapAt(p,sq,tainted)
+        local tap={kind="IsoObject",refills=0}
         function tap:getMasterObject() return self end
         function tap:getSquare() return sq end
-        function tap:isTaintedWater() return false end
+        function tap:isTaintedWater() return tainted==true end
         function tap:hasWater() return true end
         function tap:hasFluid() return true end
         function tap:getFluidAmount() return 10000 end
@@ -308,24 +306,38 @@ if loadStockLua then
         function tap:getFluidContainer() return nil end
         function tap:getPrimaryFluid() return Fluid.Water end
         function tap:getProperties() return nil end
+        function tap:getContainerCount() return 0 end
+        function tap:getSpriteGridObjectsIncludingSelf(parts) parts:add(self) end
         function tap:moveFluidToTemporaryContainer(amount)
-            self.refills=self.refills+1; self.sample={amount=amount}; return self.sample
+            self.refills=self.refills+1
+            self.sample={source=self,amount=amount}
+            return self.sample
         end
         function sq:getObjects() return T.list({tap}) end
         function sq:getWorldObjects() return T.list({}) end
-        local here=p:getSquare()
-        function here:getObjects() return T.list({}) end
-        function here:getWorldObjects() return T.list({}) end
         T.loadSquare(p,sq)
-        function p:reportEvent(e) if e=="EventSitOnGround" then self.sitting=true end end
+        return tap
+    end
+    local function stockDrinker(p)
+        function p:reportEvent(e) self.sitting=(e=="EventSitOnGround") end
         function p:hasFullInventory() return false end
         function p:playSound() end
         function p:DrinkFluid(sample,fraction)
-            assert(sample==tap.sample and fraction==1 and sample.amount>0)
+            assert(sample==sample.source.sample and not sample.source:isTaintedWater() and fraction==1 and sample.amount>0)
+            assert(self:getSquare():canReachTo(sample.source:getSquare()),"remote drink")
             p.values.THIRST=math.max(0,p.values.THIRST-sample.amount*.5)
             sample.drunk=true
             if p.values.THIRST<.01 then p.thirstMoodle=0 end
         end
+    end
+    for _,mode in ipairs({"recovery","both"}) do
+        local p=prepare(6,"HUNGER",.8,mode)
+        p.hungerMoodle=4
+        local tap=tapAt(p,T.square(1,0))
+        local here=p:getSquare()
+        function here:getObjects() return T.list({}) end
+        function here:getWorldObjects() return T.list({}) end
+        stockDrinker(p)
         local original,interrupted,secondPose,acquired,observed
         for second=1,560 do
             local a=head(p)
@@ -352,4 +364,7 @@ if loadStockLua then
         print(("NATIVE PASS %s: hungry with no food, owned Meditation yields to critical thirst, stock drink from adjacent mains (%.2f L, no debit), resumed native Strong -> H %.3f; no turn/meal/calories"):format(mode,tap.sample.amount,p.values.HUNGER))
         C.stop(p)
     end
+    local incident=loadTest and loadTest("survival_incident_replay.lua") or assert(loadfile("tests/survival_incident_replay.lua"))()
+    incident(prepare,step,head,count,tapAt,stockDrinker)
+
 end

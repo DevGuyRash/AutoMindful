@@ -324,3 +324,29 @@ do
     assert(find("water",10,rejected,true).object==first,"opening a door must re-admit a previously disconnected setup")
 end
 print("PASS: exhausted known fixtures remain exhausted on unchanged terrain; new fixture and native door change re-arm")
+
+do
+    reset()
+    origin=square(7188,8335); player.square=origin
+    local Routes=require "AutoMindful/SurvivalRoute"
+    local pain=require "AutoMindful/PainCare"
+    local original=pain.eligible
+    pain.eligible=function(candidate) return candidate.pain==true end
+    local first=object(square(7194,8331),{item({pain=true})})
+    local second=object(square(7188,8343),{item({pain=true})})
+    local gate=object(square(7189,8335)); gate.kind="IsoDoor"
+    function gate:IsOpen() return self.open end
+    local rejected={}
+    local failed=find("pain",10,rejected)
+    assert(failed.container==first.containers[1])
+    Routes.reject(rejected,failed,"pain",now)
+    for _,delay in ipairs({16000,60000}) do
+        now=now+delay; refresh()
+        assert(find("pain",10,rejected).container==second.containers[1],
+            "Pain care must not interrupt practice for an unchanged failed route")
+    end
+    gate.open=true; refresh()
+    assert(find("pain",10,rejected).container==first.containers[1],
+        "Observable navigation changes must restore the painkiller route")
+    pain.eligible=original
+end

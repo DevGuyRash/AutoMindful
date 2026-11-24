@@ -197,7 +197,7 @@ function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWo
     rejectedItems=rejectedItems or {}
     local now=getTimestampMs()
     local routeLayout,routeScope=Nearby.routeEvidence(player,originSquare,radius,snapshot)
-    if kind=="food" or kind=="water" then SurvivalRoute.scope(rejectedTargets,routeScope) end
+    if SurvivalRoute.tracks(kind) then SurvivalRoute.scope(rejectedTargets,routeScope) end
     local probe
     local function usable(entry)
         if entry.unknown then return true end

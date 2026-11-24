@@ -40,6 +40,7 @@ stock("shared/TimedActions/ISBaseTimedAction.lua")
 stock("shared/TimedActions/ISWearClothing.lua")
 stock("shared/TimedActions/ISUnequipAction.lua")
 stock("shared/TimedActions/ISDrinkFluidAction.lua")
+stock("shared/TimedActions/ISEatFoodAction.lua")
 ISToolTip=ISBaseObject:derive("ISToolTip")
 local containers=ISInventoryPaneContextMenu.getContainers
 stock("client/ISUI/ISInventoryPaneContextMenu.lua")
@@ -302,6 +303,83 @@ test("a server-delayed unequip and rewear both require observed equipment receip
     tick(p,3)
     assert(p:getWornItem(ItemBodyLocation.MASK)==mask and (not head(p) or head(p).Type~="ISWearClothing"))
     T.client=false
+end)
+
+local consumables=require "AutoMindful/Consumables"
+local function meal(p)
+    function p.inventory:getFirstTagEvalRecurse() return nil end
+    function p.inventory:getFirstTypeEvalRecurse() return nil end
+    function p.inventory:containsID(id) return self:getItemById(id)~=nil end
+    local food=T.add(p.inventory,T.item("Food",{hunger=-.4,baseHunger=-.4}))
+    food.getEatType,food.getCustomEatSound,food.getCustomMenuOption=noop,noop,noop
+    food.getEatTime=function() return 1 end
+    food.getAge=function() return 0 end
+    food.getOffAgeMax=function() return 1000000000 end
+    food.getOnEat=noop
+    food.setJobDelta=noop
+    p.values.HUNGER=.2
+    function p:Eat(i,quantity)
+        assert(i==food and quantity>0)
+        self.bites=(self.bites or 0)+1
+    end
+    return food
+end
+
+test("pre-dispatch: queue skips only the unsafe meal, including a replaced MP item with the same ID",function()
+    for _,client in ipairs({false,true}) do
+        T.client=client
+        local p=player()
+        local food=meal(p)
+        local first=action(p,"ManualTask")
+        ISTimedActionQueue.add(first)
+        assert(consumables.consume(p,food,"food"))
+        local eating=queue(p).queue[2]
+        local nextManual=action(p,"AutoAllExercise")
+        ISTimedActionQueue.add(nextManual)
+        if client then
+            local changed=meal(p); changed.id=food:getID(); changed.poisonPower=1
+            T.remove(p.inventory,food)
+        else food.rotten=true end
+        perform(p,first)
+        assert(not eating.starts and head(p)==nextManual and nextManual.starts==1 and not p.bites,
+            "unsafe meal was submitted or the unrelated successor was lost")
+    end
+    T.client=false
+end)
+
+test("a rotten meal neither completes nor takes a partial bite on stock SP cancellation",function()
+    T.client=false
+    local p=player(); local food=meal(p)
+    assert(consumables.consume(p,food,"food"))
+    local eating=head(p); assert(eating and eating.starts==1)
+    local other=action(p,"ManualMap"); ISTimedActionQueue.add(other)
+    food.rotten=true
+    eating.action.getJobDelta=function() return .5 end
+    eating:complete() -- no intervening Lua validity or controller poll
+    assert(not p.bites,"native complete ate a rotten item")
+    eating:stop() -- stock stop's serverStop also eats a fraction
+    assert(not p.bites and not other.starts,"stock partial bite or premature successor")
+    p.nativeHead=nil; queue(p):tick()
+    assert(head(p)==other and other.starts==1,"only the unsafe meal may be stopped")
+    -- This is a deliberate manual choice: automatic safety must never hook the class.
+    ISEatFoodAction:new(p,food,.5):complete()
+    assert(p.bites==1,"manual actions were intercepted")
+end)
+
+test("liquid food: clean first sip, zero later sips after contamination, including native completion",function()
+    T.client=false
+    local p=drinking()
+    local drink=head(p); local bottle=drink.item
+    bottle.syncItemFields=noop
+    function p:DrinkFluid(i,frac)
+        assert(i==bottle and frac>0)
+        self.sips=(self.sips or 0)+1; i.fluid.amount=i.fluid.amount*(1-frac)
+    end
+    drink:updateEat(.25); assert(p.sips==1)
+    local before=bottle.fluid.amount
+    bottle.fluid.isTainted=function() return true end
+    drink:updateEat(.75); drink:complete()
+    assert(p.sips==1 and bottle.fluid.amount==before,"stock incremental/final sip drank the changed mixture")
 end)
 
 assert(failed==0,tostring(failed).." stock care ownership regression(s)")

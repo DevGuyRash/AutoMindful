@@ -87,11 +87,14 @@ LSUtil={debugPrint=noop,isObjOnSqr=function(o)return not o.removed end,
     getDummyOption=function(m,n,_,__,add,dis) local o=m[add](m,n);o.notAvailable=dis;return o end,
     walkToFront=function(p,o) assert(o.square.front==p.square); ISTimedActionQueue.add({Type="ISWalkToTimedAction",character=p});return true end,
     getSimpleTooltip=function()return {} end,getValidCharacter=function(p)return p end,
-    changeCharacterMoodGroup=noop,useItem=noop}
+    changeCharacterMoodGroup=noop,useItem=noop,itemHasFluid=no}
 LSHygiene={DS={Toilets={}},TF={getWaterUsage=function(g)return ({Fancy=5,Low=10,Hanging=5})[g] end,isInOuthouseArea=function()return area end}}
 for _,sn in pairs(spriteName)do LSHygiene.DS.Toilets[sn]={"d1","d2","d3"} end
 LSSync={transmitObjMovData=function()updates=updates+1 end,updateClientData=noop,transmit=noop}
 LSCleaning={getCleaningTime=function()return 1 end}
+Perks={Cleaning="Cleaning"}
+function sendClientCommand() end
+ISEquipWeaponAction={new=function(_,who,item)return {Type="ISEquipWeaponAction",character=who,item=item} end}
 ActionHelper={}
 local function seatedAction(p,o,a)
     local path={Type="ISPathFindAction",character=p,goal={"SitOnFurniture",o,true},onCompleteArgs={p,nil,a}}
@@ -117,7 +120,11 @@ local function fakeAction(p,o,name)
         perform=function(self)p.md.IsDoingToilet=false end}
 end
 local function selectedWipe()
-    return p.loot.items[1] or p.inv.items[1]
+    for _,source in ipairs({p.loot,p.inv}) do
+        for _,i in ipairs(source.items) do
+            if i.getFullType and i:getFullType()=="Base.ToiletPaper" then return i end
+        end
+    end
 end
 if refs then
     for _,name in ipairs({"ISUI/ISWorldObjectContextMenu","TimedActions/ISBaseTimedAction","Properties/Player/CleaningSkill"})do package.loaded[name]=true end
@@ -126,6 +133,7 @@ if refs then
     stock("shared/Hygiene/ToiletFunctions.lua")
     stock("shared/Helper/ActionHelper.lua")
     stock("shared/TimedActions/LSFlushToilet.lua")
+    package.loaded["TimedActions/LSUnclogToilet"]=stock("shared/TimedActions/LSUnclogToilet.lua")
     package.loaded["TimedActions/LSUseToilet"]=stock("shared/TimedActions/LSUseToilet.lua")
     package.loaded["TimedActions/LSUseToiletGround"]=stock("shared/TimedActions/LSUseToiletGround.lua")
     package.loaded["Properties/TPTypes"]=stock("client/Properties/TPTypes.lua")
@@ -136,6 +144,12 @@ if refs then
 else
     ToiletContextMenu={onAction=function(p,o,g,s,_,items,cmd)
         LSUtil.walkToFront(p,o)
+        if cmd=="IsUnclog" then
+            ISTimedActionQueue.add(ISEquipWeaponAction:new(p,items[3]))
+            ISTimedActionQueue.add({Type="LSUnclogToilet",character=p,toiletObject=o,plungerItem=items[3],
+                perform=function() o.data.movableData.isClogged=false end})
+            return
+        end
         if cmd=="IsFlushAndUse"then ISTimedActionQueue.add({Type="LSFlushToilet",character=p,toiletObject=o})end
         local a=fakeAction(p,o,"LSUseToilet");a.toiletpaperItem=items[4]
         if g=="Hanging"then ISTimedActionQueue.add(a)else seatedAction(p,o,a)end
@@ -143,7 +157,17 @@ else
     ToiletContextMenu.doBuildMenu=function(_,m,world,o,s,_,g)
         assert(world[1]==o); local sub=m:getSubMenu(m.options[1].subOption)
         local d=o:getModData();d.movableData=d.movableData or {dirtyLevel=0,condition=0}
-        sub:addOptionOnTop(getText("ContextMenu_Toilet_Use"),p,ToiletContextMenu.onAction,o,g,s,"good",{[4]=selectedWipe()},d.movableData.needFlush and not p.sloppy and "IsFlushAndUse" or "IsUse")
+        local tool
+        for _,item in ipairs(p.inv.items) do
+            if item.getType and item:getType()=="Plunger" and not item:isBroken() then tool=item;break end
+        end
+        local blocked=d.movableData.isClogged and d.movableData.isClogged>=0
+        if blocked then
+            local fix=sub:addOptionOnTop("ContextMenu_Toilet_Unclog",p,ToiletContextMenu.onAction,o,g,s,100,{[3]=tool},"IsUnclog")
+            fix.notAvailable=not tool
+        end
+        local use=sub:addOptionOnTop(getText("ContextMenu_Toilet_Use"),p,ToiletContextMenu.onAction,o,g,s,"good",{[4]=selectedWipe()},d.movableData.needFlush and not p.sloppy and "IsFlushAndUse" or "IsUse")
+        use.notAvailable=blocked
     end
     ToiletGroundContextMenu={doBuildMenu=function(_,m,w)
         local a=fakeAction(p,nil,"LSUseToiletGround");a.toiletpaperItem=selectedWipe()
@@ -203,6 +227,32 @@ test("stock exact dispatch, native preflush for non-sloppy, no duplicates, debug
         and p.q.queue[3].goal[2]==o and b.action==p.q.queue[3].onCompleteArgs[3] and b.action.toiletObject==o)
     assert(p.md.bathroomNeed==30 and not R.receipt(p,b));closeQueue();p.sloppy=true;b=R.snapshot(p);assert(R.queueToilet(p,e))
     assert(#p.q.queue==2 and p.q.queue[2].goal[2]==o and b.action.toiletObject==o)
+end)
+test("repair needs a working main-inventory plunger; never flush a clog or count repair as relief",function()
+    local o=fixture("Fancy");o.data={movableData={isClogged=0,needFlush=true,dirtyLevel=0,condition=0}}
+    local tool={getID=function()return 27 end,getType=function()return "Plunger" end,
+        getFullType=function()return "Base.Plunger" end,isEquipped=no,
+        isBroken=function(self)return self.broken end,getContainer=function()return p.inv end}
+    p.loot.items={tool};assert(not R.inspect(p,o),"Nearby plunger not in native inventory scope")
+    p.loot.items={};p.inv.items={tool};tool.broken=true;assert(not R.inspect(p,o));tool.broken=false
+    local e=assert(R.inspect(p,o),"A compatible plunger must admit a clogged toilet")
+    assert(not o.data.movableData.cloggedTotal and not p.q.queue[1],"Scouting must be inert")
+    p.square=o.square.front;local b=R.snapshot(p)
+    p.q.queue={{Type="Foreign"}};assert(not R.queueToilet(p,e,b) and #p.q.queue==1);closeQueue()
+    assert(R.queueToilet(p,e,b));assert(not R.queueToilet(p,e,b))
+    local q=p.q.queue;assert(#q==3 and q[2].Type=="ISEquipWeaponAction" and q[3].Type=="LSUnclogToilet")
+    local fix=q[3];assert(fix.toiletObject==o and fix.plungerItem==tool)
+    -- Even a replicated clear/accident by someone else is not our completed repair.
+    o.data.movableData.isClogged=false;closeQueue();assert(not R.prepared(p,b) and not R.receipt(p,b))
+    o.data.movableData.isClogged=19;p.getPerkLevel=function()return 10 end
+    fix:perform()
+    p.q.queue={{Type="native-post-unclog-flush"}};assert(not R.prepared(p,b));closeQueue()
+    assert(R.prepared(p,b) and not R.receipt(p,b) and p.md.bathroomNeed==30)
+    -- Fixture became unflushable in the meantime, then a fresh clog: use-only cannot repair twice.
+    o.water=0;assert(not R.queueToilet(p,e,R.snapshot(p),true));o.water=20
+    o.data.movableData.isClogged=0;assert(not R.queueToilet(p,e,R.snapshot(p),true) and not p.q.queue[1])
+    o.data.movableData.isClogged=false;assert(R.queueToilet(p,e,R.snapshot(p),true))
+    assert(p.q.queue[2].Type=="LSFlushToilet" and p.q.queue[3].goal[2]==o)
 end)
 test("optional TP follows native, stale/unauthorized loot never taken",function()
     local o=fixture("Hanging");local e=arrive(o);local b=R.snapshot(p);assert(R.queueToilet(p,e));assert(not b.action.toiletpaperItem)

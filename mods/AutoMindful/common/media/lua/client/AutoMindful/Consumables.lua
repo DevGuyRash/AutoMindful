@@ -1,6 +1,7 @@
 require "ISUI/ISInventoryPaneContextMenu"
 require "TimedActions/ISDrinkFluidAction"
 local Fluids = require "AutoMindful/Fluids"
+local IntakeGuard = require "AutoMindful/IntakeGuard"
 
 AutoMindful = AutoMindful or {}
 -- Zero is satisfied; negative hunger is the game's stuffed range. Only ignore
@@ -46,7 +47,7 @@ local function requiredItemsAvailable(player, item)
         local available = player:getInventory():getFirstTypeEvalRecurse(fullType, function(candidate)
             return candidate:getCurrentUsesFloat() > 0
         end)
-        if available then return true end
+        if available then return true, available end
     end
     return false
 end
@@ -71,7 +72,7 @@ function Consumables.inspect(player, item, includeNearby)
     local fluid = Fluids.container(item)
     local cantEat = food and item:getScriptItem():isCantEat()
     if food and not Fluids.safeFood(item) then
-        description.reason = "This food is unsafe, frozen, or needs cooking."
+        description.reason = "This food is unsafe, has an unverified effect, is frozen, or needs cooking."
         return description
     end
     description.needsOpening = item:isSealed() or (food and (cantEat == true or item:getOpeningRecipe() ~= nil))
@@ -218,11 +219,43 @@ function Consumables.consume(player, item, kind)
     local portion, reason = Consumables.portion(player, item, kind)
     if not portion then return false, reason end
     local fluid = Fluids.container(item)
-    if fluid and not fluid:isEmpty() then
-        ISInventoryPaneContextMenu.onDrinkFluid(item, portion, player)
+    local inventory, source = player:getInventory(), item:getContainer()
+    local drink = fluid and not fluid:isEmpty()
+    local tool, toolSource, action
+    if drink then
+        action = ISDrinkFluidAction:new(player, item, portion)
     else
-        ISInventoryPaneContextMenu.eatItem(item, portion, player:getPlayerNum())
+        local available
+        available, tool = requiredItemsAvailable(player, item)
+        if not available then return false, "The required item is no longer available." end
+        if not ISEatFoodAction then require "TimedActions/ISEatFoodAction" end
+        action = ISEatFoodAction:new(player, item, portion)
+        toolSource = tool and tool:getContainer()
     end
+    -- B42 can rebind an MP action by item ID at start. Reject a replaced
+    -- handle and let the next fresh scan inspect the canonical item instead.
+    local function safe(self)
+        if self.item ~= item or item:getContainer() ~= inventory or not inventory:contains(item)
+                or (isClient() and inventory:getItemById(item:getID()) ~= item) or item:isSealed() then return false end
+        if drink then
+            return self.fluidContainer == fluid and item:getFluidContainer() == fluid
+                and Fluids.drinkable(item, fluid) and Fluids.safe(fluid)
+        end
+        local currentFluid = Fluids.container(item)
+        return instanceof(item, "Food") and not item:getScriptItem():isCantEat()
+            and (not currentFluid or currentFluid:isEmpty()) and Fluids.safeFood(item)
+    end
+    if drink then IntakeGuard.bind(action, safe, "updateEat")
+    else IntakeGuard.bind(action, safe, "complete", "eat") end
+    -- Same stock mask, prerequisite and return actions as the menu, but bind
+    -- this exact intake before Queue.add can immediately begin it.
+    if source ~= inventory then ISInventoryPaneContextMenu.transferIfNeeded(player, item) end
+    local mask = ISInventoryPaneContextMenu.getEatingMask(player, true)
+    if tool and toolSource ~= inventory then ISInventoryPaneContextMenu.transferIfNeeded(player, tool) end
+    ISTimedActionQueue.add(action)
+    if mask then ISTimedActionQueue.add(ISWearClothing:new(player, mask, 50)) end
+    if tool and toolSource ~= inventory then ISCraftingUI.ReturnItemToContainer(player, tool, toolSource) end
+    if source and source ~= inventory then ISCraftingUI.ReturnItemToContainer(player, item, source) end
     return portion, reason
 end
 

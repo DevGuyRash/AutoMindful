@@ -1,5 +1,6 @@
 local Fixtures = {}
-Fixtures.categories = {Beverage="Beverage", Water="Water", Hazardous="Hazardous", Alcoholic="Alcoholic"}
+Fixtures.categories = {Beverage="Beverage", Water="Water", Hazardous="Hazardous", Alcoholic="Alcoholic",
+    Poisons="Poisons",Fuel="Fuel",Industrial="Industrial"}
 
 function Fixtures.component(settings)
     local fluid = settings or {}

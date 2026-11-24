@@ -253,6 +253,20 @@ test("standing, mouth equipment, validity and rejected-source retries are contro
     assert(not queued and reason:find("room") and #queue == 0)
 end)
 
+if nativeAction then
+    test("world source becoming tainted immediately before a native sip does not affect thirst or water", function()
+        local p=player(); local source=source(p.square)
+        assert(Sources.drink(p,{object=source}))
+        local action=queue[1]
+        action:updateUse(.25)
+        local amount,thirst=source.amount,p.thirst
+        assert(amount<2 and thirst<.25)
+        source.tainted=true
+        action:updateUse(.75); action:complete()
+        assert(source.amount==amount and p.thirst==thirst,"unsafe world water reached stock DrinkFluid")
+    end)
+end
+
 test("nearby previews honor collection permission and avoid counting ground bottles twice", function()
     local p = player()
     local bottle = source(p.square, true)

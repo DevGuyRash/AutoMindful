@@ -1,6 +1,7 @@
 require "Fluids/ISFluidContainer"
 require "Fluids/ISFluidUtil"
 require "Fluids/ISFluidTransferAction"
+local IntakeGuard = require "AutoMindful/IntakeGuard"
 
 AutoMindful = AutoMindful or {}
 local Fluids = {}
@@ -15,7 +16,14 @@ end
 
 function Fluids.safeFood(item)
     if not instanceof(item, "Food") then return true end
-    return not item:isRotten() and not item:isBurnt() and not item:isFrozen() and not item:isTainted()
+    -- BodyDamage.JustAteFood applies age >= offAgeMax even when isRotten()
+    -- masks it (fertilized eggs). Stale food is below this threshold; vanilla
+    -- nonperishables use a very large offAgeMax, not a freshness requirement.
+    -- The stock wild-food callback only reads poison power, checked below.
+    local effect = item:getOnEat()
+    return (not effect or effect == "" or effect == "RecipeCodeOnEat.consumeWildFoodGeneric")
+        and not item:isRotten() and item:getAge() < item:getOffAgeMax()
+        and not item:isBurnt() and not item:isFrozen() and not item:isTainted()
         and not item:isPoison() and item:getPoisonPower() <= 0 and item:getFoodSicknessChange() <= 0
         and not item:isAlcoholic() and (not item:isbDangerousUncooked() or item:isCooked())
 end
@@ -33,7 +41,8 @@ local function safeSample(sample)
             local properties = fluid:getProperties()
             if not (fluid:isCategory(FluidCategory.Beverage) or fluid:isCategory(FluidCategory.Water))
                     or fluid:isCategory(FluidCategory.Hazardous) or fluid:isCategory(FluidCategory.Alcoholic)
-                    or fluid:isPoisonous() or properties:getPoison() > 0
+                    or fluid:isCategory(FluidCategory.Poisons) or fluid:isCategory(FluidCategory.Fuel)
+                    or fluid:isCategory(FluidCategory.Industrial) or fluid:isPoisonous() or properties:getPoison() > 0
                     or properties:getAlcohol() > 0 or properties:getFoodSicknessChange() > 0 then return false end
         end
     end
@@ -104,9 +113,14 @@ function Fluids.transfer(player, source, target, amountLiters, validate)
         targetWrapper, targetWrapper:getFluidObject(), amount)
     local originalValid = action.isValid
     action.isValid = function(self)
-        return (not validate or validate()) and source:canPlayerEmpty() and Fluids.safe(source) and Fluids.safe(target)
-            and originalValid(self)
+        return (not validate or validate()) and originalValid(self)
     end
+    -- Never turn rotten food into an apparently safe drink by pouring it into
+    -- an ordinary cup between the last engine validity poll and the transfer.
+    IntakeGuard.bind(action, function(self)
+        return self.source:getFluidContainer() == source and self.target:getFluidContainer() == target
+            and source:canPlayerEmpty() and Fluids.safe(source) and Fluids.safe(target)
+    end, "update", "complete")
     if not action:isValid() then return false, "The game currently refuses this fluid transfer." end
     ISTimedActionQueue.add(action)
     return true

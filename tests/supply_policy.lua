@@ -54,6 +54,7 @@ end
 local function container(x)
     local result = {items={}, square=square(x)}
     function result:getItems() return list(self.items) end
+    function result:contains(item) for _,i in ipairs(self.items) do if i==item then return true end end return false end
     function result:getOutermostContainer() return self end
     function result:getType() return self.floor and "floor" or "container" end
     function result:getSourceGrid() return self.square end
@@ -93,6 +94,9 @@ local function item(target, settings)
     function result:getCalories() return self.calories or 0 end
     function result:getPoisonPower() return 0 end
     function result:getFoodSicknessChange() return 0 end
+    function result:getAge() return 0 end
+    function result:getOffAgeMax() return 1000000000 end
+    function result:getOnEat() return nil end
     for _, method in ipairs({"isRotten", "isBurnt", "isFrozen", "isTainted", "isPoison", "isAlcoholic", "isbDangerousUncooked"}) do
         result[method] = function() return false end
     end
@@ -137,17 +141,29 @@ local function worldMilk(target, amount)
     sources[#sources + 1] = source
     return milk, source
 end
-ISInventoryPaneContextMenu = {getContainers=function() return list(containers) end,
-    onDrinkFluid=function(selected, fraction, player)
-        local properties = selected.fluid:getProperties()
-        player.values.hunger = math.max(0, player.values.hunger + properties:getHungerChange() * fraction)
-        player.values.thirst = math.max(0, player.values.thirst + properties:getThirstChange() * fraction)
-        selected.fluid.amount = selected.fluid.amount * (1 - fraction)
-    end,
-    eatItem=function(selected, fraction)
-        survivor.values.hunger = math.max(0, survivor.values.hunger + selected.hunger * fraction)
-        survivor.values.thirst = math.max(0, survivor.values.thirst + selected.thirst * fraction)
+local function move(item,to)
+    for n,held in ipairs(item.container.items) do if held==item then table.remove(item.container.items,n); break end end
+    item.container=to; to.items[#to.items+1]=item
+end
+ISInventoryPaneContextMenu = {getContainers=function() return list(containers) end, getEatingMask=function() end,
+    transferIfNeeded=function(p,i) move(i,p:getInventory()) end}
+ISCraftingUI = {ReturnItemToContainer=function(_,i,source) move(i,source) end}
+ISDrinkFluidAction={new=function(_,p,item,portion)
+    return {item=item,fluidContainer=item.fluid,character=p,complete=function()
+        local props=item.fluid:getProperties()
+        p.values.hunger=math.max(0,p.values.hunger+props:getHungerChange()*portion)
+        p.values.thirst=math.max(0,p.values.thirst+props:getThirstChange()*portion)
+        item.fluid.amount=item.fluid.amount*(1-portion)
     end}
+end}
+ISEatFoodAction={new=function(_,p,item,portion)
+    return {item=item,character=p,complete=function()
+        p.values.hunger=math.max(0,p.values.hunger+item.hunger*portion)
+        p.values.thirst=math.max(0,p.values.thirst+item.thirst*portion)
+    end}
+end}
+ISTimedActionQueue={add=function(a) a:complete() end}
+function isClient() return false end
 local Supplies = require "AutoMindful/Supplies"
 local Consumables = require "AutoMindful/Consumables"
 Fluids = require "AutoMindful/Fluids"

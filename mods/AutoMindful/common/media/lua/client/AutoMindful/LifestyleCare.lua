@@ -28,6 +28,7 @@ local function fixtureTarget(player, state, kind, object, square, index, distanc
     local a=adapters[kind]
     local data=checked(a.inspect,player,object)
     if data then
+        if data.plungerId and state.restroomToolsTried and state.restroomToolsTried[key]==data.plungerId then return end
         return {kind=kind,object=object,square=square,care=data,key=key,distance=distance,
             close=checked(a.accessible,player,data)==true}
     end
@@ -46,30 +47,42 @@ local function recalledFixture(player,state,kind,radius,now)
     return target
 end
 
-local function fixture(player, state, kind, radius, now)
+function Care.frontInRange(target,x,y,z,radius)
+    local front=target and type(target.care)=="table" and target.care.front
+    if not front then return true end
+    local dx,dy=front:getX()-x,front:getY()-y
+    return front:getZ()==z and dx*dx+dy*dy<=radius*radius
+end
+
+local function fixture(player, state, kind, radius, now, origin)
+    local anchored=origin~=nil
     local here, cell = player:getSquare(), getCell()
-    if not here or not cell then return nil end
+    origin=origin or here
+    if not here or not cell or here:getZ()~=origin:getZ() then return nil end
     local cache = state.lifestyleScan or {}
     state.lifestyleScan = cache
     local cacheKey=kind .. ":" .. radius
     local old = cache[cacheKey]
-    if old and old.here == here and old.radius == radius and now >= old.at and now-old.at < SCAN_MS then
+    if old and old.here == here and old.origin==origin and old.radius == radius and now >= old.at and now-old.at < SCAN_MS then
         return old.target
     end
-    local x0,y0,z = here:getX(),here:getY(),here:getZ()
+    local x0,y0,z = origin:getX(),origin:getY(),origin:getZ()
+    local hx,hy=here:getX(),here:getY()
     local best
     for x=x0-radius,x0+radius do
         for y=y0-radius,y0+radius do
             local dx,dy=x-x0,y-y0
-            local d=dx*dx+dy*dy
-            if (d <= radius*radius or (radius==1 and d==2)) and (not best or d <= best.distance) then
+            local fromOrigin=dx*dx+dy*dy
+            local d=(x-hx)*(x-hx)+(y-hy)*(y-hy)
+            if (fromOrigin <= radius*radius or (radius==1 and fromOrigin==2)) and (not best or d <= best.distance) then
                 local square = cell:getGridSquare(x,y,z)
                 if square and Storage.permitted(player,square) then
                     local objects = square:getObjects()
                     for i=0,objects:size()-1 do
                         local object = objects:get(i)
                         local target=fixtureTarget(player,state,kind,object,square,i,d)
-                        if target and (radius>1 or target.close) and (not best or d<best.distance
+                        if target and (not anchored or Care.frontInRange(target,x0,y0,z,radius))
+                                and (radius>1 or target.close) and (not best or d<best.distance
                                 or (d==best.distance and target.close and not best.close)) then
                             best=target
                         end
@@ -78,7 +91,7 @@ local function fixture(player, state, kind, radius, now)
             end
         end
     end
-    cache[cacheKey]={here=here,radius=radius,at=now,target=best}
+    cache[cacheKey]={here=here,origin=origin,radius=radius,at=now,target=best}
     return best
 end
 
@@ -92,25 +105,30 @@ local function allowedItem(player, item)
     return checked(Hygiene.item,player,item) == true
 end
 
-function Care.ready(player, state, now, collect, scoutRadius)
+function Care.ready(player, state, now, collect, scoutRadius, origin, served)
     local rejected = state.lifestyleRejected or {}
     for key,untilTime in pairs(rejected) do
         if now>=untilTime then rejected[key]=nil; state.lifestyleScan=nil end
     end
     local function selectFixture(kind)
         if not collect and not scoutRadius then return end
+        -- An already usable adjacent fixture needs no scouting walk, even at
+        -- the rim. Only a new walk must keep both fixture and known feet in range.
         local localTarget=fixture(player,state,kind,1,now)
         if localTarget or not scoutRadius or scoutRadius<=1 then return localTarget end
+        if origin then return fixture(player,state,kind,scoutRadius,now,origin) end
         return recalledFixture(player,state,kind,scoutRadius,now) or fixture(player,state,kind,scoutRadius,now)
     end
-    if Care.need(player,"restroom") then
+    local restroomNeeded=Care.need(player,"restroom")
+    if not restroomNeeded then state.restroomToolsTried=nil end
+    if restroomNeeded and not (served and served.restroom) then
         local target=selectFixture("restroom")
         if target then return target end
         if not rejected["ground"] and checked(Restroom.groundAllowed,player)==true then
             return {kind="restroom", key="ground", ground=true, close=true}
         end
     end
-    if Care.need(player,"hygiene") then
+    if not (served and served.hygiene) and Care.need(player,"hygiene") then
         if not Hygiene.searchItems or checked(Hygiene.searchItems,player)==true then
             local item=Supplies.findCareItem(player,function(candidate)
                 return not rejected["hygiene:item:"..candidate:getID()] and allowedItem(player,candidate)
@@ -139,7 +157,7 @@ function Care.accessible(player,target)
     return checked(a.accessible,player,target.care)==true
 end
 
-function Care.begin(player,target)
+function Care.begin(player,target,state,useOnly)
     if not Care.accessible(player,target) then return nil end
     local a=adapters[target.kind]
     local before=checked(a.snapshot,player,target.item)
@@ -147,10 +165,25 @@ function Care.begin(player,target)
     local ok
     if target.item then ok=checked(a.queueItem,player,target.item,before)
     elseif target.ground then ok=checked(a.queueGround,player,before)
-    elseif target.kind=="restroom" then ok=checked(a.queueToilet,player,target.care,before)
+    elseif target.kind=="restroom" then
+        local tried=state and state.restroomToolsTried and state.restroomToolsTried[target.key]
+        ok=checked(a.queueToilet,player,target.care,before,useOnly,tried)
+        -- Even a refused/partial click can mean the same trip would only
+        -- repeat. Remember the tool for this need episode; another fixture,
+        -- a new tool or a newly usable toilet is still eligible.
+        local tool=before.toolId or (ok~=true and target.care.plungerId)
+        if state and tool then
+            state.restroomToolsTried=state.restroomToolsTried or {}
+            state.restroomToolsTried[target.key]=tool
+            state.lifestyleScan=nil
+        end
     else ok=checked(a.queueWash,player,target.care,before) end
     if ok~=true then return nil end
     return {target=target,before=before}
+end
+
+function Care.prepared(player,course)
+    return course.target.kind=="restroom" and checked(Restroom.prepared,player,course.before)==true
 end
 
 function Care.receipt(player,course)

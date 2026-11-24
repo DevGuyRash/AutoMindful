@@ -345,7 +345,7 @@ function Controller.stop(player, reason, cause, nativeReason)
     local state = stateFor(player)
     MaskRestore.observe(player,state.maskRestore,queueFor(player))
     state.active, state.trainingStopReason, state.trainingKind = false, nil, nil
-    state.turnTier,state.recoveryTier=nil,nil
+    state.turnTier,state.recoveryTier,state.restroomDrain=nil,nil,nil
     closePractice(state)
     state.excursion, state.lifestyleCourse, state.lifestylePickup, state.practiceCare, state.mindfulnessWatch = nil, nil, nil, nil, nil
     state.yielding, state.idleSince, state.cycleUntil = nil, nil, nil
@@ -422,7 +422,7 @@ end
 local function timeScoutLeg(player,state,action)
     local trip=state.excursion
     local leg=trip and trip.stage
-    if not trip or not (trip.careTarget or trip.waterObject)
+    if not trip or trip.indirect or not (trip.careTarget or trip.waterObject)
             or (leg~="outbound" and leg~="homebound") or not routeAction(action) then return end
     trip.walkTiming=trip.walkTiming or {}
     if trip.walkTiming[leg] then trip.walkTiming.invalid=true; return end
@@ -496,6 +496,22 @@ local function yogaReceipt(player,state,work,method,original)
     end
 end
 
+-- The last walk (or native repair/flush) can finish just after a poll. Use
+-- the first genuinely idle boundary before an idle floor-rest can interpose.
+-- Never reenter over a foreign action or even our own unwinding Java handle.
+function Controller.restroomBoundary(player,state,action)
+    local trip,course=state.excursion,state.lifestyleCourse
+    if not state.active or not ((trip and trip.kind=="restroom" and trip.stage=="outbound" and routeAction(action))
+            or (course and course.before.preparation=="unclog")) or queueFor(player)[1] then return end
+    state.lastUpdate=nil
+    local native=player:getCharacterActions()
+    if native:isEmpty() and not ActionYield.nativeBusy(player) then
+        Controller.update(player) -- normal need, safety, input, access and posture gates
+    elseif native:isEmpty() or (native:size()==1 and action.action and native:contains(action.action)) then
+        state.restroomDrain={handle=action.action,batch=state.pending,at=getTimestampMs()}
+    end
+end
+
 local function ownAction(player, state, action)
     if action.autoMindfulOwner == state then return end
     action.autoMindfulOwner = state
@@ -565,7 +581,7 @@ local function ownAction(player, state, action)
                     -- Preserve even a successor appended within the callback.
                     local trip, mask = state.excursion, state.maskRestore
                     local outbound = state.active and state.phase=="travelling" and trip and trip.stage=="outbound"
-                    if pending and queue[1]==self and (outbound or mask) then
+                    if pending and queue[1]==self and (outbound or mask or state.lifestyleCourse and state.lifestyleCourse.before.preparation) then
                         local stoppedAt = getTimestampMs()
                         self.autoMindfulNativeStoppedAt = stoppedAt
                         MaskRestore.observe(player,mask,queue)
@@ -593,6 +609,7 @@ local function ownAction(player, state, action)
                     for _, queued in ipairs(queueFor(player)) do
                         if not before[queued] then ownAction(player, state, queued) end
                     end
+                    if method=="perform" then Controller.restroomBoundary(player,state,self) end
                 end
                 return result
             end
@@ -1366,17 +1383,31 @@ local function learnFacility(state,target,now)
                 or (target.container and trip.target and trip.target.container==target.container and trip.kind==target.kind) then
             trip.verifiedFixture=target
         end
+        if trip.verifiedFixture==target or trip.localErrand then trip.outing.learned[target.kind]=target end
     else ScoutMemory.remember(state.scoutMemory,target,now) end
 end
 
+-- A walk or a queued action is not success. Open the next stop only after
+-- native relief; interrupted/failed attempts fall through to the way home.
+function Controller.scoutRelief(state,kind,partial)
+    local trip=state.excursion
+    if trip and trip.stage=="care" then
+        if partial then state.careNeeds[kind]=true else trip.outing.served[kind]=true end
+        trip.outing.turns=trip.outing.turns+1
+        trip.stage,trip.openedWindow="errands",nil
+    end
+end
+
 local function arrivedHome(state,trip,now)
-    if trip.verifiedFixture then
+    if trip.outing then
         local t,origin=trip.walkTiming,trip.origin
         local sample
         if t and not t.invalid and not trip.homeFailures and t.outbound and t.outbound.ms and t.homebound and t.homebound.ms then
             sample={x=origin.x,y=origin.y,z=origin.z,ms=t.outbound.ms+t.homebound.ms}
         end
-        ScoutMemory.remember(state.scoutMemory,trip.verifiedFixture,now,sample)
+        for _,target in pairs(trip.outing.learned) do
+            ScoutMemory.remember(state.scoutMemory,target,now,not trip.indirect and target==trip.verifiedFixture and sample or nil)
+        end
     end
     state.excursion=nil
 end
@@ -1401,10 +1432,16 @@ function Controller.yieldUnknownScout(player,state,target)
 end
 
 local function nearbyTarget(player, state, kind, onlyWorldWater, skipRemembered)
-    if state.excursion or not Options.searchNearby() then return nil end
+    local trip=state.excursion
+    if (trip and trip.stage~="errands") or not Options.searchNearby() then return nil end
     onlyWorldWater=onlyWorldWater==true
     state.travelRejected = state.travelRejected or {}
     local now, square, radius = getTimestampMs(), player:getSquare(), Options.searchRadius()
+    if trip then
+        square,radius=resolveOrigin(trip.origin), math.min(radius,trip.outing.radius)
+        if not square then return nil end
+        skipRemembered=true -- rank confirmed stock from our feet, inside the original circle
+    end
     local critical = (kind == "food" or kind == "water") and player:getMoodles():getMoodleLevel(
         kind == "water" and MoodleType.THIRST or MoodleType.HUNGRY) >= 4
     state.travelScan = state.travelScan or {}
@@ -1438,7 +1475,15 @@ local function tryExcursion(player,state,kind,onlyWorldWater,selectedCare,target
     end
     local here = player:getSquare()
     if not here then return false end
-    state.excursion = {origin = rememberOrigin(player, here), target = target, kind = kind,
+    local prior=state.excursion
+    if prior then
+        local origin,radius=prior.origin,math.min(prior.outing.radius,Options.searchRadius())
+        local dx,dy=target.square:getX()-origin.x,target.square:getY()-origin.y
+        if target.unknown or target.square:getZ()~=origin.z or dx*dx+dy*dy>radius*radius
+                or not LifestyleCare.frontInRange(selectedCare,origin.x,origin.y,origin.z,radius) then return false end
+    end
+    state.excursion = {origin = prior and prior.origin or rememberOrigin(player, here), target = target, kind = kind,
+        outing = prior and prior.outing or {served={},learned={},turns=0,radius=Options.searchRadius()}, indirect=prior~=nil,
         onlyWorldWater = onlyWorldWater, waterObject = waterObject, careTarget = selectedCare, exactStorage = exact, stage = "outbound"}
     state.travelScan = nil
     if target.unknown and ((target.part and Storage.vehicleAccessible(player, target.part))
@@ -1457,7 +1502,9 @@ local function tryExcursion(player,state,kind,onlyWorldWater,selectedCare,target
             or "Walking to a supply container; returning here after care.")
     local queued = ownBatch(player, state, "travelling", message, function()
         prepareScoutWalk()
-        if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
+        if player:isSitOnGround() or (kind=="restroom" and player:isSitting()) then
+            ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player))
+        end
         if target.part then
             local vehicle = Storage.vehiclePart(target.part)
             if vehicle then
@@ -1477,10 +1524,15 @@ local function tryExcursion(player,state,kind,onlyWorldWater,selectedCare,target
     end)
     -- A synchronous callback may already have yielded or stopped us.
     if not state.active or not state.excursion or state.excursion.target~=target then return true end
-    if not route then clearOwned(player, state); queued = false end
+    if not route then
+        local leg=state.excursion
+        clearOwned(player,state)
+        if not state.active or state.excursion~=leg then return true end
+        queued=false
+    end
     if not queued then
         state.travelRejected[target.key]=getTimestampMs()+15000
-        state.pending,state.excursion,state.travelScan=nil,nil,nil
+        state.pending,state.excursion,state.travelScan=nil,prior,nil
         if target.remembered then ScoutMemory.forget(state.scoutMemory,target) end
         if state.releasePending or #queueFor(player)>0 or ActionYield.nativeBusy(player) then return true end
     end
@@ -1488,8 +1540,15 @@ local function tryExcursion(player,state,kind,onlyWorldWater,selectedCare,target
 end
 
 local function beginExcursion(player,state,kind,onlyWorldWater,selectedCare,skipRemembered,confirmedOnly)
-    if state.excursion or not Options.searchNearby() then return false end
+    local trip=state.excursion
+    if (trip and trip.stage~="errands") or not Options.searchNearby() then return false end
     state.travelRejected=state.travelRejected or {}
+    if trip then
+        -- A follow-up may only use a known stop. Never start the speculative
+        -- inspection/retry loop from another stop.
+        local target=selectedCare or nearbyTarget(player,state,kind,onlyWorldWater,true)
+        return target and not target.unknown and tryExcursion(player,state,kind,onlyWorldWater,selectedCare,target) or false
+    end
     -- Bound native admissions per update. A single rejected ordinary source
     -- must not be reported as “no water” while another known source exists.
     local tried={}
@@ -1655,7 +1714,7 @@ local function supply(player, state, kind, onlyWorldWater, waterObject, exactCon
     if not entry then
         if exactContainer or localOnly then return false end
         if beginExcursion(player, state, kind, onlyWorldWater,nil,nil,confirmedOnly) then return true end
-        if kind == "water" or kind == "food" then
+        if (kind == "water" or kind == "food") and not state.excursion then
             local report = Supplies.report(player, state.collectNearby or Options.searchNearby())
             state.supplyMissingReason = state.supplyMissingReason
                 or report.fluidReason or (kind == "water" and report.waterSourceReason or report.openingReason)
@@ -1859,14 +1918,18 @@ local function lifestyleReady(player, state, now)
         state.collectNearby, Options.searchNearby() and Options.searchRadius() or nil)
 end
 
-local function queueLifestyle(player, state, target, now)
-    local name=target.kind=="restroom" and "Using the restroom." or target.item and "Using a hygiene item." or "Washing yourself."
+local function queueLifestyle(player, state, target, now, useOnly)
+    local name=target.kind=="restroom" and (not useOnly and target.care and target.care.plungerId
+        and "Unclogging the toilet." or "Using the restroom.") or target.item and "Using a hygiene item." or "Washing yourself."
     local course
     local queued=ownBatch(player,state,target.kind,name,function()
-        course=LifestyleCare.begin(player,target)
+        course=LifestyleCare.begin(player,target,state,useOnly)
     end)
     if queued and course then
         state.lifestyleCourse=course
+        if target.kind=="restroom" then
+            setPhase(state,target.kind,course.before.preparation and "Unclogging the toilet." or "Using the restroom.")
+        end
         return true
     end
     LifestyleCare.reject(state,target,now)
@@ -2294,6 +2357,67 @@ local function earlyRecoverySupply(player,state,localOnly)
                 and supply(player,state,kind,kind=="water" and full,nil,nil,true,localOnly) then return true end
     end
     return false
+end
+
+-- At a witnessed stop, share the same owned supply/fixture admission as
+-- normal care. No sleep, speculative loot, practice, or waiting in the field.
+-- Reopen a need only for measurably incomplete portions. Eight witnessed turns
+-- bound a pantry of tiny snacks or needs fluctuating in multiplayer.
+function Controller.continueErrands(player,state,now)
+    local trip=state.excursion
+    if not trip or (trip.stage~="errands" and trip.stage~="urgent") or not Options.searchNearby()
+            or atOrigin(player:getSquare(),trip.origin) or trip.outing.turns>=8 then return false end
+    local origin=resolveOrigin(trip.origin)
+    if not origin or not Storage.permitted(player,origin) then return false end
+    local served=trip.outing.served
+    local full=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)>=3
+    local function admitted(queued)
+        if queued and state.excursion==trip and (state.supplyKind or state.fluidSupply or state.lifestyleCourse or state.lifestylePickup) then
+            trip.stage,trip.localErrand="care",true
+            if trip.walkTiming then trip.walkTiming.invalid=true end
+        end
+        return queued and (state.phase~="seated" or state.pending~=nil)
+    end
+    local function stock(kind,urgent)
+        local renewed=urgent and stat(player,kind=="water" and "THIRST" or "HUNGER")>=Consumables.careThreshold
+        return (not served[kind] or renewed) and (kind~="food" or not full)
+            and admitted(supply(player,state,kind,kind=="water" and full,nil,nil,true,trip.stage=="urgent"))
+    end
+    local function needs(kind)
+        local value=stat(player,kind=="water" and "THIRST" or "HUNGER")
+        return value>=Consumables.careThreshold or (state.careNeeds[kind] and value>(state.recovery and recoveryPolicy.remainder or Consumables.restoredThreshold))
+    end
+    local urgentWater,urgentFood=criticalNeed(player,"water"),criticalNeed(player,"food")
+    if urgentWater or urgentFood then
+        if urgentWater and stock("water",true) then return true end
+        if urgentFood and stock("food",true) then return true end
+        return false -- home has the normal missing-resource/wait/fallback policy
+    end
+    if trip.stage=="urgent" then return false end
+    if (state.recovery or state.backgroundPractice) and not trip.openedWindow then
+        trip.openedWindow=true
+        state.cooperativePending={}
+        if Controller.waitCooperativeWindow(player,state,now) then return true end
+    end
+    local bedtime=sleepReadiness(player,state)
+    if sleepAdmitted(bedtime) or bedtime=="dialog" or state.recoveryFull and EnduranceGoal.full(EnduranceGoal.read(player))
+            or state.cycle and atSkillGoal(player,state) then return false end
+    if needs("water") and stock("water") or needs("food") and stock("food") then return true end
+    local radius=math.min(Options.searchRadius(),trip.outing.radius)
+    local target=LifestyleCare.ready(player,state,now,state.collectNearby,radius,origin,served)
+    if target and admitted(lifestyleCare(player,state,target,now)) then return true end
+    if stock("pain") then return true end
+    if state.recovery then
+        for _,kind in ipairs({"water","food"}) do
+            local value=stat(player,kind=="water" and "THIRST" or "HUNGER")
+            if value>=recoveryPolicy.supplyAt and value<Consumables.careThreshold and stock(kind) then return true end
+        end
+    end
+    local meditation=state.tierGoal and state.tierGoal.kind=="meditation"
+        or state.cycle and state.mode~="yoga" and (state.backgroundPractice or levels(player)<10)
+        and not (state.cycle.owed=="yoga" and yogaAdmission(player).ready and meditationGate(player).kind~="boredom")
+    return (state.recovery or meditation or bedtime) and stat(player,"BOREDOM")>=(state.recovery and recoveryPolicy.readAt or 20)
+        and not player:tooDarkToRead() and stock("literature") or false
 end
 
 local function advanceRecovery(player,state,now)
@@ -2831,19 +2955,37 @@ local function finishPending(player, state, now)
         return false
     elseif state.lifestyleCourse then
         local course=state.lifestyleCourse
-        local received=not failed and (course.received or LifestyleCare.receipt(player,course))
-        if not received and not failed then
+        local repair=course.before.preparation=="unclog"
+        local prepared=repair and not failed and LifestyleCare.prepared(player,course)
+        local received=not repair and not failed and (course.received or LifestyleCare.receipt(player,course))
+        if not received and not prepared and not failed then
             course.waitUntil=course.waitUntil or now+2500
             if now<course.waitUntil then
                 setPhase(state,course.target.kind,"Waiting for the game to confirm care.")
                 return true
             end
         end
+        -- Completing Unclog only prepares the fixture. Once the native
+        -- equip/repair/flush batch drained, rebuild the exact Use option.
+        -- A new clog, changed need, revoked access or dry fixture cannot
+        -- trigger a second repair or manufacture restroom credit.
+        if prepared and not criticalNeed(player,"water") and not criticalNeed(player,"food")
+                and not sleepAdmitted(sleepReadiness(player,state)) and (Options.searchNearby() or not state.excursion and state.collectNearby)
+                and LifestyleCare.accessible(player,course.target) then
+            state.lifestyleCourse,state.pending=nil,nil
+            if queueLifestyle(player,state,course.target,now,true) then return true end
+        end
         LifestyleCare.reject(state,course.target,now)
         if state.supplyLoan then state.supplyLoan.defer=nil end
         state.lifestyleCourse,state.pending=nil,nil
-        state.lifestyleNotice=not received and "The care action was not confirmed. Continuing without repeating it immediately." or nil
-        if received then learnFacility(state,course.target,now) end
+        state.lifestyleNotice=repair and (prepared and "Toilet cleared, but using it is no longer available. Rechecking needs."
+            or "Unclogging was not confirmed. Skipping this toilet.") or
+            (not received and "The care action was not confirmed. Continuing without repeating it immediately." or nil)
+        if received then
+            if course.target.kind=="restroom" then state.restroomToolsTried=nil end
+            learnFacility(state,course.target,now)
+            Controller.scoutRelief(state,course.target.kind)
+        end
         resetSupply(state)
         return false
     elseif state.fluidSupply and state.fluidSupply.phase ~= "using" then
@@ -2870,9 +3012,9 @@ local function finishPending(player, state, now)
             setPhase(state, "paincare", "Waiting for the game to confirm pain relief.")
             return true
         end
-        if status=="confirmed" and state.supplyStop then
-            learnFacility(state,state.supplyStop,now)
-            state.supplyStop=nil
+        if status=="confirmed" then
+            if state.supplyStop then learnFacility(state,state.supplyStop,now); state.supplyStop=nil end
+            Controller.scoutRelief(state,"pain")
         end
         if not Supplies.finishLoan(player, state.supplyLoan, now) then return true end
         if state.supplyLoan then state.supplyLoan.defer = nil end
@@ -2931,6 +3073,12 @@ local function finishPending(player, state, now)
                     and (not state.fluidSupply or state.fluidSupply.verifiedStop) then
                 learnFacility(state,state.supplyStop,now)
                 state.supplyStop=nil
+            end
+            if completed then
+                local kind=state.supplyKind
+                local partial=not verifiedGoal and ((kind=="food" and stat(player,"HUNGER")<before.hunger-Consumables.restoredThreshold)
+                    or (kind=="water" and stat(player,"THIRST")<before.thirst-Consumables.restoredThreshold))
+                Controller.scoutRelief(state,kind,partial)
             end
             failed = false
             if state.supplyKind == "literature" then Supplies.markRead(player, state.supplyItem)
@@ -3373,6 +3521,17 @@ function Controller.update(player)
         PainCare.observeForeign(player, state, queue, now)
         PainCare.observe(player, state, now)
     end
+    local drain=state.restroomDrain
+    if drain then
+        local native=player:getCharacterActions()
+        if state.pending==drain.batch and not queue[1] and not state.contextVisible and not state.inspectingUI
+                and not state.aimStarted and not state.walkTakenOver and not player:pressedMovement(false)
+                and now>=drain.at and now-drain.at<750 and ((native:size()==1 and native:contains(drain.handle))
+                    or (native:isEmpty() and ActionYield.nativeBusy(player))) then
+            return -- a trailing handle/animation flag, never a different action
+        end
+        state.restroomDrain=nil
+    end
     local occupied = ActionYield.occupied(player, queue, state) or state.inspectingUI
     local lost = observeTrainingBatch(player, state, queue, now)
     if state.stalledSkill then
@@ -3487,6 +3646,17 @@ function Controller.update(player)
     state.lastUpdate = now
     Controller.observeMindfulness(player,state,queue[1],now)
     local trip = state.excursion
+    if trip and trip.indirect and (trip.stage=="outbound" or trip.stage=="inspect") then
+        local urgent=criticalNeed(player,"water") and "water" or criticalNeed(player,"food") and "food"
+        if urgent and trip.kind~=urgent then
+            -- Don't spend the return walk thirsty if a ready drink is in hand.
+            -- Only disarm this optional leg; ordinary native drain/yield gates
+            -- run before re-admitting an urgent action on the next idle tick.
+            trip.stage="urgent"
+            clearOwned(player,state)
+            return
+        end
+    end
     if trip and trip.stage == "outbound" and trip.careTarget
             and (not Options.searchNearby() or criticalNeed(player,"water") or criticalNeed(player,"food")
                 or not LifestyleCare.need(player,trip.kind)) then
@@ -3726,6 +3896,7 @@ function Controller.update(player)
         state.cycleUntil = now + ActionYield.cooperativeWindowMs
     end
     if not (state.active and state.endurance) and returnBorrowed(player, state) then return end
+    if state.active and Controller.continueErrands(player,state,now) then return end
     if state.active and returnToOrigin(player, state, now) then return end
     if not state.active then
         if state.endPhase then setPhase(state, state.endPhase, state.endMessage, state.endCause, state.endNativeReason) end

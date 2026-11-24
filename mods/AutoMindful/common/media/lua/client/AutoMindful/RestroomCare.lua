@@ -61,6 +61,18 @@ local function occupied(square, fixture, player)
     end
     return false
 end
+-- Lifestyle's Unclog menu searches the top-level inventory only. Don't borrow
+-- from the loot pane, open a bag or equip anything while scouting.
+local function goodPlunger(item)
+    return item and item.getType and item:getType()=="Plunger" and item.isBroken and not item:isBroken()
+end
+local function plunger(player)
+    local items=player:getInventory():getItems()
+    for i=0,items:size()-1 do
+        local item=items:get(i)
+        if goodPlunger(item) then return item end
+    end
+end
 local function inspect(player, obj)
     if not enabled() or not obj then return end
     local sprite = obj:getSprite()
@@ -83,10 +95,15 @@ local function inspect(player, obj)
     local data = obj:hasModData() and obj:getModData().movableData
     local uses = data and data.uses
     local clog = data and data.isClogged
-    if (clog and (not finite(clog) or clog >= 0)) or (uses and (not finite(uses) or uses <= 0)) then return end
+    if (clog and not finite(clog)) or (uses and (not finite(uses) or uses <= 0)) then return end
+    local tool
+    if clog and clog>=0 then
+        tool=plunger(player)
+        if not tool then return end
+    end
     if group == "Wooden" and (not uses or uses == 100)
             and LSHygiene.TF.isInOuthouseArea(square:getX(), square:getY()) then return end
-    return {object=obj, square=square, front=front, sprite=name, group=group}
+    return {object=obj, square=square, front=front, sprite=name, group=group, plungerId=tool and tool:getID()}
 end
 function Restroom.inspect(player, obj) return protected(inspect, player, obj) end
 
@@ -179,6 +196,26 @@ local function watch(player, before, action)
         return result
     end
 end
+-- Native Unclog can append its own flush. A mere queue drain or someone
+-- else's replicated fixture change is never a repair (or bladder) receipt.
+local function watchRepair(before, action, tool)
+    if type(action.perform)~="function" or action.plungerItem~=tool then return end
+    local native=action.perform
+    before.action=action
+    action.perform=function(self,...)
+        local obj=self.toiletObject
+        local data=obj:hasModData() and obj:getModData().movableData
+        local was=data and data.isClogged
+        local result=native(self,...)
+        data=obj:hasModData() and obj:getModData().movableData
+        before.repaired=finite(was) and was>=0 and data and data.isClogged==false
+        return result
+    end
+end
+function Restroom.prepared(player,before)
+    return before and before.player==player and before.preparation=="unclog" and before.repaired==true
+        and protected(idle,player)==true
+end
 local function dispatch(player, opt, kind, fixture)
     local before = pending[player]
     pending[player] = nil
@@ -192,7 +229,11 @@ local function dispatch(player, opt, kind, fixture)
             if queued.Type == "ISPathFindAction" and queued.goal and queued.goal[1] == "SitOnFurniture"
                     and queued.goal[2] == fixture and queued.onCompleteArgs then action = queued.onCompleteArgs[3] end
             if action and action.character == player and action.Type == kind
-                    and (not fixture or action.toiletObject == fixture) then watch(player, before, action); break end
+                    and (not fixture or action.toiletObject == fixture) then
+                if kind=="LSUnclogToilet" then watchRepair(before,action,opt.e[3])
+                else watch(player,before,action) end
+                break
+            end
         end
     end
     -- Even partial dispatch can leave a real walk. Caller must wait and resolve
@@ -200,7 +241,7 @@ local function dispatch(player, opt, kind, fixture)
     return q[1] ~= nil
 end
 
-local function queueToilet(player, entry)
+local function queueToilet(player, entry, before, useOnly, triedTool)
     if need(player) <= 0 or not standing(player) or not accessible(player,entry) then return false end
     local c = entry.care or entry
     local _, label = LSUtil.getObjTexAndText(c.sprite)
@@ -208,17 +249,29 @@ local function queueToilet(player, entry)
     local menu, sink = optionSink(), optionSink()
     menu:addSubMenu(menu:addOption(label), sink)
     ToiletContextMenu.doBuildMenu(player:getPlayerNum(), menu, {c.object}, c.object, c.sprite,"Toilet",c.group)
+    local repair
     for _, o in ipairs(sink.options) do
-        if o.name == getText("ContextMenu_Toilet_Use") and not o.notAvailable and not o.isDisabled
-                and o.callback == ToiletContextMenu.onAction and o.target == player
-                and o.a == c.object and o.b == c.group and o.c == c.sprite and type(o.e) == "table"
-                and (o.f == "IsUse" or o.f == "IsFlushAndUse") and wipeAllowed(player, o.e[4]) then
-            return dispatch(player,o,"LSUseToilet",c.object)
+        if not o.notAvailable and not o.isDisabled and o.callback == ToiletContextMenu.onAction and o.target == player
+                and o.a == c.object and o.b == c.group and o.c == c.sprite and type(o.e) == "table" then
+            if o.name==getText("ContextMenu_Toilet_Use") and (o.f=="IsUse" or o.f=="IsFlushAndUse")
+                    and wipeAllowed(player,o.e[4]) then
+                return dispatch(player,o,"LSUseToilet",c.object)
+            end
+            if o.name==getText("ContextMenu_Toilet_Unclog") and o.f=="IsUnclog" then repair=o end
         end
+    end
+    local tool=repair and repair.e[3]
+    if not useOnly and before and before==pending[player] and goodPlunger(tool)
+            and tool:getContainer()==player:getInventory() and player:getInventory():contains(tool)
+            and tool:getID()~=triedTool then
+        before.preparation,before.toolId="unclog",tool:getID()
+        return dispatch(player,repair,"LSUnclogToilet",c.object)
     end
     return false
 end
-function Restroom.queueToilet(player, entry) return protected(queueToilet,player,entry) == true end
+function Restroom.queueToilet(player, entry, before, useOnly, triedTool)
+    return protected(queueToilet,player,entry,before or pending[player],useOnly,triedTool)==true
+end
 
 local function queueGround(player)
     if not groundAllowed(player) or not standing(player) or not player:getSquare():canStand() then return false end
@@ -235,7 +288,7 @@ end
 function Restroom.queueGround(player) return protected(queueGround, player) == true end
 
 local function receipt(player, before)
-    if not before or before.player ~= player or not before.action or before.action.wasDisturbedBy then return false end
+    if not before or before.preparation or before.player ~= player or not before.action or before.action.wasDisturbedBy then return false end
     local _, raw, doing = read(player)
     -- The native second may fall between our ticks. A tiny new need after
     -- flushing is harmless; never credit only a lower moodle or an empty queue.

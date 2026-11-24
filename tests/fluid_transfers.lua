@@ -43,6 +43,9 @@ local function inventoryItem(kind)
     for _, method in ipairs({"isRotten", "isBurnt", "isFrozen", "isTainted", "isPoison", "isAlcoholic", "isbDangerousUncooked"}) do
         item[method] = function(self) return self.flags[method] == true end
     end
+    function item:getAge() return 0 end
+    function item:getOffAgeMax() return 1000000000 end
+    function item:getOnEat() return nil end
     function item:getPoisonPower() return 0 end
     function item:getFoodSicknessChange() return 0 end
     return item
@@ -191,6 +194,19 @@ test("native transfer receives current raw objects and measured liters",function
     end
     assert(action:complete());near(source.amount,4.6);near(target.amount,0.4)
     assert(source:getOwner().synced and target:getOwner().synced)
+end)
+test("an unsafe donor cannot be laundered into a clean cup by a final native pour",function()
+    local owner=inventoryItem("Food")
+    local source=fluid(owner,5,5,safeComponents(.5,.5))
+    local target=fluid(inventoryItem(),0,1)
+    assert(Fluids.transfer(player,source,target,.4))
+    owner.flags.isRotten=true
+    if native then
+        queue[1].getJobDelta=function() return .5 end
+        queue[1]:update() -- stock pours incrementally as well
+    end
+    queue[1]:complete() -- no intervening validity poll
+    near(target.amount,0); near(source.amount,5)
 end)
 test("native capacity and source amount bound requested transfers",function()
     local source=fluid(inventoryItem(),0.2,5,safeComponents())

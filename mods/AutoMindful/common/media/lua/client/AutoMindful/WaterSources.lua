@@ -3,6 +3,7 @@ require "TimedActions/ISTakeWaterAction"
 require "TimedActions/ISWaitWhileGettingUp"
 require "TimedActions/ISWearClothing"
 local Fluids = require "AutoMindful/Fluids"
+local IntakeGuard = require "AutoMindful/IntakeGuard"
 
 AutoMindful = AutoMindful or {}
 local WaterSources = {}
@@ -105,11 +106,11 @@ function WaterSources.drink(player, source)
     if not current.directDrink then return false, "Transfer this nearby fluid supply into a drinking vessel first." end
     local action = ISTakeWaterAction:new(player, nil, current.object, false)
     if not action:isValid() then return false, "The game currently refuses drinking from this water source. Make room in your inventory." end
-    local originalValid = action.isValid
-    action.isValid = function(self)
+    IntakeGuard.bind(action, function(self)
+        if self.waterObject ~= current.object then return false end
         local live = WaterSources.inspect(self.character, self.waterObject, source.part)
-        return live ~= nil and live.directDrink and originalValid(self)
-    end
+        return live ~= nil and live.directDrink
+    end, "transferFluid")
     if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
     local mask = ISInventoryPaneContextMenu.getEatingMask(player, true)
     ISTimedActionQueue.add(action)

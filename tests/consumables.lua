@@ -2,7 +2,7 @@ package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. (package.pat
 local Fixtures = loadTest and loadTest("fluid_fixtures.lua") or assert(loadfile("tests/fluid_fixtures.lua"))()
 
 local names = {"CharacterStat", "FluidCategory", "ResourceType", "ArrayList", "HandcraftLogic", "getScriptManager",
-    "moduleDotType", "instanceof", "ISInventoryPaneContextMenu", "ISEntityUI", "ISCraftingUI"}
+    "moduleDotType", "instanceof", "ISInventoryPaneContextMenu", "ISEntityUI", "ISCraftingUI", "ISEatFoodAction", "ISDrinkFluidAction", "ISTimedActionQueue"}
 local saved = {}
 for _, name in ipairs(names) do saved[name] = _G[name] end
 local modules = {"ISUI/ISInventoryPaneContextMenu", "TimedActions/ISDrinkFluidAction",
@@ -86,6 +86,9 @@ local function item(settings)
     function result:getWorldItem() return nil end
     function result:getFluidContainer() return self.fluid end
     function result:getScriptItem() return self.script end
+    function result:getAge() return self.age or 0 end
+    function result:getOffAgeMax() return self.rotsAt or 1000000000 end
+    function result:getOnEat() return self.callback end
     function result:isRotten() return self.rotten == true end
     function result:isBurnt() return self.burnt == true end
     function result:isFrozen() return self.frozen == true end
@@ -133,10 +136,16 @@ ISInventoryPaneContextMenu = {
     transferIfNeeded = function(_, input)
         if input:getContainer() ~= inventory then events[#events + 1] = {kind = "transfer", item = input} end
     end,
-    eatItem = function(input, portion, index) events[#events + 1] = {kind = "eat", item = input, portion = portion, index = index} end,
-    onDrinkFluid = function(input, portion, target) events[#events + 1] = {kind = "drink", item = input, portion = portion, player = target} end,
+    getEatingMask = function() return nil end,
     OnNewCraftComplete = function() end,
 }
+ISEatFoodAction={new=function(_,p,item,portion)
+    return {kind="eat",item=item,portion=portion,index=p:getPlayerNum(),character=p}
+end}
+ISDrinkFluidAction={new=function(_,p,item,portion)
+    return {kind="drink",item=item,portion=portion,player=p,character=p,fluidContainer=item.fluid}
+end}
+ISTimedActionQueue={add=function(a) events[#events+1]=a end}
 ISCraftingUI = {ReturnItemsToOriginalContainer = function() error("Native trait-dependent return helper must not own AutoMindful loans") end}
 ISEntityUI = {HandcraftStart = function(target, logic, force, queue)
     local action = {player = target, logic = logic, force = force, queue = queue}
@@ -324,6 +333,9 @@ end)
 
 check("each mixture component is checked even when its aggregate hides sickness", function()
     for _, unsafe in ipairs({{sickness=1}, {categories={[FluidCategory.Beverage]=true,[FluidCategory.Hazardous]=true}},
+            {categories={[FluidCategory.Beverage]=true,[FluidCategory.Poisons]=true}},
+            {categories={[FluidCategory.Water]=true,[FluidCategory.Fuel]=true}},
+            {categories={[FluidCategory.Beverage]=true,[FluidCategory.Industrial]=true}},
             {categories={}}, {poisonous=true}, {alcohol=0.01}}) do
         local mixed = fluid({hunger=-0.2, thirst=-0.5})
         function mixed:createFluidSample()
@@ -378,6 +390,28 @@ check("unsafe sources never become food or drinks", function()
         assert(not C.inspect(player, unsafe).food)
     end
     assert(#events == 0)
+end)
+
+check("native damage threshold, not the fresh label, decides whether old food is edible", function()
+    player.values.hunger = .2
+    local egg = item({kind="Food", hunger=-.2, cooked=true, age=7, rotsAt=7, container=inventory})
+    -- Stock fertilized eggs report !isRotten(); JustAteFood still uses age >= offAgeMax.
+    assert(not egg:isRotten() and not C.consume(player,egg,"food"), "age-equal native poison case was consumed")
+    egg.age=6.99
+    assert(C.consume(player,egg,"food"), "stale but not rotten is not poisonous")
+    local shelfStable=item({kind="Food",hunger=-.2,age=300,container=inventory})
+    assert(C.consume(player,shelfStable,"food"), "normal nonperishable food rejected")
+end)
+
+check("unknown on-eat effects are not used as food; ordinary and verified wild food remain options", function()
+    player.values.hunger=.2
+    local mystery=item({kind="Food",hunger=-.2,callback="OtherMod.HiddenEffect",container=inventory})
+    assert(not C.inspect(player,mystery).food and not C.consume(player,mystery,"food"),
+        "an opaque on-eat callback was treated as harmless")
+    mystery.callback="RecipeCodeOnEat.consumeWildFoodGeneric"
+    assert(C.consume(player,mystery,"food"))
+    mystery.poison=1
+    assert(not C.consume(player,mystery,"food"))
 end)
 
 check("native opening obeys nearby scope and exposes exact tool origins", function()

@@ -132,6 +132,9 @@ function T.item(kind, properties)
     end
     function i:getPoisonPower() return self.poisonPower or 0 end
     function i:getFoodSicknessChange() return self.sickness or 0 end
+    function i:getOnEat() return self.onEat end
+    function i:getAge() return self.age or 0 end
+    function i:getOffAgeMax() return self.rotsAt or 1000000000 end
     return i
 end
 function T.water(properties)
@@ -344,6 +347,7 @@ ISFluidTransferAction = {new=function(_,player,source,sourceFluidObject,target,t
         to.components=from.components
         from.amount,to.amount=from.amount-moved,to.amount+moved
     end)
+    action.source,action.target=source,target
     action.sourceFluidObject,action.targetFluidObject=sourceFluidObject,targetFluidObject
     function action:isValid() return FluidContainer.CanTransfer(sourceFluidObject,targetFluidObject) end
     return action
@@ -356,7 +360,7 @@ ISReadABook = {new=function(_, p, item) return T.action(p,"read",function()
 end) end}
 ISDrinkFluidAction = {new=function(_, p, item, percentage)
     p.drinkPercentage = percentage
-    return T.action(p,"drink",function()
+    local a=T.action(p,"drink",function()
         if not p.refuseCare then
             local properties=item.fluid:getProperties()
             p.values.THIRST=math.max(0,p.values.THIRST+properties:getThirstChange()*percentage)
@@ -365,32 +369,34 @@ ISDrinkFluidAction = {new=function(_, p, item, percentage)
             item.fluid.amount=item.fluid.amount*(1-percentage)
         end
     end)
+    a.item,a.fluidContainer=item,item.fluid
+    return a
+end}
+ISEatFoodAction = {new=function(_,p,item,fraction)
+    local a=T.action(p,"eat",function()
+        if not p.refuseCare then
+            local remaining=-item:getHungerChange()
+            local eaten=math.min(remaining,-item:getBaseHunger()*fraction)
+            local ratio=eaten/remaining
+            p.values.HUNGER=math.max(-0.1,p.values.HUNGER-eaten)
+            p.values.THIRST=math.max(0,p.values.THIRST+item:getThirstChange()*ratio)
+            p.calories=p.calories+item:getCalories()*ratio
+            item.hunger=-(remaining-eaten)
+            item.calories=item:getCalories()*(1-ratio)
+            if item.hunger >= -0.000001 then
+                T.remove(item:getContainer(),item)
+                if item.replace then T.add(p.inventory,T.item("InventoryItem",{fullType=item.replace})) end
+            end
+        end
+    end)
+    a.item=item
+    return a
 end}
 ISWaitWhileGettingUp = {new=function(_, p) return T.action(p,"stand",function() p.sitting=false; p.furniture=false end) end}
 ISWearClothing = {new=function(_,p) return T.action(p,"wear") end}
 ISWorldObjectContextMenu = {onSleepWalkToComplete=function() T.player.asleep=true end}
 ISInventoryPaneContextMenu = {
     getEatingMask=function() return nil end,
-    onDrinkFluid=function(item,portion,p) ISTimedActionQueue.add(ISDrinkFluidAction:new(p,item,portion)) end,
-    eatItem=function(item, fraction)
-        local p=T.player
-        ISTimedActionQueue.add(T.action(p,"eat",function()
-            if not p.refuseCare then
-                local remaining=-item:getHungerChange()
-                local eaten=math.min(remaining,-item:getBaseHunger()*fraction)
-                local ratio=eaten/remaining
-                p.values.HUNGER=math.max(-0.1,p.values.HUNGER-eaten)
-                p.values.THIRST=math.max(0,p.values.THIRST+item:getThirstChange()*ratio)
-                p.calories=p.calories+item:getCalories()*ratio
-                item.hunger=-(remaining-eaten)
-                item.calories=item:getCalories()*(1-ratio)
-                if item.hunger >= -0.000001 then
-                    T.remove(item:getContainer(),item)
-                    if item.replace then T.add(p.inventory,T.item("InventoryItem",{fullType=item.replace})) end
-                end
-            end
-        end))
-    end,
     getContainers=function(player)
         local all={player.inventory}
         for _, container in ipairs(player.nearby or {}) do all[#all+1]=container end
@@ -1108,7 +1114,8 @@ test("opening borrowed food returns the new empty can and borrowed opener to the
     ISEntityUI={HandcraftStart=function(player,logic)
         local action=T.action(player,"ISHandcraftAction",function()
             T.remove(logic.item:getContainer(),logic.item)
-            T.add(player.inventory,T.item("Food",{fullType="Base.OpenedFixtureCan",replace="Base.EmptyFixtureCan"}))
+            T.add(player.inventory,T.item("Food",{fullType="Base.OpenedFixtureCan",replace="Base.EmptyFixtureCan",
+                rotten=player.fixtureRottenOutput}))
         end)
         function action:setOnComplete() end
         return action
@@ -1156,6 +1163,15 @@ test("opening borrowed food returns the new empty can and borrowed opener to the
     assert(hasHistory(interrupted,"ISHandcraftAction") and hasHistory(interrupted,"eat"),"A usable opener permits a later retry")
     assert(C.status(interrupted).pendingReturns==0 and toolSource:contains(sharedOpener))
     C.stop(interrupted)
+    local spoiled=T.playerNew(); spoiled.values.HUNGER=.3; spoiled.fixtureRottenOutput=true
+    T.add(spoiled.inventory,T.item("Food",{fullType="Base.ClosedFixtureCan",hunger=0,cantEat=true,
+        sealed=true,openingRecipe="OpenFixture"}))
+    T.add(spoiled.inventory,T.item("InventoryItem",{fullType="Base.FixtureOpener"}))
+    assert(C.start(spoiled,"yoga",false))
+    for i=1,14 do T.tick(spoiled) end
+    assert(hasHistory(spoiled,"ISHandcraftAction") and not hasHistory(spoiled,"eat") and spoiled.values.HUNGER==.3,
+        "safe recipe metadata must not authorize its rotten produced item")
+    C.stop(spoiled)
     ArrayList,HandcraftLogic,getScriptManager,ISEntityUI,ResourceType,ISCraftingUI=saved.ArrayList,saved.HandcraftLogic,saved.getScriptManager,saved.ISEntityUI,saved.ResourceType,saved.ISCraftingUI
 end)
 test("known bulk scouting needs current safe stock and a compatible carried or same-holder empty vessel",function()

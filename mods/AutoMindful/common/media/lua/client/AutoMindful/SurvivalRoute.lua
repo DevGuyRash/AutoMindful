@@ -1,10 +1,14 @@
--- Admission and negative evidence for a KNOWN food/water source. The engine
+-- Admission and negative evidence for a known care supply. The engine
 -- still owns every movement, collision, stop and actual interaction.
 local Route = {}
 local scopeKey={}
 
+function Route.tracks(kind)
+    return kind=="food" or kind=="water" or kind=="pain"
+end
+
 function Route.known(target,kind)
-    return target and not target.unknown and (kind=="food" or kind=="water")
+    return target and not target.unknown and Route.tracks(kind)
 end
 
 function Route.identity(target)
@@ -28,7 +32,7 @@ end
 function Route.reject(rejections,target,kind,now)
     if not Route.known(target,kind) or not target.routeLayout then
         rejections[target.key]=now+15000
-        return
+        return "cooldown-15s"
     end
     if target.routeScope then
         Route.scope(rejections,target.routeScope)
@@ -40,6 +44,7 @@ function Route.reject(rejections,target,kind,now)
         rejections[target.key]=r
     end
     r.sources[Route.identity(target)]=true
+    return "until-navigation-changes"
 end
 
 function Route.blocked(rejections,key,entry,layout,now)

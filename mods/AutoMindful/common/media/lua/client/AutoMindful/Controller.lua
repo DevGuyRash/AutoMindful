@@ -305,7 +305,12 @@ local function noteCareWait(state, message)
     end
 end
 
-local function breakForCare(player, state, message)
+local function breakForCare(player, state, message, reason)
+    if reason then
+        local course=state.practiceCare
+        print("[AutoMindful] care-interrupt: mode=" .. tostring(state.mode) .. " phase=" .. tostring(state.phase)
+            .. " practice=" .. tostring(course and course.kind or state.trainingKind) .. " trigger=" .. reason)
+    end
     yieldPractice(player,state,true)
     state.careHandoff = true
     clearOwned(player, state)
@@ -406,7 +411,9 @@ local function recordHomeStop(player, state, action)
         print("[AutoMindful] homebound walk stopped: action=" .. tostring(action.Type)
             .. " path=Failed speed=" .. tostring(getGameSpeed())
             .. " attempt=" .. trip.homeFailures .. "/" .. homeAttemptLimit
-            .. " aim=" .. (action.autoMindfulHomeAim or "stock-tile") .. " displacementTiles=" .. moved)
+            .. " aim=" .. (action.autoMindfulHomeAim or "stock-tile") .. " displacementTiles=" .. moved
+            .. " from=" .. math.floor(player:getX()) .. ":" .. math.floor(player:getY())
+            .. " to=" .. trip.origin.x .. ":" .. trip.origin.y .. ":" .. trip.origin.z)
     elseif not state.inspectingUI and not state.contextVisible then
         -- Ordinary yielding clears pending before doing its own stop. A
         -- different, unexplained native stop does not authorize another walk.
@@ -1026,7 +1033,7 @@ local function yieldToPlayer(player, state, unexplained, walking, settling, paus
             if trip.outboundFailed then
                 Controller.forgetScoutStop(state,trip.target)
                 if SurvivalRoute.known(trip.target,trip.kind) then
-                    SurvivalRoute.reject(state.travelRejected,trip.target,trip.kind,getTimestampMs())
+                    Controller.rejectScoutPath(state,trip,getTimestampMs(),"native-failed-before-yield")
                 else state.travelRejected[trip.target.key]=(trip.careTarget or trip.waterObject) and getTimestampMs()+15000 or true end
             end
             state.excursion = {origin=trip.origin, stage="resume-home", homeFailures=trip.homeFailures,
@@ -1352,8 +1359,10 @@ function Controller.scoutedStorageAllowed(player,target)
         and (not instanceof(target.object,"IsoThumpable") or not target.object:isLockedToCharacter(player))
 end
 
-function Controller.rejectScoutPath(state,trip,now)
-    SurvivalRoute.reject(state.travelRejected,trip.target,trip.kind,now)
+function Controller.rejectScoutPath(state,trip,now,reason)
+    local policy=SurvivalRoute.reject(state.travelRejected,trip.target,trip.kind,now)
+    print("[AutoMindful] route-skip: need=" .. tostring(trip.kind) .. " source=" .. tostring(trip.target.key)
+        .. " reason=" .. (reason or "native-path-failed") .. " retry=" .. policy)
 end
 
 function Controller.forgetScoutStop(state,target)
@@ -1364,7 +1373,7 @@ function Controller.abandonStalledSupply(player,state,now)
     local trip=state.excursion
     if not trip or trip.stage~="outbound" or trip.egressPlan or not SurvivalRoute.known(trip.target,trip.kind) then return false end
     Controller.forgetScoutStop(state,trip.target)
-    Controller.rejectScoutPath(state,trip,now)
+    Controller.rejectScoutPath(state,trip,now,"no-movement-progress")
     trip.stage="care" -- settle this owned walk; use the ordinary safe home/idle boundary
     state.travelScan=nil
     state.careNotice="The supply walk made no progress. Checking other care options."
@@ -1376,10 +1385,12 @@ local function learnedStop(player,state,kind,square,radius,now,onlyWorldWater)
     if not state.scoutMemory then return end
     return ScoutMemory.choose(state.scoutMemory,kind,square,radius,now,function(_,object,sourceSquare,container,suffix)
         local key=kind..":"..sourceSquare:getX()..":"..sourceSquare:getY()..":"..sourceSquare:getZ()..(suffix or "")
-        local rejected=state.travelRejected[key]
-        if type(rejected)=="number" and now>=rejected then state.travelRejected[key],rejected=nil,nil end
-        if rejected then return end
         local target={kind=kind,object=object,square=sourceSquare,key=key,container=container,remembered=true,storageScoped=suffix~=nil}
+        if state.travelRejected[key] then
+            local layout=SurvivalRoute.known(target,kind) and Nearby.routeEvidence
+                and Nearby.routeEvidence(player,square,radius)
+            if SurvivalRoute.blocked(state.travelRejected,key,target,layout,now) then return end
+        end
         if container then
             if onlyWorldWater or not Storage.permitted(player,sourceSquare)
                     or (instanceof(object,"IsoThumpable") and object:isLockedToCharacter(player)) then return end
@@ -1598,7 +1609,7 @@ local function tryExcursion(player,state,kind,onlyWorldWater,selectedCare,target
         queued=false
     end
     if not queued then
-        if not route then SurvivalRoute.reject(state.travelRejected,target,kind,getTimestampMs())
+        if not route then Controller.rejectScoutPath(state,{target=target,kind=kind},getTimestampMs(),"no-legal-approach")
         else state.travelRejected[target.key]=getTimestampMs()+15000 end
         state.pending,state.excursion,state.travelScan=nil,prior,nil
         if target.remembered then ScoutMemory.forget(state.scoutMemory,target) end
@@ -3604,12 +3615,13 @@ function Controller.updateCarePractice(player,state,head,now,urgent,bedtime)
     local hungerCare=course.target=="hunger"
     local ordinaryCare=state.recovery or minimumActive or hungerCare or bedtime~=nil
     local priority=(urgent and (not hungerCare or criticalNeed(player,"water") and (not state.noEmergencyDrink
-            or comfortSupplyAvailable(player,state,"water",true))))
-        or (not urgent and sleepAdmitted(bedtime)) or (not hungerCare and Controller.firstHungerCourse(player,state))
-        or (Needs.due(player,"food",ordinaryCare and Consumables.careThreshold or 0.60) and comfortSupplyAvailable(player,state,"food",hungerCare))
-        or (Needs.due(player,"water",ordinaryCare and Consumables.careThreshold or 0.50) and comfortSupplyAvailable(player,state,"water",hungerCare))
-        or (ordinaryCare and not urgent and not state.contextVisible and (painAvailable(player,state,now)
-            or (stat(player,"BOREDOM")>=20 and comfortSupplyAvailable(player,state,"literature",hungerCare,state.recovery))))
+            or comfortSupplyAvailable(player,state,"water",true)))) and "critical-food-or-water"
+        or (not urgent and sleepAdmitted(bedtime)) and "sleep"
+        or (not hungerCare and Controller.firstHungerCourse(player,state)) and "hunger-care"
+        or (Needs.due(player,"food",ordinaryCare and Consumables.careThreshold or 0.60) and comfortSupplyAvailable(player,state,"food",hungerCare)) and "food"
+        or (Needs.due(player,"water",ordinaryCare and Consumables.careThreshold or 0.50) and comfortSupplyAvailable(player,state,"water",hungerCare)) and "water"
+        or (ordinaryCare and not urgent and not state.contextVisible and (painAvailable(player,state,now) and "painkillers-available"
+            or (stat(player,"BOREDOM")>=20 and comfortSupplyAvailable(player,state,"literature",hungerCare,state.recovery)) and "boredom-reading"))
     local relief, drawback, acquired, readings, waitingForTier, careResolved
     if course.kind=="meditation" and head.autoMindfulOwner==state and isPractice(head,course.kind)
             and head:isStarted() and not head.autoMindfulStopped then
@@ -3663,7 +3675,9 @@ function Controller.updateCarePractice(player,state,head,now,urgent,bedtime)
             or acquired and not drawback and "Mindfulness is active. Checking for the matching effect with the queue free."
             or relief and (state.recovery and "The care practice helped; monitoring other needs." or "Stress eased; returning to training.")
             or (state.recovery and "Ending the optional care break and checking needs again."
-                or "Ending the optional care break and rechecking training and supplies."))
+                or "Ending the optional care break and rechecking training and supplies."),
+            priority or (drawback and "practice-drawback") or (careResolved and "need-resolved")
+                or (acquired and "moodle-acquired") or (relief and "relief-observed") or "practice-window-ended")
         if state.recovery or state.backgroundPractice then state.cooperativePending={} end
     end
 end
@@ -3952,9 +3966,12 @@ function Controller.update(player)
             local drinking = Needs.due(player,"water",0.2) and comfortSupplyAvailable(player, state, "water")
             local pain = not state.contextVisible and painAvailable(player, state, now)
             local lifestyle = not state.contextVisible and lifestyleReady(player,state,now)
-            if (meditation >= 10 and not state.backgroundPractice and not state.tierGoal and not enduranceOnly) or reading or eating or drinking or pain or lifestyle
-                    or urgent or sleepAdmitted(bedtime) then
-                breakForCare(player, state, "Taking a care break before resuming training.")
+            local reason=urgent and "critical-food-or-water" or drinking and "water" or eating and "food"
+                or pain and "painkillers-available" or reading and "boredom-reading" or lifestyle and "lifestyle-care"
+                or sleepAdmitted(bedtime) and "sleep" or (meditation >= 10 and not state.backgroundPractice
+                    and not state.tierGoal and not enduranceOnly) and "meditation-rank-cap"
+            if reason then
+                breakForCare(player, state, "Taking a care break before resuming training.", reason)
             elseif not state.contextVisible or enduranceOnly then
                 local head=queue[1]
                 if Controller.observeTierHead(player,state,head,now) then return end

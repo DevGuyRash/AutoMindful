@@ -242,3 +242,66 @@ do
         "released manual cancel must not become an automatic walk back")
 end
 print("PASS: stock B42 path failure evidence, fallback and prior callback unchanged; exact home before alternate; no manual reversal")
+
+-- Use the shipped path constructors and update(), not an invented 'successful
+-- fallback' action. Only the navmesh result and local map are boundary doubles.
+do
+    local Routes=require "AutoMindful/SurvivalRoute"
+    local p=player()
+    function p:getCurrentSquare() return self:getSquare() end
+    local geometry={}
+    local function square(x,y)
+        local k=x..":"..y
+        if geometry[k] then return geometry[k] end
+        local s=T.square(x,y)
+        function s:getAdjacentSquare(d) return square(self.x+d.dx,self.y+d.dy) end
+        geometry[k]=s; return s
+    end
+    IsoDirections={}
+    for k,v in pairs({N={0,-1},S={0,1},W={-1,0},E={1,0},NE={1,-1},NW={-1,-1},SE={1,1},SW={-1,1}}) do
+        local d={dx=v[1],dy=v[2]}
+        function d:isDiagonal() return self.dx~=0 and self.dy~=0 end
+        function d:ToVector()
+            local n=self:isDiagonal() and math.sqrt(2) or 1
+            return {getX=function()return self.dx/n end,getY=function()return self.dy/n end}
+        end
+        IsoDirections[k]=d
+    end
+    function luautils.tableContains(t,v) for _,e in ipairs(t) do if e==v then return true end end end
+    function luautils.getCorrectSquareForWall(_,s) return s end
+    ArrayList={new=function()
+        local a={}
+        return {add=function(_,x)a[#a+1]=x end,get=function(_,n)return a[n+1] end,
+            size=function()return #a end,clear=function() a={} end}
+    end}
+    AdjacentFreeTileFinder={isTileOrAdjacent=function() return true end}
+    local savedCell=getCell
+    function getCell() return {getGridSquare=function(_,x,y,z) return z==0 and square(x,y) or nil end} end
+    local source=square(5,0)
+    local obj={getSquare=function()return source end}
+    function obj:getSpriteGridObjectsIncludingSelf(t) t:add(self) end
+    for _,world in ipairs({true,false}) do
+        local fresh=player()
+        fresh.getCurrentSquare=p.getCurrentSquare
+        local winner=square(6,1) -- every cardinal point and three other diagonal points are disconnected
+        local current
+        local pf={cancel=noop,pathToNearestTable=function(_,goals) current=goals end}
+        function pf:update()
+            for i=1,#current,3 do
+                if math.floor(current[i])==winner.x and math.floor(current[i+1])==winner.y then
+                    fresh.square=winner; return BehaviorResult.Succeeded
+                end
+            end
+            return BehaviorResult.Failed
+        end
+        function fresh:getPathFindBehavior2() return pf end
+        assert(Routes.walk(fresh,source,world and obj or nil))
+        local a=first(fresh)
+        assert(a and a.Type=="ISPathFindAction" and a.goal[1]=="Nearest" and #current==24)
+        a:update(); assert(a.requestedComplete and not a.requestedStop and fresh:getSquare()==winner,
+            "one native route must be allowed to settle on the only reachable interaction side")
+        a:perform()
+    end
+    getCell=savedCell
+end
+print("PASS: installed B42 fixture and cupboard route constructors actually submit the only reachable diagonal in a single native path")

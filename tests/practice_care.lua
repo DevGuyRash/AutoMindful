@@ -273,14 +273,19 @@ test("panic needs native Basic; blocked-sleep panic may qualify, Yoga is not a s
     assertNone(strongInput({hunger=0.05,meditationRank=3,panic=4.99,sleepBlocked=true}))
 end)
 
-test("Perfect requires rank ten, minor safe health loss, and every prerequisite tier", function()
+test("Perfect requires rank ten, safe health loss, and every prerequisite tier", function()
     assertNone(strongInput({hunger=0.05,meditationRank=9,health=88,healthSafe=true,mindTier=2}))
-    assertNone(strongInput({hunger=0.05,meditationRank=10,health=74,healthSafe=true,mindTier=0}))
+    assertNone(strongInput({hunger=0.05,meditationRank=10,health=0,healthSafe=true,mindTier=0}))
     assertNone(strongInput({hunger=0.05,meditationRank=10,health=87,healthSafe=false,mindTier=2}))
     assertNone(strongInput({hunger=0.05,meditationRank=10,health=95,healthSafe=true,mindTier=2}))
+    assertNone(strongInput({hunger=0.05,meditationRank=10,health=4,healthSafe=true,mindTier=2,healFactor=0}))
+    local low=assertCourse(strongInput({hunger=0.05,meditationRank=10,health=4,healthSafe=true,mindTier=2,
+        recovery=false,healthOnly=true,boredom=0,stress=.8}),"meditation","mindfulness","HEALTH")
+    assert(low.target=="health")
+    assertNone(strongInput({hunger=.2,meditationRank=10,health=4,healthSafe=true,mindTier=2,healthOnly=true,stress=.8}))
     local budgets={}
     for tier=0,2 do
-        local attempt=assertCourse(strongInput({hunger=0.05,meditationRank=10,health=85,healthSafe=true,mindTier=tier}),
+        local attempt=assertCourse(strongInput({hunger=0.05,meditationRank=10,health=4,healthSafe=true,mindTier=tier}),
             "meditation","mindfulness","HEALTH")
         assert(attempt.target=="health" and attempt.targetTier==3 and attempt.fromTier==tier)
         budgets[tier]=attempt.maxMs

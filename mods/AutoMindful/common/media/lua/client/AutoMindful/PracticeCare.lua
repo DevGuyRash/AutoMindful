@@ -1,6 +1,7 @@
 -- Choose optional comfort work. The controller owns native admission, actions,
 -- and observations. Nothing here changes stats or spends a training turn.
 local Facts = require "AutoMindful/WellnessFacts"
+local Needs = require "AutoMindful/SurvivalNeeds"
 local PracticeCare = {}
 
 local effects = {
@@ -96,8 +97,8 @@ function PracticeCare.unhappinessContext(boredom,pain)
 end
 
 -- The ordinary supply trigger is not an upper limit on the native effect.
-function PracticeCare.hungry(value)
-    return number(value,1)~=nil and value>=0.15
+function PracticeCare.hungry(value,level)
+    return Needs.valueDue(value,level)
 end
 
 function PracticeCare.hungerUnlocked(level)
@@ -106,8 +107,8 @@ end
 
 -- Already-active native effects need no posture, equipment or new action.
 -- Acquisition requires the *current* rank and the caller's live native gate.
-function PracticeCare.hungerPlan(value,level,tier,ready)
-    if not PracticeCare.hungry(value) or not rank(level) or level<Facts.meditationUnlocks[1]
+function PracticeCare.hungerPlan(value,level,tier,ready,hungerLevel)
+    if not PracticeCare.hungry(value,hungerLevel) or not rank(level) or level<Facts.meditationUnlocks[1]
             or not number(tier,3) or tier~=math.floor(tier) then return end
     local effect=effects.hunger
     local plan={target="hunger",targetTier=effect.tier}
@@ -152,6 +153,14 @@ local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
     -- Dangers and direct resources are checked by the controller first.
     -- Basic is for substantial panic, or enough residual panic to prevent sleep.
     local attempt, passive, passivePanic
+    local function heal()
+        -- Perfect restores general health, not its underlying cause. Only
+        -- consider native healing after the caller screens unresolved needs
+        -- and indicators of continuing damage. Low health isn't itself a cause.
+        return match("health", PracticeCare.healingEnabled(input.healFactor) and input.healthSafe==true
+            and health and health>0 and health<95 and hunger and hunger<0.15 and pain and pain<=5 and panic and panic<5, true)
+    end
+    if input.healthOnly then return heal() end
     if (input.recovery==true or input.sleepRelief==true) and not input.hungerOnly then
         attempt, passive = match("panic", PracticeCare.needsRelief("panic","meditation",level,panic,input.recovery,input.sleepBlocked), true)
         if attempt then return attempt end
@@ -159,7 +168,7 @@ local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
     end
     if input.confirmedFood==false then
         attempt,passive=PracticeCare.hungerPlan(hunger,level,tier,m and input.acquireHunger~=false and input.preferTraining~="meditation"
-            and (canStart or input.renewHunger==true or input.hungerOnly==true))
+            and (canStart or input.renewHunger==true or input.hungerOnly==true),input.hungerLevel)
         if attempt or passive then return attempt,passive end
     end
     if passivePanic then return nil,passivePanic end
@@ -171,10 +180,7 @@ local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
         if attempt or passive then return attempt, passive end
     end
     if input.recovery~=true then return nil end
-    -- Perfect heals general health, not the source of a wound or illness.
-    -- Only offer it for mild, stable loss without a competing symptom.
-    attempt, passive = match("health", PracticeCare.healingEnabled(input.healFactor) and input.healthSafe==true and health and health>=75 and health<95
-        and hunger and hunger<0.15 and pain and pain<=5 and panic and panic<5, true)
+    attempt, passive = heal()
     if attempt or passive then return attempt, passive end
     attempt, passive = match("withdrawal", PracticeCare.needsRelief("withdrawal","meditation",level,withdrawal,true), false)
     if passive then return nil, passive end
@@ -202,7 +208,7 @@ function PracticeCare.choose(input)
     -- Only a real, actionable hunger fallback may outrank optional comfort Yoga.
     -- A native Meditation blocker, confirmed treatment or helpful scheduled leg still wins.
     local attempt,passive=mindfulness(input,m,y,yogaPain,boredom,pain,canStart)
-    if input.hungerOnly or (attempt and attempt.target=="hunger") then return attempt,passive end
+    if input.hungerOnly or input.healthOnly or (attempt and attempt.target=="hunger") then return attempt,passive end
     if yogaNeed and canStart then
         if input.preferTraining ~= "yoga" then return course("yoga", yogaNeed, yogaBudget(y)) end
         return nil

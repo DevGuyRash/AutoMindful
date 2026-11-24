@@ -108,13 +108,13 @@ for _,mode in ipairs({"both","recovery"}) do
     assert(C.status(p).phase=="practice-care"); steps(p,3); assert(head(p)==a)
     step(p,245000); steps(p,12)
     assert(a.stopped and not head(p) and count(p,"Meditation")==1 and count(p,"eat")==0)
-    assert(C.status(p).active==(mode=="recovery") and C.status(p).message:lower():find("food",1,true),C.status(p).message)
-    if mode=="recovery" then
+    assert(C.status(p).active and C.status(p).message:lower():find("food",1,true),C.status(p).message)
+    do
         step(p,300000); steps(p,8); assert(not head(p) and count(p,"Meditation")==1)
         meal(p); local food=untilHead(p,"eat"); food:perform(); assert(p.calories>2000); C.stop(p)
     end
 end
-print("PASS critical owned timeout stops training or keeps Recovery watching for a real meal without retry loops")
+print("PASS critical owned timeout keeps Training and Recovery watching for real food without retry loops")
 
 do
     local p=new(6,.80,true); badge(p,.4); begin(p,"recovery")
@@ -128,7 +128,7 @@ print("PASS bounded passive window with no native hunger change")
 
 for _,why in ipairs({"rank","native","disabled","sleep","thirst","unsafe","held"}) do
     local p=new(why=="rank" and 5 or 6,.8,true)
-    if why=="native" then p.values.BOREDOM=35
+    if why=="native" then p.values.BOREDOM,p.yogaBlocked=35,getText("Tooltip_Action_Exhausted")
     elseif why=="disabled" then enabled=false
     elseif why=="thirst" then p.values.THIRST,p.thirstMoodle=.8,4
     elseif why=="held" then function p:getPrimaryHandItem() return {isForceDropHeavyItem=function() return true end} end
@@ -136,10 +136,11 @@ for _,why in ipairs({"rank","native","disabled","sleep","thirst","unsafe","held"
     begin(p,"recovery")
     if why=="unsafe" then p.zombies=1 end
     steps(p,14)
-    assert(count(p,"Meditation")==0 and not head(p),why)
-    if why=="thirst" then assert(C.status(p).message:lower():find("water",1,true))
-    elseif why=="sleep" then assert(p:isAsleep(),C.status(p).message)
-    elseif why=="unsafe" then assert(C.status(p).active and C.status(p).phase=="recovery-paused") end
+    if why=="thirst" or why=="sleep" then
+        assert(count(p,"Meditation")==1 and head(p) and not p:isAsleep(),
+            "Only disproven water routes, not dehydration itself, permit a bounded hunger attempt; never sleep through starvation")
+    else assert(count(p,"Meditation")==0 and not head(p),why) end
+    if why=="unsafe" then assert(C.status(p).active and C.status(p).phase=="recovery-paused") end
     C.stop(p); enabled=true
 end
 print("PASS lower rank, native gate, option, sleep, critical thirst, danger and held gear")
@@ -195,10 +196,11 @@ for _,h in ipairs({.4,.8}) do
     if h<.8 then p.panicMoodle=0 -- a raw panic number alone is not a stock sleep restriction
     else function p:getSleepingTabletEffect() return 2000 end end -- existing native effect; no medication used
     steps(p,16)
-    assert(p:isAsleep() and a.stopped and not head(p))
+    if h<.8 then assert(p:isAsleep() and a.stopped and not head(p))
+    else assert(not p:isAsleep() and head(p)==a and not a.stopped,"Never initiate sleep through unserved starvation") end
     C.stop(p)
 end
-print("PASS native-blocked sleep permits ordinary/critical hunger relief, but admissible sleep preempts")
+print("PASS admissible sleep can preempt ordinary care, not an unserved survival crisis")
 
 do
     local p=new(6,.80,true); badge(p,.4); begin(p,"recovery")
@@ -215,3 +217,92 @@ do
     C.stop(p)
 end
 print("PASS repeated critical hunger oscillations cannot restart native acquisition indefinitely")
+
+-- Exercise first native moodles below old numeric thresholds at the scheduler
+-- boundary, including interruption of an already-started practice.
+for _,mode in ipairs({"both","meditation","yoga","recovery"}) do
+    for _,k in ipairs({"food","water"}) do
+        local p=new(6,.01)
+        begin(p,mode)
+        if mode=="recovery" then steps(p,6)
+        else untilHead(p,mode=="meditation" and "Meditation" or "Yoga") end
+        local food=k=="food"
+        p.values[food and "HUNGER" or "THIRST"]=.08
+        if food then meal(p); p.hungerMoodle=1 else T.add(p.inventory,T.water()); p.thirstMoodle=1 end
+        local a=untilHead(p,food and "eat" or "drink")
+        local v=p.values[food and "HUNGER" or "THIRST"]
+        a:perform()
+        assert(p.values[food and "HUNGER" or "THIRST"]<v and C.status(p).active)
+        C.stop(p)
+    end
+end
+print("PASS first native hunger/thirst moodle admits native portions during Recovery or training")
+
+-- Missing critical water must never veto a safe meal, and crossing 50 must
+-- not stop an already-owned portion or native drink. The original session
+-- remains alive even after resources run out; no fixture stats move on queue.
+for _,mode in ipairs({"both","recovery"}) do
+    local p=new(0,.92,true)
+    local getBody=p.getBodyDamage
+    function p:getBodyDamage()
+        local body=getBody(self)
+        function body:getOverallBodyHealth() return p.hp or 65 end
+        return body
+    end
+    p.values.THIRST,p.thirstMoodle=.92,4
+    T.add(p.inventory,T.water({poison=true}))
+    T.add(p.inventory,T.item("Food",{rawDanger=true}))
+    begin(p,mode)
+    steps(p,12)
+    assert(C.status(p).active and not head(p) and count(p,"eat")==0 and count(p,"drink")==0 and not p:isAsleep())
+    p.hp=1
+    local calories=p.calories
+    local foreign=T.action(p,"PlayerTakingAction")
+    Q.add(foreign); meal(p); steps(p,6)
+    assert(head(p)==foreign and not foreign.stopped and not foreign.autoMindfulOwner)
+    foreign:perform()
+    local eat=untilHead(p,"eat")
+    assert(eat.autoMindfulOwner and p.calories==calories and p.values.HUNGER==.92)
+    p.hp=.2; steps(p,6)
+    assert(head(p)==eat and not eat.stopped)
+    eat:perform(); assert(p.calories>calories and p.values.HUNGER<.92)
+    p.hungerMoodle=0
+    local water=T.add(p.inventory,T.water({thirst=-1}))
+    local drink=untilHead(p,"drink"); p.hp=.01; steps(p,4)
+    assert(head(p)==drink and not drink.stopped and p.values.THIRST==.92)
+    drink:perform(); p.thirstMoodle=0; steps(p,8)
+    assert(C.status(p).active and p.values.THIRST<.92 and water.fluid.amount<1)
+    assert(not head(p) and count(p,"Meditation")==0 and count(p,"Yoga")==0)
+    p.hp=80
+    if mode=="both" then untilHead(p,"Yoga") else steps(p,8); assert(C.status(p).active) end
+    C.stop(p)
+end
+print("PASS both modes: low HP neither stops safe intake nor takes foreign control; no training until health returns")
+
+-- A native tier is not food and a missed water route may not reset a hunger
+-- receipt. A real drink, not merely an unchanged thirsty moodle, takes over.
+for _,mode in ipairs({"both","recovery"}) do
+    local p=new(6,.81,true); badge(p,.4)
+    p.values.THIRST,p.thirstMoodle=.88,4; begin(p,mode)
+    steps(p,20)
+    assert(not head(p) and C.status(p).active and C.status(p).message:lower():find("water",1,true))
+    p.values.HUNGER=.75; step(p)
+    assert((C.status(p).careNotice or ""):find("hunger ease",1,true) and p.calories==2000)
+    local water=T.add(p.inventory,T.water({thirst=-1}))
+    local drink=untilHead(p,"drink"); drink:perform()
+    assert(water.fluid.amount<1 and p.values.THIRST<.88)
+    C.stop(p)
+end
+print("PASS both modes: a dried-up critical water search permits an actual native hunger receipt, then a newly usable drink wins")
+
+for _,mode in ipairs({"recovery","yoga"}) do
+    local p=new(6,.01); begin(p,mode)
+    if mode=="yoga" then untilHead(p,"Yoga") else steps(p,6) end
+    p.hungerMoodle,p.values.HUNGER=1,.07
+    local med=untilHead(p,"Meditation")
+    assert(C.status(p).phase=="practice-care" and count(p,"eat")==0)
+    badge(p,.4); step(p)
+    assert(med.stopped and p.values.HUNGER==.07 and p.calories==2000)
+    C.stop(p)
+end
+print("PASS first hunger moodle reuses the native bounded Strong fallback, even inside an ordinary Yoga turn")

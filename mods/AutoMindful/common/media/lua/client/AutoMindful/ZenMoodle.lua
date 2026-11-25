@@ -81,8 +81,13 @@ local function draw(ui, player, name, title, description)
 end
 
 local loggedHover
-local wrappedWidgets = setmetatable({}, {__mode="k"})
-local wrappedFactories = setmetatable({}, {__mode="k"})
+local attached = 0
+-- Shared by every load of this file in one Lua state, so a reload neither wraps
+-- a widget or factory twice nor leaves an old scan running.
+AutoMindful = AutoMindful or {}
+local shared = AutoMindful.zenMoodle or {widgets=setmetatable({}, {__mode="k"}), factories=setmetatable({}, {__mode="k"})}
+AutoMindful.zenMoodle = shared
+local wrappedWidgets, wrappedFactories = shared.widgets, shared.factories
 
 local function attach(ui, player)
     if type(ui) ~= "table" or type(ui.mouseOverMoodle) ~= "function"
@@ -103,6 +108,8 @@ local function attach(ui, player)
     end
     ui.mouseOverMoodle = hover
     wrappedWidgets[ui] = hover
+    attached = attached + 1
+    if attached == 1 then print("[AutoMindful] Zen tooltip attached to Lifestyle's HUD.") end
 end
 
 local function attachExisting()
@@ -138,20 +145,31 @@ function Zen.install()
     attachExisting()
 end
 
-local function afterUIRegistration()
-    Events.OnPostUIDraw.Remove(afterUIRegistration)
+-- A server can load this mod after Lifestyle has made its moodles, and makes
+-- them again after a death. Any moment can be the first one, so look now and
+-- then: a widget is only wrapped once.
+local lookMs, lookedAt = 2000, nil
+local function look()
+    local now = getTimestampMs and getTimestampMs() or 0
+    if lookedAt and now >= lookedAt and now - lookedAt < lookMs then return end
+    lookedAt = now
     Zen.install()
 end
 
+-- Called when the file loads, not only when a player is created: a late load
+-- can come after both the player and the game have started.
+function Zen.watch()
+    local postDraw = Events and Events.OnPostUIDraw
+    if not postDraw then return end
+    if shared.look then postDraw.Remove(shared.look) end
+    shared.look = look
+    postDraw.Add(look)
+end
+
 function Zen.onPlayerReady()
+    lookedAt = nil
     Zen.install()
-    -- UIManager can defer AddUI until it updates. Scan once after the native
-    -- UI draw, not on every frame, so late client loads can adopt existing UI.
-    local postDraw = Events.OnPostUIDraw
-    if postDraw then
-        postDraw.Remove(afterUIRegistration)
-        postDraw.Add(afterUIRegistration)
-    end
+    Zen.watch()
 end
 
 return Zen

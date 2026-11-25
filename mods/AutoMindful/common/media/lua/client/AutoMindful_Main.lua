@@ -8,6 +8,7 @@ require "XpSystem/ISUI/ISCharacterInfo"
 require("AutoMindful/SkillsPane").install()
 local ZenMoodle = require "AutoMindful/ZenMoodle"
 ZenMoodle.install()
+ZenMoodle.watch()
 Log.setLevelSource(Options.logLevel)
 
 local function version(id)

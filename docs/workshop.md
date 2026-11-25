@@ -27,6 +27,8 @@ python3 desktop.py probe --app-id 108600
 python3 local.py DevGuyRash/AutoMindful v0.1.2 --publish --backend desktop
 ```
 
+The listing text lives in [workshop/description.txt](../workshop/description.txt) (Steam BBCode). Uploads keep the current description unless `--description-file` is given, so add `--description-file /path/to/AutoMindful/workshop/description.txt` to the publish command when it changes.
+
 Local release commands reuse the existing GitHub CLI login, and the upload uses the current desktop Steam session. No Steam password or Steam Guard prompt is needed. If the desktop probe fails, resolve the condition in Steam; do not silently switch to SteamCMD. The command runs in the foreground and installs no service. For a packaged local folder, the publisher also supports validation and upload through `folder.py` as described in its agent quickstart.
 
 To use GitHub instead, configure the shared publisher once using `just setup-github --source DevGuyRash/AutoMindful`. That separate cloud path uses SteamCMD authentication and cannot reuse this machine's desktop session. Then run these commands.

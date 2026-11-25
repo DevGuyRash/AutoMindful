@@ -131,6 +131,29 @@ assert(table.concat(painted, " "):find("Meditation XP: +10%", 1, true))
 painted={}
 hudOther:render()
 assert(painted[1]=="Zen", "Non-Zen hover behavior is unchanged")
+-- A late server load: the widget exists, nothing calls onPlayerReady, and the
+-- UI list is not ready when the file runs. The load-time watch still adopts it,
+-- and loading the file again neither double-wraps nor leaves two scans.
+do
+    local orphan = factory(p, "Zen")
+    widgets[#widgets + 1] = {getTable=function() return orphan end}
+    local list = UIManager.getUI
+    UIManager.getUI = function() return nil end
+    package.loaded["AutoMindful/ZenMoodle"] = nil
+    local again = require "AutoMindful/ZenMoodle"
+    again.install(); again.watch()
+    UIManager.getUI = list
+    clock = clock + 5000; postDraw()
+    painted = {}; orphan:render(); assert(painted[1] == "Zen I", "Adopted without onPlayerReady")
+    local hover = orphan.mouseOverMoodle
+    package.loaded["AutoMindful/ZenMoodle"] = nil
+    local third = require "AutoMindful/ZenMoodle"
+    third.install(); third.watch()
+    clock = clock + 5000; postDraw()
+    assert(orphan.mouseOverMoodle == hover, "A reload does not wrap again")
+    painted = {}; orphan:render(); assert(#painted > 0 and painted[1] == "Zen I")
+    table.remove(widgets)
+end
 -- A Zen widget made without the wrapper, as after a late load or a death,
 -- gets the hover at the next look, and no widget is wrapped twice.
 local late = factory(p, "Zen")

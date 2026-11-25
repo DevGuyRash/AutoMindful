@@ -82,8 +82,12 @@ end
 
 local loggedHover
 local attached = 0
-local wrappedWidgets = setmetatable({}, {__mode="k"})
-local wrappedFactories = setmetatable({}, {__mode="k"})
+-- Shared by every load of this file in one Lua state, so a reload neither wraps
+-- a widget or factory twice nor leaves an old scan running.
+AutoMindful = AutoMindful or {}
+local shared = AutoMindful.zenMoodle or {widgets=setmetatable({}, {__mode="k"}), factories=setmetatable({}, {__mode="k"})}
+AutoMindful.zenMoodle = shared
+local wrappedWidgets, wrappedFactories = shared.widgets, shared.factories
 
 local function attach(ui, player)
     if type(ui) ~= "table" or type(ui.mouseOverMoodle) ~= "function"
@@ -152,14 +156,20 @@ local function look()
     Zen.install()
 end
 
+-- Called when the file loads, not only when a player is created: a late load
+-- can come after both the player and the game have started.
+function Zen.watch()
+    local postDraw = Events and Events.OnPostUIDraw
+    if not postDraw then return end
+    if shared.look then postDraw.Remove(shared.look) end
+    shared.look = look
+    postDraw.Add(look)
+end
+
 function Zen.onPlayerReady()
     lookedAt = nil
     Zen.install()
-    local postDraw = Events.OnPostUIDraw
-    if postDraw then
-        postDraw.Remove(look)
-        postDraw.Add(look)
-    end
+    Zen.watch()
 end
 
 return Zen

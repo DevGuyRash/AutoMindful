@@ -247,10 +247,12 @@ local function event()
 end
 Events = {OnFillWorldObjectContextMenu=event(), OnKeyPressed=event(), OnGameStart=event(), OnCreatePlayer=event(), OnSave=event(), EveryOneMinute=event()}
 package.loaded["AutoMindful/SkillsPane"] = {install=function() end}
-package.loaded["AutoMindful/ZenMoodle"] = {install=function() end, onPlayerReady=function() end}
+local zenWatched = false
+package.loaded["AutoMindful/ZenMoodle"] = {install=function() end, watch=function() zenWatched = true end, onPlayerReady=function() end}
 Clipboard = {setClipboard=function(text) Clipboard.text = text end}
 
 require "AutoMindful_Main"
+assert(zenWatched, "The Zen hover watch starts when the file loads, not only when a player is created")
 if not AutoMindful.UI then error("window did not load") end
 local Window, WorldMenu, Options = AutoMindful.UI, AutoMindful.WorldMenu, require "AutoMindful/Options"
 local Preferences = require "AutoMindful/Preferences"

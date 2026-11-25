@@ -81,6 +81,7 @@ local function draw(ui, player, name, title, description)
 end
 
 local loggedHover
+local attached = 0
 local wrappedWidgets = setmetatable({}, {__mode="k"})
 local wrappedFactories = setmetatable({}, {__mode="k"})
 
@@ -103,6 +104,8 @@ local function attach(ui, player)
     end
     ui.mouseOverMoodle = hover
     wrappedWidgets[ui] = hover
+    attached = attached + 1
+    if attached == 1 then print("[AutoMindful] Zen tooltip attached to Lifestyle's HUD.") end
 end
 
 local function attachExisting()
@@ -138,19 +141,24 @@ function Zen.install()
     attachExisting()
 end
 
-local function afterUIRegistration()
-    Events.OnPostUIDraw.Remove(afterUIRegistration)
+-- A server can load this mod after Lifestyle has made its moodles, and makes
+-- them again after a death. Any moment can be the first one, so look now and
+-- then: a widget is only wrapped once.
+local lookMs, lookedAt = 2000, nil
+local function look()
+    local now = getTimestampMs and getTimestampMs() or 0
+    if lookedAt and now >= lookedAt and now - lookedAt < lookMs then return end
+    lookedAt = now
     Zen.install()
 end
 
 function Zen.onPlayerReady()
+    lookedAt = nil
     Zen.install()
-    -- UIManager can defer AddUI until it updates. Scan once after the native
-    -- UI draw, not on every frame, so late client loads can adopt existing UI.
     local postDraw = Events.OnPostUIDraw
     if postDraw then
-        postDraw.Remove(afterUIRegistration)
-        postDraw.Add(afterUIRegistration)
+        postDraw.Remove(look)
+        postDraw.Add(look)
     end
 end
 

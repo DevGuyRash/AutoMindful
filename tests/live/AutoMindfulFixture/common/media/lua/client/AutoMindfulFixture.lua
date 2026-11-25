@@ -618,6 +618,11 @@ Events.OnPlayerUpdate.Add(function(player)
                 local dx, dy = line:match("^%S+%s+(%-?%d+)%s+(%-?%d+)")
                 player:setX(player:getX() + tonumber(dx)); player:setY(player:getY() + tonumber(dy))
             elseif command == "save" then save(true)
+            elseif command == "zen" then
+                local moodles = player:getModData().LSMoodles
+                local value = tonumber(line:match("^%S+%s+([%d%.]+)"))
+                for _, name in ipairs({"Zen", "MindfulState"}) do if moodles and moodles[name] then moodles[name].Value = value end end
+                print("[AutoMindfulFixture] ZEN " .. tostring(moodles and moodles.Zen and moodles.Zen.Value))
             elseif command == "rates" then
                 local s = player:getStats()
                 print("[AutoMindfulFixture] RATES h=" .. getGameTime():getWorldAgeHours() .. " hunger=" .. s:get(CharacterStat.HUNGER)

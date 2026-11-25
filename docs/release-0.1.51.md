@@ -1,0 +1,1 @@
+- Fixed the existing Lifestyle Zen icon still showing the original tooltip when it was created before AutoMindful's UI loaded. Hover for the active Zen tier and its effects, below the original description.

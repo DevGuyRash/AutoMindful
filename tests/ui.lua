@@ -304,7 +304,7 @@ local function event()
     end
     return result
 end
-Events = {OnFillWorldObjectContextMenu=event(),OnKeyPressed=event(),OnGameStart=event()}
+Events = {OnFillWorldObjectContextMenu=event(),OnKeyPressed=event(),OnGameStart=event(),OnCreatePlayer=event()}
 
 local UI = require "AutoMindful/UI"
 local Options = require "AutoMindful/Options"

@@ -72,27 +72,77 @@ local function draw(ui, player, title, description)
     for i, line in ipairs(lines) do
         ui:drawTextRight(line, right - pad, top + pad + (i-1) * lineHeight, 1, 1, 1, i == 1 and 1 or 0.85, font)
     end
+    return true
+end
+
+local loggedHover
+local wrappedWidgets = setmetatable({}, {__mode="k"})
+local wrappedFactories = setmetatable({}, {__mode="k"})
+
+local function attach(ui, player)
+    if type(ui) ~= "table" or type(ui.mouseOverMoodle) ~= "function"
+        or type(ui.level) ~= "function" or wrappedWidgets[ui] == ui.mouseOverMoodle then return end
+    local originalHover = ui.mouseOverMoodle
+    local function hover(self, hovered, title, description)
+        if hovered ~= "Zen" or type(title) ~= "string" or type(description) ~= "string" then
+            return originalHover(self, hovered, title, description)
+        end
+        if draw(self, player, title, description) and not loggedHover then
+            loggedHover = true
+            print("[AutoMindful] Zen tooltip rendered on Lifestyle's HUD.")
+        end
+    end
+    ui.mouseOverMoodle = hover
+    wrappedWidgets[ui] = hover
+end
+
+local function attachExisting()
+    local player = getPlayer and getPlayer()
+    local elements = UIManager and UIManager.getUI and UIManager.getUI()
+    if not player or not elements then return end
+    -- Lifestyle creates these widgets on OnCreatePlayer and does not keep a
+    -- public reference. Its updater distinguishes them from stock and other
+    -- frameworks. The native hover supplies the name, even for existing items.
+    for i = 0, elements:size()-1 do
+        local element = elements:get(i)
+        local ui = element and element.getTable and element:getTable()
+        if type(ui) == "table" and ui.Type == "ISMoodles"
+            and type(ui.updateLSMoodles) == "function" then
+            attach(ui, player)
+        end
+    end
 end
 
 function Zen.install()
     local manager = LSMoodleManager
     if type(manager) ~= "table" or type(manager.newType) ~= "function" then return end
-    if manager.AutoMindfulZenTooltipInstalled then return end
     local original = manager.newType
-    manager.newType = function(player, name, ...)
-        local ui = original(player, name, ...)
-        if name == "Zen" and ui and type(ui.mouseOverMoodle) == "function" and type(ui.level) == "function" then
-            local originalHover = ui.mouseOverMoodle
-            ui.mouseOverMoodle = function(self, hovered, title, description)
-                if hovered ~= "Zen" or type(title) ~= "string" or type(description) ~= "string" then
-                    return originalHover(self, hovered, title, description)
-                end
-                draw(self, player, title, description)
-            end
+    if not wrappedFactories[original] then
+        local function factory(player, name, ...)
+            local ui = original(player, name, ...)
+            if name == "Zen" then attach(ui, player) end
+            return ui
         end
-        return ui
+        wrappedFactories[factory] = true
+        manager.newType = factory
     end
-    manager.AutoMindfulZenTooltipInstalled = true
+    attachExisting()
+end
+
+local function afterUIRegistration()
+    Events.OnPostUIDraw.Remove(afterUIRegistration)
+    Zen.install()
+end
+
+function Zen.onPlayerReady()
+    Zen.install()
+    -- UIManager can defer AddUI until it updates. Scan once after the native
+    -- UI draw, not on every frame, so late client loads can adopt existing UI.
+    local postDraw = Events.OnPostUIDraw
+    if postDraw then
+        postDraw.Remove(afterUIRegistration)
+        postDraw.Add(afterUIRegistration)
+    end
 end
 
 return Zen

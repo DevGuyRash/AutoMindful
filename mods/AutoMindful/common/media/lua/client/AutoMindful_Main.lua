@@ -7,7 +7,7 @@ local ZenMoodle = require "AutoMindful/ZenMoodle"
 ZenMoodle.install()
 
 local function onGameStart()
-    ZenMoodle.install()
+    ZenMoodle.onPlayerReady()
     Context.install()
 end
 
@@ -28,8 +28,10 @@ if old then
     Events.OnFillWorldObjectContextMenu.Remove(old.context)
     Events.OnKeyPressed.Remove(old.key)
     Events.OnGameStart.Remove(old.start)
+    if old.playerReady then Events.OnCreatePlayer.Remove(old.playerReady) end
 end
-AutoMindful.uiEvents = {context=Context.generalMenu, key=keyPressed, start=onGameStart}
+AutoMindful.uiEvents = {context=Context.generalMenu, key=keyPressed, start=onGameStart, playerReady=ZenMoodle.onPlayerReady}
 Events.OnFillWorldObjectContextMenu.Add(Context.generalMenu)
 Events.OnKeyPressed.Add(keyPressed)
 Events.OnGameStart.Add(onGameStart)
+Events.OnCreatePlayer.Add(ZenMoodle.onPlayerReady)

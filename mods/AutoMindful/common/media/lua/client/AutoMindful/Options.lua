@@ -5,12 +5,12 @@ local Options = {}
 local settings = PZAPI.ModOptions:getOptions("AutoMindful")
 if not settings then
     settings = PZAPI.ModOptions:create("AutoMindful", "AutoMindful")
-    settings:addDescription("Open AutoMindful for Recovery, training or supply checks. Closing the window does not stop the current mode.")
+    settings:addDescription("The same settings are in the AutoMindful window, under Settings. Closing the window does not stop the current job.")
 end
 
 local general = settings:getOption("generalContextMenu") or settings:addTickBox("generalContextMenu",
     "Always show AutoMindful in the world context menu", false,
-    "Adds the general AutoMindful entry even when meditation or yoga is not currently offered. The window remains available during an active session.")
+    "Off: it appears under Wellness, on a yoga mat, and on your survivor while a job runs. On: it is always at the bottom of the menu.")
 local windowKeyLabel = "Open AutoMindful window"
 local key = settings:getOption("openWindow") or settings:addKeyBind("openWindow",
     windowKeyLabel, 0,
@@ -20,7 +20,7 @@ local defaultKey = settings:getOption("defaultWindowKey") or settings:addTickBox
     "Use the number-row 0 as a fallback. AutoMindful leaves the key alone if another game or mod binding uses it.")
 
 Options.scoutingLabel = "Scout nearby for supplies"
-Options.scoutingHelp = "When you need supplies, walk to a nearby source or inspect an unknown container on the same floor, then return. Danger, manual movement or Stop All cancels the trip."
+Options.scoutingHelp = "When you need supplies, walk to a nearby source or inspect an unknown container on the same floor, then return. Danger, manual movement or Stop cancels the trip."
 local search = settings:getOption("searchNearby") or settings:addTickBox("searchNearby",
     Options.scoutingLabel, true, Options.scoutingHelp)
 local practice = settings:getOption("practiceCare") or settings:addTickBox("practiceCare",
@@ -79,11 +79,23 @@ local function saveSettings()
     if not ok then error(failure) end
 end
 
-function Options.setCycleIndex(index)
-    if not cycles[index] or cycle:getValue() == index then return end
-    cycle:setValue(index)
-    saveSettings()
+-- What the log file records. Everything is the default: a problem is usually
+-- noticed after it happened, and the files rotate at a fixed size.
+Options.logLabels = {"Off", "Decisions", "Everything"}
+local logOption = settings:getOption("logLevel")
+if not logOption then
+    logOption = settings:addComboBox("logLevel", "Diagnostics log",
+        "Records decisions, actions, containers and survivor state in Zomboid/Lua/AutoMindful. Up to five files of 4 MB.")
+    for _, label in ipairs(Options.logLabels) do logOption:addItem(label) end
+    logOption:setValue(3)
 end
+
+function Options.logLevel()
+    local value = tonumber(logOption:getValue())
+    return value and Options.logLabels[value] and value or 3
+end
+
+function Options.logLabel() return Options.logLabels[Options.logLevel()] end
 
 local minimums = {}
 local minimumHelp = "Defaults to the highest tier and uses the highest unlocked tier at or below your choice. Select No minimum to turn this off. Safety, supplies and your other actions still take priority."
@@ -94,6 +106,7 @@ for _, group in ipairs({
 }) do
     local modes = {}
     minimums[group.id] = modes
+    modes.group = group
     for _, spec in ipairs({
         {kind="meditation", suffix="MindfulnessTier", label="Mindfulness"},
         {kind="yoga", suffix="YogaZenTier", label="Yoga Zen"},
@@ -109,7 +122,7 @@ for _, group in ipairs({
             end
             option:setValue(#choices)
         end
-        modes[spec.kind] = {option=option, choices=choices}
+        modes[spec.kind] = {id=id, kind=spec.kind, label=spec.label, option=option, choices=choices}
     end
 end
 
@@ -119,6 +132,37 @@ function Options.minimumTier(group, kind)
     local index = tonumber(item.option:getValue())
     local row = index and index % 1 == 0 and item.choices[index]
     return row and row.tier or 0
+end
+
+local function minimumIndex(item)
+    local index = tonumber(item.option:getValue())
+    return index and item.choices[index] and index or 1
+end
+
+function Options.minimumItems(group)
+    local result = {}
+    for _, kind in ipairs({"meditation", "yoga"}) do
+        local item = minimums[group] and minimums[group][kind]
+        if item then
+            result[#result + 1] = {id=item.id, kind=kind, label=item.label, choices=item.choices, index=minimumIndex(item)}
+        end
+    end
+    return result
+end
+
+local groupText = {
+    recovery={label="Relief tier", help="How far a practice started for a need should go."},
+    capped={label="Tier at level 10", help="How far each practice goes once its skill is maxed."},
+    rotation={label="Tier in Training both", help="How far each turn goes before switching."},
+}
+function Options.minimumGroups()
+    local result = {}
+    for _, id in ipairs({"rotation", "capped", "recovery"}) do
+        local names = {}
+        for _, item in ipairs(Options.minimumItems(id)) do names[#names + 1] = item.choices[item.index].label end
+        result[#result + 1] = {id=id, label=groupText[id].label, help=groupText[id].help, summary=table.concat(names, " / ")}
+    end
+    return result
 end
 
 function Options.strictRecoveryTier()
@@ -183,47 +227,38 @@ function Options.windowKey()
     return Options.bindableWindowKey(chosen) and chosen or 0
 end
 
-function Options.modSettings()
-    return settings
-end
-
-local function validPanelValue(option, value)
+local function valid(option, value)
     if option.type == "tickbox" then return type(value) == "boolean" end
-    if option.type == "combobox" then
-        return type(value) == "number" and option.values[value] ~= nil
-    end
-    if option.type == "slider" then
-        return type(value) == "number" and value >= option.min and value <= option.max
-    end
+    if option.type == "combobox" then return type(value) == "number" and option.values[value] ~= nil end
+    if option.type == "slider" then return type(value) == "number" and value >= option.min and value <= option.max end
     return option == key and Options.bindableWindowKey(value)
 end
 
-function Options.applyPanelChanges(changes)
-    local changed, refreshSupplies = false, false
-    for _, edit in ipairs(changes) do
-        local option, value = edit.option, edit.value
-        if option.id and settings:getOption(option.id) == option and option.isEnabled ~= false
-                and option:getValue() ~= value and validPanelValue(option, value) then
-            if option.onChange then option:onChange(value) end
-            if option.onChangeApply then option:onChangeApply(value) end
-            option:setValue(value) -- Updates the stock Mods page widget, if present.
-            if option == key then
-                local element = option.element
-                if element and element.btn then
-                    -- PZAPI updates keyCode but not the already-built button's title.
-                    element.shift, element.ctrl, element.alt = nil, nil, nil
-                    element.btn:setTitle(getKeyName(value))
-                end
-            end
-            changed = true
-            refreshSupplies = refreshSupplies or option == search or option == radius
-        end
+function Options.option(id) return settings:getOption(id) end
+
+-- One place writes a setting, whichever surface it was changed on. Stock Mod
+-- Options keeps its own widget in step through setValue.
+function Options.set(id, value)
+    local option = settings:getOption(id)
+    if not option or option.isEnabled == false or option:getValue() == value or not valid(option, value) then return false end
+    if option.onChange then option:onChange(value) end
+    if option.onChangeApply then option:onChangeApply(value) end
+    option:setValue(value)
+    local element = option == key and option.element
+    if element and element.btn then
+        -- PZAPI updates keyCode but not the already-built button's title.
+        element.shift, element.ctrl, element.alt = nil, nil, nil
+        element.btn:setTitle(getKeyName(value))
     end
-    if changed then
-        settings:apply()
-        saveSettings()
-    end
-    return changed, refreshSupplies
+    settings:apply()
+    saveSettings()
+    return true
+end
+
+function Options.windowKeyLabel()
+    local code = Options.windowKey()
+    local name = code ~= 0 and getKeyName and getKeyName(code) or nil
+    return name and name ~= "" and name or "None"
 end
 
 return Options

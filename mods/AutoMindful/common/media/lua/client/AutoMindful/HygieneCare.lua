@@ -51,11 +51,12 @@ function Care.searchItems(player)
 end
 
 local function usableItem(player, item)
-    if not fragranceWouldHelp(readNeed(player)) or not item then return false end
+    if not item then return false end
     -- Match BOTH the upstream inventory dispatcher and its primary-fluid gate.
     -- Otherwise an empty cologne bottle or fragrance poured into a random bottle qualifies incorrectly.
     local t = item:getFullType()
     if type(t) ~= "string" or (not t:find("Perfume", 1, true) and not t:find("Cologne", 1, true)) then return false end
+    if not fragranceWouldHelp(readNeed(player)) then return false end
     if item:isSealed() then return false end
     local amount, delta = fluidDose(item), fragranceDelta()
     return amount ~= nil and delta ~= nil and amount >= delta
@@ -101,10 +102,15 @@ end
 
 -- Cheap scout first; no UI callbacks, square loading, item acquisition, or navigation.
 -- Only offer the actual source object, not a sprite-name match or a detached/stale proxy.
+function Care.washable(player)
+    return Care.need(player) > 0 and (dirtyParts(player) or 0) >= 1
+end
+
 local function inspect(player, object)
     if not object or not object:hasFluid() or not object:hasWater() then return nil end
     local amount = object:getFluidAmount()
     if not finite(amount) or amount < 1 or appliance(object) then return nil end
+    if Care.need(player) == 0 or (dirtyParts(player) or 0) < 1 then return nil end
     local square, here = object:getSquare(), player:getSquare()
     if not here or not square or here:getZ() ~= square:getZ() or not loadedSquare(square) then return nil end
     local ground = instanceof(object, "IsoWorldInventoryObject")
@@ -131,7 +137,6 @@ local function inspect(player, object)
             if instanceof(siblings:get(i), "IsoClothingDryer") then return nil end
         end
     end
-    if Care.need(player) == 0 or (dirtyParts(player) or 0) < 1 then return nil end
     return {object=object, square=square}
 end
 

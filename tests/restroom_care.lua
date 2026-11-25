@@ -171,7 +171,7 @@ else
     end
     ToiletGroundContextMenu={doBuildMenu=function(_,m,w)
         local a=fakeAction(p,nil,"LSUseToiletGround");a.toiletpaperItem=selectedWipe()
-        m:addOptionOnTop(getText("ContextMenu_Toilet_Ground"),w,function()ISTimedActionQueue.add(a)end,p,a.toiletpaperItem,"good")
+        m:addOptionOnTop(getText("ContextMenu_Toilet_Ground"),w,function(_,_,paper)a.toiletpaperItem=paper;ISTimedActionQueue.add(a)end,p,a.toiletpaperItem,"good")
     end}
 end
 local R=require "AutoMindful/RestroomCare"
@@ -258,9 +258,14 @@ test("optional TP follows native, stale/unauthorized loot never taken",function(
     local o=fixture("Hanging");local e=arrive(o);local b=R.snapshot(p);assert(R.queueToilet(p,e));assert(not b.action.toiletpaperItem)
     closeQueue();local i={getFullType=function()return "Base.ToiletPaper" end,getContainer=function()return p.loot end,getWorldItem=no}
     p.loot.items={i};p.loot.source=p.square;client=true;p.loot.source.noLoot=true
-    assert(not R.queueToilet(p,e) and #p.q.queue==0);p.loot.source.noLoot=false
+    b=R.snapshot(p);assert(R.queueToilet(p,e) and not b.action.toiletpaperItem,"Paper that may not be taken is left; the toilet still works")
+    closeQueue();p.loot.source.noLoot=false
+    i.getFullType=function()return "Base.RippedSheets" end;client=false
+    b=R.snapshot(p);assert(R.queueToilet(p,e) and not b.action.toiletpaperItem,"Never spend bandage material as toilet paper");closeQueue()
+    i.getFullType=function()return "Base.ToiletPaper" end;client=true
     p.loot.obj={kind="IsoThumpable",isLockedToCharacter=yes,getSquare=function()return p.square end}
-    tier(0.4,60);assert(not R.queueGround(p));p.loot.obj=nil;p.loot.source=sq(3,1);assert(not R.queueGround(p));p.loot.source=p.square
+    tier(0.4,60);b=R.snapshot(p);assert(R.queueGround(p) and not b.action.toiletpaperItem);closeQueue()
+    p.loot.obj=nil;p.loot.source=sq(3,1);b=R.snapshot(p);assert(R.queueGround(p) and not b.action.toiletpaperItem);closeQueue();p.loot.source=p.square
     b=R.snapshot(p);assert(R.queueGround(p));assert(b.action.toiletpaperItem==i)
 end)
 local function run(kind, late)

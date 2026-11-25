@@ -162,13 +162,7 @@ for _,mode in ipairs({"empty","existing","intoxicated","nonstock"}) do
     assert(p.pillRequests==0 and queued(p)[1]==old, "Unsafe or unavailable medicine is skipped: "..mode)
     C.stop(p)
 end
-local endurance=survivor()
-endurance.values.ENDURANCE=.75
-pill(endurance.inventory,5)
-local med=begin(endurance,"endurance",true);rise(endurance)
-assert(endurance.pillRequests==0 and queued(endurance)[1]==med and C.status(endurance).active)
-C.stop(endurance)
-print("PASS existing effect, empty and nonstock bottles, intoxication and Endurance never auto-dose")
+print("PASS existing effect, empty and nonstock bottles, intoxication never auto-dose")
 
 local loan=survivor()
 local shelf=T.container(1,0); local bottle=pill(shelf,5)

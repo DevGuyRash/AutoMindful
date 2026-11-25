@@ -139,7 +139,7 @@ return function(T, C, test, scoutTarget)
                 panels.items={}; ISWorldMap_instance=nil
                 local p=began(); panels:world(p:getPlayerNum()); ISTimedActionQueue.clear(p)
                 T.tick(p,false); assert(C.status(p).active and #queue(p)==0)
-                change(p); C.update(p)
+                change(p); C.update(p); T.now=T.now+600; C.update(p)
                 assert(not C.status(p).active and #p.cards==1 and #queue(p)==0)
             end
         end)
@@ -310,7 +310,7 @@ return function(T, C, test, scoutTarget)
             untouched(foreign); foreign:perform(); resumed(p)
         end
     end)
-    test("raw aim alone uses 500ms but actual aim and attack stop immediately",function()
+    test("raw and reported aim use 500ms, an attack stops immediately",function()
         local p,owned=began(); p.aimInput=true; C.update(p)
         T.now=T.now+499; C.update(p)
         assert(C.status(p).active and #p.cards==0 and queue(p)[1]==owned and not owned.stopped)
@@ -321,32 +321,33 @@ return function(T, C, test, scoutTarget)
         T.now=T.now+1000; C.update(gesture); assert(C.status(gesture).active); C.stop(gesture)
         for _,input in ipairs({"aiming","attacking"}) do
             local actual=began(); actual[input]=true; C.update(actual)
+            assert(C.status(actual).active==(input=="aiming"))
+            T.now=T.now+500; C.update(actual)
             assert(not C.status(actual).active and #actual.cards==1 and #queue(actual)==0)
             C.update(actual); assert(#actual.cards==1,"A terminal input must not produce another HUD")
         end
     end)
-    test("between-sample actual aim in a native stop is terminal and explicit rearm is fresh",function()
+    test("an aim that came and went between samples pauses and resumes; a fresh start is clean",function()
         local p,owned=began()
         p.aiming=true
         owned:stop()
         p.aiming=false
         T.now=T.now+1; C.update(p)
-        local stopped=C.status(p)
-        assert(not stopped.active and stopped.phase=="stopped" and stopped.message:lower():find("aim",1,true)
-            and #p.cards==1 and #queue(p)==0,"Detect real aim even when it is gone by the next player update")
-        T.tick(p,false); assert(not C.status(p).active and #p.cards==1 and #queue(p)==0)
+        assert(C.status(p).active and #p.cards==0 and #queue(p)==0)
+        resumed(p)
+        C.stop(p,"Stopped by you.")
         assert(C.start(p,"meditation",false),"A legitimate explicit rearm has no sticky aim cancellation")
         T.tick(p,false)
-        assert(C.status(p).active and queue(p)[1] and queue(p)[1]~=owned and #p.cards==1)
+        assert(C.status(p).active and queue(p)[1] and queue(p)[1]~=owned)
         C.stop(p,"Stopped by you."); C.update(p)
-        assert(not C.status(p).active and #p.cards==2 and p.cards[2].note=="Stopped by you.")
+        assert(not C.status(p).active and p.cards[#p.cards].note=="Stopped by you.")
     end)
     test("meaningful context popup shields raw aim but actual aim still ends training",function()
         local p,owned=began()
         p.contextOpen=true; p.aimInput=true
         C.update(p); T.now=T.now+800; C.update(p)
         assert(C.status(p).active and #p.cards==0 and queue(p)[1]==owned,"Right-clicking a real popup is not aiming")
-        p.aiming=true; C.update(p)
+        p.aiming=true; C.update(p); T.now=T.now+500; C.update(p)
         assert(not C.status(p).active and #p.cards==1 and C.status(p).message:lower():find("aim",1,true))
     end)
     test("visible nonempty single-menu child is meaningful while the native root is hidden",function()
@@ -597,13 +598,12 @@ return function(T, C, test, scoutTarget)
         T.tick(p,false); assert(C.status(p).active); untouched(foreign)
         p.moving=false; p.movementInput=false; foreign:perform(); resumed(p)
     end)
-    test("significant displacement floor changes jogging and danger end a yielded session",function()
+    test("significant displacement floor changes jogging and combat input end a yielded session",function()
         for _,change in ipairs({
             function(p) p.x=p:getX()+3 end,
             function(p) p.square=T.square(0,0,1) end,
             function(p) p.running=true; p.rawMovementInput=true end,
             function(p) p.sprinting=true; p.rawMovementInput=true end,
-            function(p) p.zombies=1 end,
             function(p) p.aimInput=true end,
             function(p) p.attacking=true end,
             function(p) p.cancelInput=true end,
@@ -615,6 +615,21 @@ return function(T, C, test, scoutTarget)
             untouched(foreign); foreign:perform(); T.tick(p,false)
             assert(not C.status(p).active and #queue(p)==0, "Finishing foreign work never revives a stopped session")
         end
+    end)
+    test("nearby danger holds a yielded session and resumes after it has passed",function()
+        local p=began(); local foreign=T.action(p,"ISFitnessAction")
+        ISTimedActionQueue.add(foreign); T.tick(p,false)
+        p.zombies=1
+        for _=1,12 do T.tick(p,false) end
+        assert(C.status(p).active and C.status(p).phase=="recovery-paused" and #p.cards==0)
+        untouched(foreign); foreign:perform()
+        T.tick(p,false); assert(#queue(p)==0,"No practice starts beside danger")
+        p.zombies=nil
+        for _=1,4 do T.tick(p,false) end
+        assert(#queue(p)==0,"Danger that has only just gone is still danger")
+        for _=1,30 do T.tick(p,false); if queue(p)[1] then break end end
+        assert(queue(p)[1] and queue(p)[1].autoMindfulOwner)
+        C.stop(p)
     end)
     test("explicit Stop preserves all queued foreign actions and forbids automatic restart",function()
         local p=began(); local first=T.action(p,"ISEatFoodAction"); local second=T.action(p,"ISFitnessAction")

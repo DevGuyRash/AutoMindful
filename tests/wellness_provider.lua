@@ -15,7 +15,7 @@ do
     SandboxVars.Text={DividerMeditationNew=false}
     local p=T.playerNew()
     p.meditation,p.yoga,p.sitting=10,{10,0,100},true
-    for _,mode in ipairs({"meditation","yoga","both","endurance","meditateTo","yogaTo"}) do
+    for _,mode in ipairs({"meditation","yoga","both","meditateTo","yogaTo"}) do
         local ok,reason=C.start(p,mode,false,1)
         assert(not ok and reason:find("disabled",1,true),mode)
     end

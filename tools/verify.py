@@ -62,7 +62,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     for name, script in (("scout-memory", "scout_memory.lua"),
                          ("lifestyle-care-journey", "lifestyle_care_journey.lua"),
                          ("lifestyle-restroom", "restroom_care.lua"), ("lifestyle-hygiene", "hygiene_care.lua"),
-                         ("ui-contracts", "ui.lua"), ("decision-status", "decision_status.lua"), ("training-cycle", "training_cycle.lua"),
+                         ("ui-contracts", "ui.lua"), ("log-contracts", "log.lua"), ("regressions", "regressions.lua"), ("decision-status", "decision_status.lua"), ("training-cycle", "training_cycle.lua"),
                          ("training-scheduler-integration", "training_scheduler_integration.lua"),
                          ("tier-targets", "tier_targets.lua"), ("tier-options", "tier_options.lua"),
                          ("wellness-provider", "wellness_provider.lua"),
@@ -73,7 +73,6 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                          ("skills-pane-contracts", "skills_pane.lua"), ("yoga-bar-contracts", "yoga_bar.lua"),
                          ("wellness-guide-contracts", "wellness.lua"), ("zen-moodle", "zen_moodle.lua"),
                          ("completion-hud-contracts", "completion_hud.lua"),
-                         ("endurance-journey-contracts", "endurance_journey.lua"),
                          ("consumable-contracts", "consumables.lua"), ("supply-policy-contracts", "supply_policy.lua"),
                          ("water-source-contracts", "water_sources.lua"), ("fluid-transfer-contracts", "fluid_transfers.lua"),
                          ("pain-policy", "pain_care.lua"), ("pain-supplies", "pain_supplies.lua"),
@@ -96,13 +95,12 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     native_scope = "not requested"
     if game:
         game = game.expanduser().resolve()
-        checks.append(check(evidence, "mod-settings-panel", [lua, "tests/settings_panel.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-queue-handoff", [lua, "tests/stock_queue.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-queue-kahlua-lookup",
                             [lua, "tests/stock_queue.lua", str(game / "media"), "--kahlua-queue-lookup"]))
         checks.append(check(evidence, "stock-native-aim-stop", [lua, "tests/stock_aim.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-scout-route-outcome", [lua, "tests/stock_route_outcome.lua", str(game / "media")]))
-        checks.append(check(evidence, "stock-context-icons", [lua, "tests/stock_context_icons.lua", str(game / "media")]))
+        checks.append(check(evidence, "stock-menu", [lua, "tests/stock_menu.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-pain-action", [lua, "tests/stock_pain.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-supply-loans", [lua, "tests/stock_supply_loans.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-care-ownership", [lua, "tests/stock_care_ownership.lua", str(game / "media")]))
@@ -124,13 +122,12 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-lifestyle-restroom", "restroom_care.lua"),
                                      ("native-lifestyle-stock-wash", "stock_hygiene.lua"),
                                      ("native-lifestyle-hygiene", "lifestyle_hygiene.lua"),
-                                     ("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"),
+                                     ("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"), ("native-log-contracts", "log.lua"), ("native-regressions", "regressions.lua"),
                                      ("native-decision-status", "decision_status.lua"),
                                      ("native-training-cycle", "training_cycle.lua"),
                                      ("native-training-scheduler-integration", "training_scheduler_integration.lua"),
                                      ("native-tier-targets", "tier_targets.lua"), ("native-tier-options", "tier_options.lua"),
                                      ("native-wellness-provider", "wellness_provider.lua"),
-                                     ("native-mod-settings-panel", "settings_panel.lua"),
                                      ("native-tier-goals-integration", "tier_goals_integration.lua"), ("native-tier-one-shot-witness", "tier_one_shot_witness.lua"),
                                      ("native-hunger-relief", "hunger_relief.lua"), ("native-hunger-prerequisite", "hunger_prerequisite.lua"), ("native-practice-care", "practice_care.lua"), ("native-practice-care-integration", "practice_care_integration.lua"),
                                      ("native-recovery-mode", "recovery_mode.lua"), ("native-smarter-recovery", "smarter_recovery.lua"), ("native-strict-recovery-tier", "strict_recovery_tier.lua"), ("native-sleep-healing", "sleep_healing.lua"), ("native-walking-handoff", "walking_handoff.lua"),
@@ -138,9 +135,8 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-skills-pane", "skills_pane.lua"), ("native-yoga-bar", "yoga_bar.lua"),
                                      ("native-wellness-guide", "wellness.lua"), ("native-zen-moodle", "zen_moodle.lua"),
                                      ("native-stock-skills-pane", "stock_skills_pane.lua"),
-                                     ("native-stock-context-icons", "stock_context_icons.lua"),
+                                     ("native-stock-menu", "stock_menu.lua"),
                                      ("native-completion-hud-contracts", "completion_hud.lua"),
-                                     ("native-endurance-journey-contracts", "endurance_journey.lua"),
                                      ("native-stock-queue-handoff", "stock_queue.lua"),
                                      ("native-stock-supply-loans", "stock_supply_loans.lua"),
                                      ("native-stock-care-ownership", "stock_care_ownership.lua"),
@@ -154,7 +150,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-nearby-contracts", "nearby.lua")):
                     if script in ("lifestyle_hygiene.lua", "mindfulness_native.lua") and not reference_root:
                         continue
-                    suite_reference = game / "media" if script in ("stock_route_outcome.lua", "stock_hygiene.lua", "stock_supply_loans.lua", "stock_care_ownership.lua", "sleep_healing.lua", "water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "stock_aim.lua", "stock_pain.lua", "stock_context_icons.lua", "stock_skills_pane.lua", "tier_options.lua", "settings_panel.lua") else reference_root
+                    suite_reference = game / "media" if script in ("stock_route_outcome.lua", "stock_hygiene.lua", "stock_supply_loans.lua", "stock_care_ownership.lua", "sleep_healing.lua", "water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "stock_aim.lua", "stock_pain.lua", "stock_menu.lua", "stock_skills_pane.lua", "tier_options.lua") else reference_root
                     command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),
                                "KahluaCheck", str(ROOT), str(suite_reference) if suite_reference else "-", script]
                     if script == "mindfulness_native.lua":

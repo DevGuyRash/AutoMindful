@@ -36,5 +36,5 @@ jobs:
           lua5.1 tests/stock_queue.lua .stock-aim --kahlua-queue-lookup
           lua5.1 tests/stock_aim.lua .stock-aim
           lua5.1 tests/stock_pain.lua .stock-aim
-          lua5.1 tests/stock_context_icons.lua .stock-aim
+          lua5.1 tests/stock_menu.lua .stock-aim
           lua5.1 tests/stock_skills_pane.lua .stock-aim

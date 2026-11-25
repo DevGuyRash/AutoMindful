@@ -15,7 +15,19 @@ import zipfile
 from build import build
 
 
-def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[Path]) -> int:
+# Presentation only. Terms stay for the person at the keyboard to answer.
+PROFILE_KEYS = {"fontSize", "contextMenuFont", "inventoryFont", "tooltipFont",
+                "codeFontSize", "moodleSize", "language", "singleContextMenu", "width", "height"}
+
+
+def profile_options(profile: Path | None) -> dict[str, str]:
+    if not profile:
+        return {}
+    rows = (line.split("=", 1) for line in profile.expanduser().read_text().splitlines() if "=" in line)
+    return {key: value for key, value in rows if key in PROFILE_KEYS}
+
+
+def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[Path], profile: Path | None = None) -> int:
     game, lifestyle, evidence = game.resolve(), lifestyle.resolve(), evidence.resolve()
     if not (game / "projectzomboid.jar").is_file():
         raise ValueError("--game must contain projectzomboid.jar")
@@ -63,16 +75,16 @@ def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[
     (cache / "mods/reset-mods-42_00.txt").write_text("This disposable cache has an explicit Build 42 mod selection.\n")
     (cache / "mods/default.txt").write_text("VERSION = 1,\nmods\n{\n" +
         "".join(f"    mod = {mod_id},\n" for mod_id in mod_ids) + "}\nmaps\n{\n}\n")
+    settings = {"version": "8", "width": "1280", "height": "900", "fullScreen": "false", "borderless": "false",
+                "tutorialDone": "true", "doneNewSaveFolder": "true"} | profile_options(profile)
     if not resume:
-        (cache / "options.ini").write_text(
-            "version=8\nwidth=1280\nheight=900\nfullScreen=false\nborderless=false\n"
-            "tutorialDone=true\ndoneNewSaveFolder=true\n")
+        (cache / "options.ini").write_text("".join(f"{key}={value}\n" for key, value in settings.items()))
     owned = []
     try:
         with (evidence / f"display-{launch}.log").open("wb") as display_log, (evidence / f"client-{launch}.log").open("wb") as game_log:
             read_fd, write_fd = os.pipe()
             try:
-                display = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1280x900x24", "-nolisten", "tcp"],
+                display = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0", f"{settings['width']}x{settings['height']}x24", "-nolisten", "tcp"],
                     pass_fds=(write_fd,), stdout=display_log, stderr=subprocess.STDOUT)
                 owned.append(display)
                 os.close(write_fd)
@@ -94,7 +106,7 @@ def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[
             env = {key: value for key, value in os.environ.items() if key not in {
                 "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "JAVA_OPTS", "CLASSPATH", "LD_PRELOAD"}}
             env.update(DISPLAY=display_name, LD_LIBRARY_PATH=f"{game}:{game / 'natives'}:{game / 'jre64/lib'}")
-            client = subprocess.Popen([str(game / "jre64/bin/java"), "-Xms512m", "-Xmx2048m", "-XX:+UseZGC",
+            client = subprocess.Popen([str(game / "jre64/bin/java"), "-Xms512m", "-Xmx3584m", "-XX:+UseZGC",
                 "--enable-native-access=ALL-UNNAMED", "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED",
                 "-Dzomboid.steam=0", "-Djava.library.path=.:natives", "-cp", ".:projectzomboid.jar",
                 "zombie.gameStates.MainScreenState", f"-cachedir={cache}", "-nosteam", "-nosound", "-novoip",
@@ -122,7 +134,10 @@ if __name__ == "__main__":
     parser.add_argument("--lifestyle", required=True, type=Path)
     parser.add_argument("--evidence", required=True, type=Path)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--profile-options", type=Path,
+        help="Copy fonts and screen size from this options.ini")
     parser.add_argument("--extra-mod", action="append", type=Path, default=[])
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    raise SystemExit(play(args.game, args.lifestyle, args.evidence.expanduser(), args.resume, args.extra_mod))
+    raise SystemExit(play(args.game, args.lifestyle, args.evidence.expanduser(), args.resume, args.extra_mod,
+        args.profile_options))

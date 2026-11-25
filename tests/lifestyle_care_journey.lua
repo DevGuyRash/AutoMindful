@@ -231,7 +231,9 @@ do
     for i=1,65 do progress=i/100; T.tick(p,false) end
     assert(C.status(p).active and q(p)[1]==head,"The native action is still doing work")
     for i=1,64 do T.tick(p,false) end
-    assert(not C.status(p).active and head.stopped and #p.careLog==0 and p.receipts==0)
+    assert(C.status(p).active and head.stopped and #p.careLog==0 and p.receipts==0,
+        "A stalled care action is given up, not the whole session")
+    C.stop(p)
     print("PASS long pause and progressing restroom action versus 60s confirmed stall; no manufactured relief")
 end
 do

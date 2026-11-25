@@ -16,7 +16,7 @@ local function safeScriptFood(script)
         and not script:isAlcoholic() and not script:isDangerousUncooked()
 end
 
-local function opening(player, item, includeNearby)
+local function opening(player, item, includeNearby, holder)
     local name = item:getOpeningRecipe()
     local recipe = name and getScriptManager():getCraftRecipe(name)
     if not recipe then return nil, nil, "This item has no usable native opening recipe. Open it before training." end
@@ -32,6 +32,8 @@ local function opening(player, item, includeNearby)
         local container = available:get(index)
         if includeNearby or container:getOutermostContainer() == inventory then containers:add(container) end
     end
+    -- The opener lying beside the can counts, wherever that cupboard is.
+    if holder and not containers:contains(holder) then containers:add(holder) end
     logic:setContainers(containers)
     logic:setRecipeFromContextClick(recipe, item)
     if not logic:canPerformCurrentRecipe() then
@@ -66,7 +68,9 @@ local function effects(description, hunger, thirst)
     description.food, description.water = hunger > 0, thirst > 0
 end
 
-function Consumables.inspect(player, item, includeNearby)
+-- holder: also count opening tools in this container, for judging stock that
+-- is still some steps away.
+function Consumables.inspect(player, item, includeNearby, holder)
     local description = {food = false, water = false, needsOpening = false,
         outputTypes = {}, hungerRelief = 0, thirstRelief = 0, hungerEffect = 0, thirstEffect = 0, calories = 0}
     local food = instanceof(item, "Food")
@@ -76,9 +80,17 @@ function Consumables.inspect(player, item, includeNearby)
         description.reason = "This food is unsafe, has an unverified effect, is frozen, or needs cooking."
         return description
     end
+    -- An unsafe drink is unsafe sealed, too; do not ask for its opener first.
+    if fluid and not fluid:isEmpty() then
+        local safe, reason = Fluids.inspect(fluid)
+        if not safe then
+            description.reason, description.unsafeFluid = reason, true
+            return description
+        end
+    end
     description.needsOpening = item:isSealed() or (food and (cantEat == true or item:getOpeningRecipe() ~= nil))
     if description.needsOpening then
-        local recipe, logic, reason = opening(player, item, includeNearby == true)
+        local recipe, logic, reason = opening(player, item, includeNearby == true, holder)
         if not recipe then
             description.reason = reason
             return description

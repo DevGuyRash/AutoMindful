@@ -229,6 +229,12 @@ for _,mode in ipairs({"both","meditation","yoga","recovery"}) do
         local food=k=="food"
         p.values[food and "HUNGER" or "THIRST"]=.08
         if food then meal(p); p.hungerMoodle=1 else T.add(p.inventory,T.water()); p.thirstMoodle=1 end
+        if mode~="recovery" then
+            local practice=head(p)
+            steps(p,6)
+            assert(head(p)==practice and not practice.stopped,"The first moodle does not break off a practice")
+            practice:perform()
+        end
         local a=untilHead(p,food and "eat" or "drink")
         local v=p.values[food and "HUNGER" or "THIRST"]
         a:perform()
@@ -299,13 +305,17 @@ for _,mode in ipairs({"recovery","yoga"}) do
     local p=new(6,.01); begin(p,mode)
     if mode=="yoga" then untilHead(p,"Yoga") else steps(p,6) end
     p.hungerMoodle,p.values.HUNGER=1,.07
+    if mode=="yoga" then
+        local yoga=head(p); steps(p,6)
+        assert(head(p)==yoga and not yoga.stopped); yoga:perform()
+    end
     local med=untilHead(p,"Meditation")
     assert(C.status(p).phase=="practice-care" and count(p,"eat")==0)
     badge(p,.4); step(p)
     assert(med.stopped and p.values.HUNGER==.07 and p.calories==2000)
     C.stop(p)
 end
-print("PASS first hunger moodle reuses the native bounded Strong fallback, even inside an ordinary Yoga turn")
+print("PASS first hunger moodle reuses the native bounded Strong fallback, once an ordinary Yoga turn has finished")
 
 -- Reproduce the live report: a hunger course opens while endurance is low,
 -- skill rank changes arrive before the badge, and a real foreign action may

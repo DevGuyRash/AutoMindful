@@ -1,17 +1,19 @@
--- Runtime-only, per-survivor explanations. Never copy a timed action's name,
--- an item's display text, coordinates, identifiers, or raw logs.
+-- Runtime-only, per-survivor explanations for the Log tab. The file log holds
+-- the evidence; this holds what a player would want to read.
 local Decisions = {}
-local limit = 6
+local limit = 60
 local labels = {
     starting="Checking needs and requirements", meditation="Meditating", yoga="Practicing Yoga",
     sleeping="Sleeping", resting="Resting", recovering="Waiting for recovery", ["recovery-idle"]="Monitoring needs",
     ["practice-care"]="Practicing for relief", reading="Reading for boredom", drinking="Drinking", eating="Eating",
     paincare="Managing pain", hygiene="Taking care of hygiene", restroom="Using the restroom",
     travelling="Walking for supplies or care", scouting="Checking supplies", returning="Returning borrowed supplies",
-    transferring="Preparing a drink", opening="Opening a supply", care="Taking a care break",
+    transferring="Preparing a drink", preparing="Opening a supply", collecting="Collecting a supply",
+    sitting="Sitting down", standing="Standing up", between="Leaving an opening for other actions",
+    ["restoring-mask"]="Putting the mask back on", ["return-wait"]="Waiting to retry the way back", care="Taking a care break",
     resuming="Rechecking after a pause", stopped="AutoMindful stopped", complete="Mode complete",
     ["current-action"]="Waiting for your current action", walking="Waiting for movement to settle",
-    ["manual-input"]="Waiting for your controls to settle", ["recovery-danger"]="Recovery paused for safety",
+    ["manual-input"]="Waiting for your controls to settle", ["recovery-danger"]="Paused for safety",
     ["inspection-open"]="Waiting for the map or dialog to close", interrupted="Checking an interrupted action",
     ["settling-action"]="Waiting for the previous action to settle",
     ["admission-retry"]="Lifestyle did not start the practice",
@@ -28,8 +30,8 @@ local liveDetails = {
     ["inspection-open"]="Close the window to continue. Your mode stays on.",
     interrupted="AutoMindful will check before trying the action again.",
     ["settling-action"]="AutoMindful will resume when the queue is clear.",
-    ["manual-input"]="Recovery will resume when you are idle.",
-    ["recovery-danger"]="Recovery stays armed and will wait until it is safe.",
+    ["manual-input"]="It resumes when you are idle.",
+    ["recovery-danger"]="The job stays on and continues when it is safe.",
 }
 
 local function nativeText(value)
@@ -48,6 +50,15 @@ local function nativeText(value)
     if text~="" then return text end
 end
 
+local function clock()
+    local time=getGameTime and getGameTime()
+    local ok,text=pcall(function()
+        local hours=time:getTimeOfDay()
+        return string.format("%02d:%02d",math.floor(hours),math.floor(hours*60)%60)
+    end)
+    return ok and text or nil
+end
+
 local function record(state, code, reason)
     local label=labels[code]
     if not label then return end
@@ -55,7 +66,8 @@ local function record(state, code, reason)
     if not log then log={revision=0, entries={}}; state.decisionLog=log end
     local latest=log.entries[1]
     if latest and latest.code==code and latest.reason==reason then return end
-    table.insert(log.entries,1,{code=code,label=label,reason=reason})
+    table.insert(log.entries,1,{code=code,label=label,reason=reason,clock=clock(),
+        message=not reason and nativeText(state.message)~=label and nativeText(state.message) or nil})
     if #log.entries>limit then table.remove(log.entries) end
     log.revision=log.revision+1
 end
@@ -92,7 +104,7 @@ function Decisions.snapshot(state)
     local result={}
     local log=state and state.decisionLog
     for i,entry in ipairs(log and log.entries or {}) do
-        result[i]={code=entry.code,label=entry.label,reason=entry.reason}
+        result[i]={code=entry.code,label=entry.label,reason=entry.reason,clock=entry.clock,message=entry.message}
     end
     return result
 end

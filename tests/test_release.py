@@ -99,7 +99,7 @@ class ReleaseTests(unittest.TestCase):
                 raster = zlib.decompress(b"".join(chunks))
                 self.assertEqual(len(raster), 32 * (1 + 32 * 4))
                 images.add(raster)
-            self.assertEqual(len(images), 9, "Nine distinct RGBA glyphs, not copies with changed metadata")
+            self.assertEqual(len(images), 4, "Four distinct RGBA glyphs, not copies with changed metadata")
 
     @classmethod
     def setUpClass(cls):

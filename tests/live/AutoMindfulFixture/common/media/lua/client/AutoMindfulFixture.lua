@@ -339,9 +339,8 @@ local function progressSnapshot(player)
     if window then
         print("[AutoMindfulFixture] GEOMETRY x=" .. window:getX() .. " y=" .. window:getY()
             .. " width=" .. window.width .. " height=" .. window.height
-            .. " bodyHeight=" .. window.body.height .. " bodyScrollHeight=" .. window.body:getScrollHeight()
-            .. " activityHeight=" .. window.activity.height .. " activityScrollHeight=" .. window.activity:getScrollHeight()
-            .. " activityVScroll=" .. tostring(window.activity.vscroll) .. " visible=" .. tostring(window:getIsVisible()))
+            .. " bodyHeight=" .. window.body.height .. " contentHeight=" .. window.body.contentHeight
+            .. " view=" .. window.view .. " mini=" .. tostring(window.mini) .. " visible=" .. tostring(window:getIsVisible()))
     end
     for _, kind in ipairs({"food", "water"}) do
         local choice = AutoMindful.Supplies.choose(player, kind, true, {})
@@ -393,9 +392,9 @@ local function stockSnapshot(player)
         print("[AutoMindfulFixture] WINDOW food=" .. tostring(shown.food) .. " nearbyFood=" .. tostring(shown.nearbyFood)
             .. " water=" .. tostring(shown.water) .. " nearbyWater=" .. tostring(shown.nearbyWater)
             .. " dueInMs=" .. tostring((window.nextRefresh or 0) - getTimestampMs())
-            .. " visible=" .. tostring(window:getIsVisible()) .. " collection=" .. tostring(window.nearby:isSelected(1)))
+            .. " visible=" .. tostring(window:getIsVisible()) .. " range=" .. require("AutoMindful/Preferences").range(player))
     end
-    local report = Controller.prepare(player, window and window.nearby:isSelected(1) or status.collectNearby, true)
+    local report = Controller.prepare(player, require("AutoMindful/Preferences").collectNearby(player), true)
     print("[AutoMindfulFixture] SNAPSHOT phase=" .. status.phase .. " active=" .. tostring(status.active)
         .. " visible=" .. tostring(window and window:isVisible()) .. " pendingReturns=" .. tostring(status.pendingReturns)
         .. " hunger=" .. player:getStats():get(CharacterStat.HUNGER) .. " thirst=" .. player:getStats():get(CharacterStat.THIRST)
@@ -557,6 +556,23 @@ Events.OnPlayerUpdate.Add(function(player)
                     .. " screen=" .. getCore():getScreenWidth() .. "x" .. getCore():getScreenHeight()
                     .. " position=" .. player:getX() .. "," .. player:getY())
             elseif command == "open" then AutoMindful.UI.open(player)
+            elseif command == "tab" then AutoMindful.UI.open(player):show(line:match("^%S+%s+(%S+)"))
+            elseif command == "start" then print(tostring(require("AutoMindful/Jobs").launch(player, line:match("^%S+%s+(%S+)"), tonumber(line:match("^%S+%s+%S+%s+(%d+)")))))
+            elseif command == "stopjob" then Controller.stop(player, "Fixture stop.")
+            elseif command == "stat" then
+                local name, amount = line:match("^%S+%s+(%S+)%s+([%d%.]+)")
+                player:getStats():set(CharacterStat[name], tonumber(amount))
+            elseif command == "level" then
+                local amount = tonumber(line:match("^%S+%s+(%d+)"))
+                for _=1,amount do player:LevelPerk(Perks.Meditation) end
+                local skill = HiddenSkills.getSkill(player, "Yoga")
+                skill[1] = amount
+            elseif command == "mat" then
+                local here = player:getSquare()
+                local east = here:getE()
+                for square, sprite in pairs({[here]="floors_rugs_01_52", [east]="floors_rugs_01_53"}) do
+                    square:AddTileObject(IsoObject.new(getCell(), square, sprite))
+                end
             elseif command == "watercase" then startWaterCase(player, line:match("^%S+%s+(%S+)"))
             elseif command == "scoutcase" then startScoutCase(player, line:match("^%S+%s+(%S+)"))
             elseif command == "fluidcase" then setupFluidCase(player, line:match("^%S+%s+(%S+)") or "owned")
@@ -732,13 +748,11 @@ Events.OnPlayerUpdate.Add(function(player)
                 player:getStats():set(CharacterStat.BOREDOM, 40)
                 player:getNutrition():setCalories(1000)
             elseif command == "snapshot" then
-                local window = AutoMindful.UI.windows[0]
                 local scout = PZAPI.ModOptions:getOptions("AutoMindful"):getOption("searchNearby")
                 print("[AutoMindfulFixture] SNAPSHOT xp=" .. tostring(player:getXp():getXP(Perks.Meditation))
                     .. " yogaXP=" .. tostring(HiddenSkills.getSkill(player, "Yoga")[2])
                     .. " thirst=" .. tostring(player:getStats():get(CharacterStat.THIRST))
-                    .. " nearby=" .. tostring(window and window.nearby:isSelected(1))
-                    .. " scoutPane=" .. tostring(window and window.scouting:isSelected(1))
+                    .. " range=" .. require("AutoMindful/Preferences").range(player)
                     .. " scoutOption=" .. tostring(scout:getValue())
                     .. " scoutMods=" .. tostring(scout.element and scout.element:isSelected(1)))
             end

@@ -1,1186 +1,567 @@
+-- The window and right-click menu as a player meets them, over explicit doubles
+-- for the game's widgets. Rows are measured, drawn and clicked by the real code.
 package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
-for _, name in ipairs({"ISCollapsableWindow", "ISPanel", "ISButton", "ISTickBox", "ISLabel", "ISComboBox", "ISRichTextPanel", "ISProgressBar", "ISContextMenu", "ISToolTip"}) do
-    package.loaded["ISUI/" .. name] = true
-end
+for _, name in ipairs({"ISCollapsableWindow", "ISPanel", "ISButton", "ISContextMenu", "ISToolTip"}) do package.loaded["ISUI/" .. name] = true end
 package.loaded["PZAPI/ModOptions"] = true
 package.loaded["ISMeditation/ZenWellnessContextMenu"] = true
+package.loaded["TimedActions/WalkToTimedAction"] = true
 package.loaded["XpSystem/ISUI/ISCharacterInfo"] = true
+local function passed(text) print("PASS " .. text) end
+
+UIFont = {Small=1, Medium=2}
+local charWidth, lineHeight = 7, 16
+function getTextManager()
+    return {getFontHeight=function(_, font) return font == UIFont.Medium and lineHeight + 4 or lineHeight end,
+        MeasureStringX=function(_, font, text) return #tostring(text) * (font == UIFont.Medium and charWidth + 1 or charWidth) end}
+end
+local mouseX, mouseY, now = 0, 0, 1000
+function getMouseX() return mouseX end
+function getMouseY() return mouseY end
+function getTimestampMs() return now end
+local screenW, screenH = 1920, 1036
 
 local Widget = {}
 function Widget:derive(name) return setmetatable({Type=name, __index=self}, {__index=self}) end
 function Widget:new(x, y, width, height)
-    local object = {x=x or 0, y=y or 0, width=width or 0, height=height or 0, children={}, visible=true, draws={}}
-    return setmetatable(object, {__index=self})
+    return setmetatable({x=x or 0, y=y or 0, width=width or 0, height=height or 0, children={}, visible=true,
+        borderColor={a=1}, backgroundColor={a=1}}, {__index=self})
 end
 function Widget:initialise() end
-function Widget:addChild(child) self.children[#self.children + 1] = child end
+function Widget:addChild(child)
+    self.children[#self.children + 1] = child
+    child.parent = self
+    if child.createChildren and not child.created then child.created = true; child:createChildren() end
+end
 function Widget:addToUIManager()
     if not self.created and self.createChildren then self.created = true; self:createChildren() end
-    self.visible = true
 end
 function Widget:removeFromUIManager() self.removed = true end
 function Widget:setVisible(value) self.visible = value end
 function Widget:getIsVisible() return self.visible end
 function Widget:getX() return self.x end
 function Widget:getY() return self.y end
-function Widget:getAbsoluteX() return self.x end
-function Widget:getAbsoluteY() return self.y end
-function Widget:setX(value) self.x = value end
-function Widget:setY(value) self.y = value end
-function Widget:setWidth(value) self.width = value end
-function Widget:getBottom() return self.y + self.height end
-function Widget:setHeight(value) self.height = value end
-function Widget:setEnable(value) self.enable = value end
+function Widget:getAbsoluteX() return self.x + (self.parent and self.parent:getAbsoluteX() or 0) end
+function Widget:getAbsoluteY() return self.y + (self.parent and self.parent:getAbsoluteY() or 0) end
+function Widget:setX(v) self.x = v end
+function Widget:setY(v) self.y = v end
+function Widget:setWidth(v) self.width = v end
+function Widget:setHeight(v) self.height = v end
 function Widget:bringToTop() end
-function Widget:setScrollChildren(value) self.scrollChildren = value end
-function Widget:addScrollBars() self.hasScrollbars = true; self.vscroll = Widget:new() end
-function Widget:setScrollHeight(value) self.scrollHeight = value end
-function Widget:getScrollHeight() return self.scrollHeight or 0 end
-function Widget:setYScroll(value) self.scrollY = value end
+function Widget:setScrollChildren() end
+function Widget:addScrollBars() self.vscroll = Widget:new() end
+function Widget:setScrollHeight(v) self.scrollHeight = v end
 function Widget:getYScroll() return self.scrollY or 0 end
+function Widget:setYScroll(v) self.scrollY = v end
+function Widget:getMouseX() return mouseX - self:getAbsoluteX() end
+function Widget:getMouseY() return mouseY - self:getAbsoluteY() - self:getYScroll() end
 function Widget:setStencilRect() end
 function Widget:clearStencilRect() end
-function Widget:drawText(text, x, y, r, g, b, a) self.draws[#self.draws + 1] = {text=text,x=x,y=y,r=r,g=g,b=b,a=a} end
-Widget.drawTextRight = Widget.drawText
+function Widget:drawRect() end
+function Widget:drawRectBorder() end
+function Widget:drawTextureScaledAspect() end
+function Widget:setWantKeyEvents(v) self.wantsKeys = v end
+local drawn
+function Widget:drawText(text, x, y, _, _, _, _, font)
+    if drawn then drawn[#drawn + 1] = {text=text, left=x, right=x + getTextManager():MeasureStringX(font, text), width=self.width} end
+end
+function Widget:drawTextRight(text, x, y, _, _, _, _, font)
+    if drawn then drawn[#drawn + 1] = {text=text, left=x - getTextManager():MeasureStringX(font, text), right=x, width=self.width} end
+end
 ISPanel = Widget:derive("ISPanel")
-function ISPanel:prerender() end
+ISButton = Widget:derive("ISButton")
+function ISButton:new(x, y, w, h, title, target, callback)
+    local o = Widget.new(self, x, y, w, h)
+    o.title, o.target, o.callback = title, target, callback
+    return o
+end
+ISToolTip = Widget:derive("ISToolTip")
+function ISToolTip:new() return Widget.new(self) end
+function ISToolTip:setOwner() end
+function ISToolTip:setAlwaysOnTop() end
+function ISToolTip:setDesiredPosition() end
+function ISToolTip:setName(name) self.name = name end
+function ISToolTip:setContextMenu(menu) self.menu = menu end
 ISCollapsableWindow = ISPanel:derive("ISCollapsableWindow")
 function ISCollapsableWindow:createChildren()
-    local function resize()
-        return {target=self,onMouseUp=function(w) w.resizing=false end,onMouseUpOutside=function(w) w.resizing=false end}
-    end
-    self.resizeWidget,self.resizeWidget2=resize(),resize()
-    self.pinButton,self.collapseButton=Widget:new(),Widget:new()
-    self.pinButton:setVisible(false)
+    local function widget() local w = Widget:new(); w.target, w.onMouseUp, w.onMouseUpOutside = self, function() end, function() end; return w end
+    self.resizeWidget, self.resizeWidget2 = widget(), widget()
+    self.collapseButton, self.pinButton = Widget:new(), Widget:new()
 end
+function ISCollapsableWindow:titleBarHeight() return lineHeight + 1 end
+function ISCollapsableWindow:resizeWidgetHeight() return 12 end
 function ISCollapsableWindow:update() end
 function ISCollapsableWindow:onResize() end
-function ISCollapsableWindow:onMouseDown() self.moving=true end
-function ISCollapsableWindow:onMouseUp() self.moving=false end
-function ISCollapsableWindow:onMouseUpOutside() self.moving=false end
-function ISCollapsableWindow:titleBarHeight() return 24 end
-ISButton = Widget:derive("ISButton")
-function ISButton:new(x,y,w,h,name,target,callback)
-    local o=Widget.new(self,x,y,w,h);o.name,o.target,o.callback=name,target,callback;return o
-end
-function ISButton:setTitle(title) self.name=title end
-function ISButton:setImage(image) self.image=image end
-function ISButton:click() if self.callback then return self.callback(self.target,self) end end
-ISTickBox = Widget:derive("ISTickBox")
-function ISTickBox:new(x, y, width, height, _, target, callback)
-    local box = Widget.new(self, x, y, width, height)
-    box.target, box.callback = target, callback
-    box.boxSize,box.textGap=height,6
-    return box
-end
-function ISTickBox:addOption(label) self.option = label end
-function ISTickBox:clearOptions() self.option,self.selected=nil,nil end
-function ISTickBox:setSelected(_, value) self.selected = value end
-function ISTickBox:isSelected() return self.selected == true end
-function ISTickBox:click()
-    self:setSelected(1, not self:isSelected(1))
-    self.callback(self.target, 1, self:isSelected(1))
-end
-ISComboBox = Widget:derive("ISComboBox")
-function ISComboBox:new(x,y,w,h,target,callback)
-    local o=Widget.new(self,x,y,w,h); o.target,o.callback,o.options=target,callback,{}; return o
-end
-function ISComboBox:addOptionWithData(label, data) self.options[#self.options + 1]={label=label,data=data} end
-function ISComboBox:setSelected(index) self.selected=index end
-function ISComboBox:getSelected() return self.selected end
-function ISComboBox:click(index)
-    self:setSelected(index)
-    return self.callback(self.target,self)
-end
-ISLabel = Widget:derive("ISLabel")
-function ISLabel:new(x, y, height, name)
-    local label = Widget.new(self, x, y, 100, height)
-    label.name = name
-    return label
-end
-function ISLabel:setName(name) self.name = name end
-function ISLabel.updateTooltip() end
-ISRichTextPanel = Widget:derive("ISRichTextPanel")
-function ISRichTextPanel:new(x, y, width, height)
-    local panel = Widget.new(self, x, y, width, height)
-    panel.marginTop, panel.marginBottom = 10, 10
-    return panel
-end
-function ISRichTextPanel:setText(text) self.text = text end
-function ISRichTextPanel:paginate()
-    self.paginated = (self.paginated or 0) + 1
-    local _, breaks = self.text:gsub("<LINE>", "")
-    self:setScrollHeight(self.marginTop + (breaks + 1) * getTextManager():getFontHeight(self.defaultFont) + self.marginBottom)
-end
-ISProgressBar = Widget:derive("ISProgressBar")
-function ISProgressBar:setProgress(value) self.progress = value end
-function ISProgressBar:setText(text) self.text = text end
-ISToolTip = Widget:derive("ISToolTip")
-function ISToolTip:setName(name) self.name = name end
-function ISToolTip:setContextMenu(context) self.contextMenu = context end
+function ISCollapsableWindow:onMouseDown() self.moving = true end
+function ISCollapsableWindow:onMouseUp() self.moving = false end
+function ISCollapsableWindow:onMouseUpOutside() self.moving = false end
 
-UIFont = {Small=1, Medium=2}
 Keyboard = {KEY_ESCAPE=1, KEY_0=11}
-local now, textEntry = 100, false
-local nativeKeys, nativeAlt, registered = {}, {}, {}
-local keyRecordReads = 0
-local function opaqueBinding(name, code)
-    if nativeKeyRecord then return nativeKeyRecord(name, code) end
-    return setmetatable({}, {__index=function()
-        keyRecordReads = keyRecordReads + 1
-        error("native key records must never be indexed from Lua")
-    end})
-end
-local emptyBinding = opaqueBinding("empty", 0)
+local boundKeys = {}
 keyBinding = {}
-local core = {getScreenWidth=function() return 1280 end, getScreenHeight=function() return 900 end,
-    isDoingTextEntry=function() return textEntry end,
-    getKey=function(_, name) return nativeKeys[name] or 0 end,
-    getAltKey=function(_, name) return nativeAlt[name] or 0 end,
-    getKeyBinding=function(_, code) return registered[code] or emptyBinding end}
-function getCore() return core end
-function getKeyName(code) return code==Keyboard.KEY_0 and "0" or ("Key "..code) end
-function getTimestampMs() return now end
-function getTextManager() return {getFontHeight=function() return 17 end, MeasureStringX=function(_, _, text) return #text * 7 end} end
-local player = {data={}}
-function player:getModData() return self.data end
-function player:getPlayerNum() return 0 end
-function player:isDead() return false end
-local player2 = {data={}, getPlayerNum=function() return 1 end, isDead=player.isDead, getModData=player.getModData}
-function getSpecificPlayer(index) return ({[0]=player,[1]=player2})[index] end
-local textureLoads, textureHandles = {}, {}
-function fileExists(path) return path:match("^media/ui/AutoMindful/%a+%.png$") ~= nil end
-function getTexture(path)
-    assert(path=="media/ui/inventoryPanes/Button_Gear.png" or path:match("^media/ui/AutoMindful/%a+%.png$"),
-        "Only the stock gear may use a texture outside the bundled namespace")
-    textureLoads[path] = (textureLoads[path] or 0)+1
-    textureHandles[path] = textureHandles[path] or {path=path}
-    return textureHandles[path]
+function getCore()
+    return {getScreenWidth=function() return screenW end, getScreenHeight=function() return screenH end,
+        isDoingTextEntry=function() return false end, getKey=function() return 0 end, getAltKey=function() return 0 end}
 end
-local function art(name) return textureHandles["media/ui/AutoMindful/" .. name .. ".png"] end
+function getKeyName(code) return code == 11 and "0" or "Key " .. code end
+function getTexture(path) return {path=path, getName=function() return path end} end
+function fileExists() return true end
+function instanceof() return false end
+local function square(x, y, objects)
+    local s = {x=x, y=y}
+    function s:getX() return self.x end
+    function s:getY() return self.y end
+    function s:getZ() return 0 end
+    function s:getObjects() return {size=function() return #(objects or {}) end, get=function(_, i) return objects[i + 1] end} end
+    return s
+end
+MoodleType = {THIRST="THIRST", HUNGRY="HUNGRY", BORED="BORED", TIRED="TIRED", ENDURANCE="ENDURANCE", PAIN="PAIN", STRESS="STRESS", UNHAPPY="UNHAPPY", PANIC="PANIC"}
+local function survivor(index)
+    local p = {data={}, moodles={}, index=index, square=square(10, 10)}
+    function p:getModData() return self.data end
+    function p:getPlayerNum() return self.index end
+    function p:isDead() return self.dead == true end
+    function p:getSquare() return self.square end
+    function p:hasTimedActions() return self.busy == true end
+    function p:getMoodles()
+        return {getMoodleLevel=function(_, kind) return p.moodles[kind] or 0 end,
+            getMoodleDisplayString=function(_, kind) return ({THIRST="Thirsty", HUNGRY="Peckish", BORED="Bored", PAIN="Pain"})[kind] or kind end}
+    end
+    return p
+end
+local player, player2 = survivor(0), survivor(1)
+function getSpecificPlayer(index) return ({[0]=player, [1]=player2})[index] end
 
-PZAPI = {ModOptions={settings={},Data={}}}
+PZAPI = {ModOptions={settings={}, Data={}, saves=0}}
 function PZAPI.ModOptions:getOptions(id) return self.settings[id] end
-function PZAPI.ModOptions:save()
-    self.saves = (self.saves or 0) + 1
-    self.savedCycle = self:getOptions("AutoMindful"):getOption("cyclePolicy"):getValue()
-    self.savedSearch = self:getOptions("AutoMindful"):getOption("searchNearby"):getValue()
-end
+function PZAPI.ModOptions:save() self.saves = self.saves + 1 end
 function PZAPI.ModOptions:create(id)
-    local object = {options={}, data={}, count=0}
+    local object = {options={}, data={}}
     function object:addDescription() end
+    function object:apply() end
     function object:getOption(key) return self.options[key] end
-    local function add(self, key, value)
-        self.count = self.count + 1
-        local option = {value=value}
+    local function add(self, key, kind, value)
+        local option = {id=key, type=kind, value=value}
         function option:getValue() return self.value end
-        function option:setValue(newValue)
-            self.value = newValue
-            if self.element then self.element:setSelected(1, newValue) end
-        end
+        function option:setValue(v) self.value = v end
         self.options[key] = option
-        self.data[#self.data+1] = option
+        self.data[#self.data + 1] = option
         return option
     end
-    function object:addTickBox(id, label, value)
-        local option = add(self, id, value)
-        option.name = label
-        return option
+    function object:addTickBox(key, _, value) return add(self, key, "tickbox", value) end
+    function object:addSlider(key, _, low, high, step, value)
+        local o = add(self, key, "slider", value); o.min, o.max, o.step = low, high, step; return o
     end
-    function object:addSlider(id, _, minimum, maximum, step, value) return add(self, id, value) end
-    function object:addComboBox(id, label)
-        local option = add(self, id, 1)
-        option.values, option.name = {}, label
-        function option:addItem(name) self.values[#self.values+1]=name end
-        return option
+    function object:addComboBox(key)
+        local o = add(self, key, "combobox", 1); o.values = {}
+        function o:addItem(name) self.values[#self.values + 1] = name end
+        return o
     end
-    function object:addKeyBind(id, _, value) local binding=add(self, id, value);binding.type="keybind";return binding end
+    function object:addKeyBind(key, _, value) return add(self, key, "keybind", value) end
     self.settings[id] = object
-    self.Data[#self.Data+1] = object
+    self.Data[#self.Data + 1] = object
     return object
 end
+local other = PZAPI.ModOptions:create("OtherMod"); other:addKeyBind("busy", "", 33)
 
-local Controller = {state={active=false,phase="idle",message="Choose a mode.",meditation=2,yoga=0,
-    progress={meditation={level=2,current=25,required=200,fraction=0.125,total=175},
-        yoga={level=0,current=40,required=100,fraction=0.4}}},
-    inventory={food=3,water=2,literature=1,nearbyFood=5,nearbyWater=4,nearbyLiterature=2,warnings={}}, stops=0, scans=0, starts=0}
-function Controller.status() return Controller.state end
-function Controller.prepare(_, collect, preview, force)
-    Controller.scans = Controller.scans + 1
-    Controller.lastScope = {collect=collect,preview=preview,force=force}
-    local copy = {}
-    for key, value in pairs(Controller.inventory) do copy[key] = value end
-    return copy
+local Controller = {}
+local state = {active=false, phase="idle", message="Choose a training mode to begin.", meditation=3, yoga=5,
+    progress={meditation={level=3, current=25, required=200, fraction=0.125}, yoga={level=5, current=40, required=100, fraction=0.4}}}
+local gates = {meditation={ready=true, kind="ready"}, yoga={ready=true, kind="ready"}}
+local launches, stops, prepares, loans, refuse = {}, {}, 0, {}, {}
+function Controller.status() return state end
+function Controller.gates() return gates end
+function Controller.check(_, mode) return refuse[mode] == nil, refuse[mode] end
+function Controller.launch(p, mode, collect, tier)
+    launches[#launches + 1] = {player=p, mode=mode, collect=collect, tier=tier}
+    if refuse.launch then return false, refuse.launch end
+    state.active, state.mode = true, mode
+    return true
 end
-function Controller.start(_, mode, collect, tier)
-    Controller.lastTier = tier
-    Controller.starts = Controller.starts + 1
-    if Controller.failure then return false, Controller.failure end
-    Controller.state.active, Controller.state.mode = true, mode
-    Controller.state.collectNearby = collect
-    return true, "Started"
+function Controller.stop(p, reason) stops[#stops + 1] = reason; state.active = false; state.phase = "stopped"; state.message = reason end
+function Controller.prepare(_, collect, _, force)
+    prepares = prepares + 1
+    Controller.lastPrepare = {collect=collect, force=force}
+    return {food=1, water=0, literature=2, pain=0, nearbyFood=3, nearbyWater=4, nearbyLiterature=0, nearbyPain=0, radius=10,
+        unknownContainers=6, warnings={"It is too dark to read here."}}
 end
-function Controller.stop() Controller.stops = Controller.stops + 1; Controller.state.active = false end
-function Controller.setCollectNearby(_, value) Controller.state.collectNearby = value; Controller.lastNearby = value end
+function Controller.setCollectNearby(_, v) Controller.collect = v end
+function Controller.loans() return loans end
+local decisions = {}
+function Controller.recentDecisions() return decisions end
 package.loaded["AutoMindful/Controller"] = Controller
+Controller.realTiers = require "AutoMindful/TierTargets"
+local tierNow = {meditation=0, yoga=0}
+Controller.realTiers.current = function(_, kind) return tierNow[kind] end
 
-local localLayouts, geometryWrites = {}, {}
-function getFileReader(name,create)
-    assert(not create)
-    local text=localLayouts[name]
-    if text then return {readLine=function() return text:match("^[^\r\n]*") end,close=function() end} end
-end
-function getFileWriter(name,create,append)
-    assert(create and not append and name:match("^AutoMindful/window%-%d+%.txt$"))
-    return {write=function(_,text)
-        localLayouts[name]=text
-        geometryWrites[name]=(geometryWrites[name] or 0)+1
-    end,close=function() end}
+local files = {}
+function getFileReader(name) if files[name] then return {readLine=function() return files[name]:match("^[^\n]*") end, close=function() end} end end
+function getFileWriter(name, _, append)
+    if not append then files[name] = "" end
+    return {write=function(_, text) files[name] = (files[name] or "") .. text end, close=function() end}
 end
 
-local Settings={toggles=0,closes=0}
-function Settings.toggle(window) Settings.toggles=Settings.toggles+1; Settings.parent=window end
-function Settings.close(window) Settings.closes=Settings.closes+1; Settings.closedParent=window end
-package.loaded["AutoMindful/SettingsPanel"]=Settings
-
-
-local menus, nextMenu = {}, 0
+local menus, lastMenu = {}, nil
 ISContextMenu = {}
-function ISContextMenu:new()
-    return setmetatable({options={},player=0}, {__index=self})
-end
+function ISContextMenu:new() return setmetatable({options={}}, {__index=self}) end
 function ISContextMenu:addOption(name, target, callback, ...)
-    local option = {name=name,target=target,onSelect=callback}
-    for index = 1, select("#", ...) do option["param" .. index] = select(index, ...) end
+    local option = {name=name, target=target, onSelect=callback}
+    for index = 1, select("#", ...) do option["param" .. index] = (select(index, ...)) end
     self.options[#self.options + 1] = option
     return option
 end
-function ISContextMenu:addOptionOnTop(...)
-    local option = self:addOption(...)
-    table.remove(self.options)
-    table.insert(self.options, 1, option)
-    return option
-end
-function ISContextMenu:getNew(parent)
-    nextMenu = nextMenu + 1
-    local menu = self:new()
-    menu.subOptionNums, menu.player = nextMenu, parent.player
-    menus[nextMenu] = menu
-    return menu
-end
-function ISContextMenu.get(playerIndex,x,y)
-    ISContextMenu.popup = ISContextMenu:new()
-    ISContextMenu.popup.player, ISContextMenu.popup.x, ISContextMenu.popup.y = playerIndex,x,y
-    return ISContextMenu.popup
-end
-function ISContextMenu:addSubMenu(option, submenu) option.subOption = submenu.subOptionNums end
+function ISContextMenu:getNew() local m = self:new(); menus[#menus + 1] = m; m.id = #menus; return m end
+function ISContextMenu.get() lastMenu = ISContextMenu:new(); return lastMenu end
+function ISContextMenu:addSubMenu(option, menu) option.subOption = menu.id end
 function ISContextMenu:getSubMenu(id) return menus[id] end
-function ISContextMenu:calcWidth()
-    local widest=0
-    for _,o in ipairs(self.options) do widest=math.max(widest,#o.name) end
-    return widest
-end
-function ISContextMenu:setWidth(w) self.width=w end
+function ISContextMenu:setOptionChecked(option, value) option.checkMark = value end
+local function choose(option) return option.onSelect(option.target, option.param1, option.param2, option.param3) end
+local function named(menu, name) for _, o in ipairs(menu.options) do if o.name == name then return o end end end
+local function names(menu) local out = {}; for _, o in ipairs(menu.options) do out[#out + 1] = o.name end; return table.concat(out, "|") end
 
-local manualCall
-local meditation = {onAction=function(...) manualCall = {...}; return "native meditation" end}
-local yoga = {onAction=function(...) manualCall = {...}; return "native yoga" end}
-local blocked = true
-ZenWellnessContextMenu = {Options={Meditation=meditation,Yoga=yoga}}
-function ZenWellnessContextMenu.doBuildMenu(index, context, objects)
-    local wellness = context:addOption("Localized wellness")
-    local submenu = ISContextMenu:getNew(context)
-    context:addSubMenu(wellness, submenu)
-    local option = submenu:addOption("Localized meditation", objects, meditation.onAction, meditation, getSpecificPlayer(index))
-    option.notAvailable, option.iconTexture = blocked, "native meditation icon"
-    option.toolTip = ISToolTip:new()
-    return "native result", nil, 3
+ISTimedActionQueue = {queued={}, add=function(a) ISTimedActionQueue.queued[#ISTimedActionQueue.queued + 1] = a end}
+ISWalkToTimedAction = {new=function(_, p, s) return {player=p, square=s, setOnComplete=function(self, f) self.done = f end} end}
+local nativeYoga = {onAction=function() end}
+local nativeMeditation = {onAction=function() end}
+ZenWellnessContextMenu = {Options={Yoga=nativeYoga, Meditation=nativeMeditation}}
+function ZenWellnessContextMenu.doBuildMenu(index, context)
+    local p = getSpecificPlayer(index)
+    if p.busy then return end
+    local wellness = context:addOption("Wellness")
+    local menu = ISContextMenu:getNew(context)
+    context:addSubMenu(wellness, menu)
+    local option = menu:addOption("Yoga", {}, nativeYoga.onAction, nativeYoga, p)
+    option.toolTip = "native tip"
+    return "native", 3
 end
 local function event()
-    local result = {handlers={}}
-    function result.Add(handler) result.handlers[#result.handlers + 1] = handler end
-    function result.Remove(handler)
-        for index = #result.handlers, 1, -1 do if result.handlers[index] == handler then table.remove(result.handlers, index) end end
-    end
-    return result
+    local e = {handlers={}}
+    function e.Add(f) e.handlers[#e.handlers + 1] = f end
+    function e.Remove(f) for i = #e.handlers, 1, -1 do if e.handlers[i] == f then table.remove(e.handlers, i) end end end
+    return e
 end
-Events = {OnFillWorldObjectContextMenu=event(),OnKeyPressed=event(),OnGameStart=event(),OnCreatePlayer=event()}
+Events = {OnFillWorldObjectContextMenu=event(), OnKeyPressed=event(), OnGameStart=event(), OnCreatePlayer=event(), OnSave=event(), EveryOneMinute=event()}
+package.loaded["AutoMindful/SkillsPane"] = {install=function() end}
+package.loaded["AutoMindful/ZenMoodle"] = {install=function() end, onPlayerReady=function() end}
+Clipboard = {setClipboard=function(text) Clipboard.text = text end}
 
-local UI = require "AutoMindful/UI"
-local Options = require "AutoMindful/Options"
-local Context = require "AutoMindful/ContextMenu"
-local settings = PZAPI.ModOptions:getOptions("AutoMindful")
-local search = settings:getOption("searchNearby")
-assert(Options.searchNearby() and Options.searchRadius() == 10, "Scouting starts on within a 10-tile radius")
-local freshBoth = UI.open(player2)
-assert(freshBoth.nearby:isSelected(1) and freshBoth.scouting:isSelected(1),
-    "Both supply controls start enabled on a fresh pane with unset defaults")
-local cycle = settings:getOption("cyclePolicy")
-assert(Options.cyclePolicy() == "alternate" and freshBoth.cycle:getSelected() == 1 and #cycle.values == 3)
-freshBoth.cycle:click(2)
-assert(Options.cyclePolicy() == "lowest" and cycle:getValue() == 2 and PZAPI.ModOptions.savedCycle == 2,
-    "Changing the pane selection writes the same saved Mod Option")
-cycle:setValue(3)
-freshBoth:refresh()
-assert(freshBoth.cycle:getSelected() == 3 and Options.cyclePolicy() == "closest")
-cycle:setValue(99)
-freshBoth:refresh()
-assert(freshBoth.cycle:getSelected() == 1 and Options.cyclePolicy() == "alternate", "Unknown stored selection defaults safely")
-cycle:setValue(1)
-PZAPI.ModOptions.saves = 0
-freshBoth:close()
-UI.windows[1]=nil
-assert(not Options.generalMenu() and Options.windowKey() == Keyboard.KEY_0, "Idle menu stays opt-in; free number-row zero opens the pane")
-local practice = settings:getOption("practiceCare")
-local strict=settings:getOption("strictRecoveryTier")
-assert(strict and not Options.strictRecoveryTier(), "Strict Recovery tiers are off by default")
-strict:setValue(true)
-assert(Options.practiceCare(), "Practice relief is enabled by default")
-practice:setValue(false)
-search:setValue(false)
-package.loaded["AutoMindful/Options"] = nil
-require "AutoMindful/Options"
-assert(settings.count == 14 and not Options.searchNearby() and not Options.practiceCare() and Options.strictRecoveryTier(), "Reload reuses an existing off preference")
+require "AutoMindful_Main"
+if not AutoMindful.UI then error("window did not load") end
+local Window, WorldMenu, Options = AutoMindful.UI, AutoMindful.WorldMenu, require "AutoMindful/Options"
+local Preferences = require "AutoMindful/Preferences"
 
-local context, world = ISContextMenu:new(), {"clicked square"}
-local first, second, third = ZenWellnessContextMenu.doBuildMenu(0, context, world)
-assert(first == "native result" and second == nil and third == 3, "Wrapping preserves native return values")
-local parent = context:getSubMenu(context.options[1].subOption).options[1]
-local submenu = context:getSubMenu(parent.subOption)
-assert(parent.onSelect == nil and not parent.notAvailable, "A blocked native action still allows submenu navigation")
-assert(parent.toolTip == nil, "Parent tooltips do not cover the quick-action submenu")
-assert(submenu.options[1].name == "Open AutoMindful" and submenu.options[2].name == "Recovery"
-    and submenu.options[3].name == "Train meditation" and submenu.options[4].name == "Check supplies",
-    "Open precedes the Recovery shortcut and other quick actions")
-assert(submenu.options[3].toolTip.description:find("25 / 200 XP",1,true), "Quick-action tooltips include progress toward the next level")
-local trainQuick = submenu.options[3]
-assert(trainQuick.onSelect(trainQuick.target, trainQuick.param1))
-assert(Controller.state.mode == "meditation" and Controller.state.collectNearby == true and not Options.searchNearby(),
-    "A fresh quick action starts with adjacent supplies enabled independently of scouting")
-Controller.state.active = false
-local endurance = submenu.options[2]
-player.data.AutoMindfulPreferences = {collectNearby=true}
-assert(endurance.onSelect(endurance.target, endurance.param1))
-assert(Controller.state.mode == "recovery" and Controller.state.collectNearby == true,
-    "Recovery launched from context respects saved adjacent collection")
-player.data.AutoMindfulPreferences = nil
-local occupiedMenu = ISContextMenu:new()
-ZenWellnessContextMenu.doBuildMenu(0, occupiedMenu, world)
-local occupiedWellness = occupiedMenu:getSubMenu(occupiedMenu.options[1].subOption)
-assert(occupiedMenu:getSubMenu(occupiedWellness.options[1].subOption).options[2].notAvailable,
-    "The Recovery menu action cannot replace an active session")
-Controller.state.active = false
-local manual = submenu.options[6]
-assert(manual.notAvailable and manual.iconTexture == "native meditation icon" and manual.toolTip, "Native availability and presentation are retained")
-assert(manual.onSelect(manual.target) == "native meditation")
-assert(manualCall[1] == world and manualCall[2] == meditation and manualCall[3] == player, "Manual action retains native target and arguments")
-Context.attach(context, player)
-assert(#submenu.options == 6 and manual.subOption == nil, "Repeated menu attachment does not nest or duplicate manual actions")
--- All tier choices are in one row/submenu, with live moodle availability.
-do
-    local window = UI.open(player)
-    local savedMoodles = player.data.LSMoodles
-    local oldMeditation, oldYoga = Controller.state.meditation, Controller.state.yoga
-    player.data.LSMoodles = {MindfulState={Value=.4}, Zen={Value=.25}}
-    Controller.state.meditation,Controller.state.yoga = 10,3
-    local live = ISContextMenu:new()
-    local native = live:addOption("Native meditation", {}, meditation.onAction, meditation, player)
-    Context.attach(live, player); Context.attach(live, player)
-    local actions = live:getSubMenu(native.subOption)
-    local parent = actions.options[5]
-    assert(parent.name=="Meditate to..." and #actions.options==6)
-    local tiers = actions:getSubMenu(parent.subOption)
-    assert(#tiers.options==3 and tiers.options[1].notAvailable and tiers.options[2].notAvailable
-        and not tiers.options[3].notAvailable and tiers.options[3].param2==3)
-    tiers.options[3].onSelect(tiers.options[3].target, tiers.options[3].param1, tiers.options[3].param2)
-    assert(Controller.state.mode=="meditateTo" and Controller.lastTier==3)
-    Controller.state.active=false
-    window.tierButtons[2]:click()
-    local options = ISContextMenu.popup.options
-    assert(#options==4 and options[1].notAvailable and not options[2].notAvailable and not options[3].notAvailable
-        and options[4].notAvailable and options[4].toolTip.description:find("level 6",1,true))
-    options[3].onSelect(options[3].target,options[3].param1,options[3].param2)
-    assert(Controller.state.mode=="yogaTo" and Controller.lastTier==3)
-    window.tierButtons[2]:click()
-    assert(ISContextMenu.popup.options[3].notAvailable, "An active mode cannot be overwritten from a tier menu")
-    Controller.state.active=false
-    Controller.state.mode=nil
-    Controller.state.meditation,Controller.state.yoga=oldMeditation,oldYoga
-    player.data.LSMoodles=savedMoodles
-    window:refresh()
+local function rows(window, kind)
+    local out = {}
+    for _, row in ipairs(window.body.rows) do if row.kind == kind then out[#out + 1] = row end end
+    return out
 end
-local wrapper = ZenWellnessContextMenu.doBuildMenu
-Context.install()
-assert(ZenWellnessContextMenu.doBuildMenu == wrapper, "Repeated installation is a no-op")
-
-local idle = ISContextMenu:new()
-Context.generalMenu(0, idle, {}, false)
-assert(#idle.options == 0, "Idle world menus remain clean by default")
-Controller.state.active = true
-local active = ISContextMenu:new()
-Context.generalMenu(0, active, {}, false)
-assert(#active.options == 1, "A running session can reopen its window without a configured key")
-Controller.state.active, Controller.state.pendingReturns = false, 1
-local returning = ISContextMenu:new()
-Context.generalMenu(0, returning, {}, false)
-assert(#returning.options == 1, "Pending borrowed items retain a window entry")
-Controller.state.pendingReturns = 0
-settings:getOption("generalContextMenu"):setValue(true)
-local general = ISContextMenu:new()
-Context.generalMenu(0, general, {}, false)
-assert(#general.options == 1, "The general context entry can be enabled")
-settings:getOption("generalContextMenu"):setValue(false)
-
--- Each distinct command has a distinct silhouette, even when an upstream leaf supplies no art.
-local yogaMenu = ISContextMenu:new()
-local rawYoga = yogaMenu:addOption("Localized yoga", world, yoga.onAction, yoga, nil, 3,nil,5,nil,7,nil,9,10)
-local rawTip = ISToolTip:new()
-rawYoga.checkMark,rawYoga.toolTip=true,rawTip
-local otherLeaf=yogaMenu:addOption("Someone else's entry", world, function() end)
-Context.attach(yogaMenu, player)
-local function expectIcons(menu, names)
-    assert(#menu.options==#names,"An icon must not add a second action")
-    local seen={}
-    for i,name in ipairs(names) do
-        assert(menu.options[i].iconTexture==art(name), menu.options[i].name .. " has wrong or missing icon: " .. name)
-        assert(not seen[name],"No duplicated glyph for different actions in one menu");seen[name]=true
-    end
+local function job(window, title) for _, row in ipairs(rows(window, "job")) do if row.title == title then return row end end end
+local function setting(window, label) for _, row in ipairs(rows(window, "setting")) do if row.label == label then return row end end end
+local function text(window)
+    local out = {}
+    for _, row in ipairs(window.body.rows) do out[#out + 1] = tostring(row.text or row.title or row.label or "") .. " " .. tostring(row.sub or "") end
+    return table.concat(out, "\n")
 end
-assert(rawYoga.iconTexture==art("Mat") and not otherLeaf.iconTexture)
-local yogaQuick=yogaMenu:getSubMenu(rawYoga.subOption)
-expectIcons(yogaQuick,{"Open","Yoga","Supplies","Mindful","Once"})
-local once=yogaQuick.options[5]
-assert(once.checkMark and once.toolTip==rawTip and rawTip.contextMenu==yogaQuick)
-assert(once.onSelect(once.target)=="native yoga")
-assert(manualCall[1]==world and manualCall[2]==yoga and manualCall[3]==nil and manualCall[4]==3 and manualCall[11]==10,
-    "Original dispatch including nil holes and the tenth argument survives")
-assert(submenu.options[1].iconTexture==art("Open") and submenu.options[2].iconTexture==art("Endurance")
-    and submenu.options[3].iconTexture==art("Meditate") and submenu.options[4].iconTexture==art("Supplies")
-    and parent.iconTexture=="native meditation icon" and manual.iconTexture==parent.iconTexture)
-Context.attach(yogaMenu,player);expectIcons(yogaQuick,{"Open","Yoga","Supplies","Mindful","Once"})
-
-local itemMenu=ISContextMenu:new();itemMenu.player=1
-local obj,originalItem={},{}
-local itemLeaf=itemMenu:addOption("Localized meditation",obj,meditation.onAction,meditation,player2)
-itemLeaf.itemForTexture=originalItem
-Context.attach(itemMenu,player2)
-local itemSub=itemMenu:getSubMenu(itemLeaf.subOption);local itemOnce=itemSub.options[#itemSub.options]
-assert(not itemLeaf.iconTexture and not itemOnce.iconTexture and itemLeaf.itemForTexture==originalItem and itemOnce.itemForTexture==originalItem,
-    "The renderer prefers iconTexture over itemForTexture: never shadow a native item icon")
-assert(itemSub.player==1 and itemSub.options[1].target==player2 and itemSub.options[2].target==player2)
-local swatch=itemMenu:addOption("Tinted native yoga",obj,yoga.onAction,yoga,player2)
-swatch.iconTexture,swatch.color="actual swatch",{r=.4,g=.7,b=.2}
-Context.attach(itemMenu,player2)
-local sw=itemMenu:getSubMenu(swatch.subOption).options[5]
-assert(sw.iconTexture==swatch.iconTexture and sw.color==swatch.color,"Preserve the native swatch and tint")
-local bare=ISContextMenu:new()
-local bareMed=bare:addOption("Bare meditation",world,meditation.onAction,meditation)
-Context.attach(bare,player);assert(bareMed.iconTexture==art("Bowl"))
-expectIcons(bare:getSubMenu(bareMed.subOption),{"Open","Endurance","Meditate","Supplies","Mindful","Once"})
-
-local again,_,last=ZenWellnessContextMenu.doBuildMenu(0,context,world)
-assert(again=="native result" and last==3,"A repeated external builder retains its return values")
-local addedParent=context:getSubMenu(context.options[2].subOption).options[1]
-assert(not addedParent.subOption and addedParent.onSelect==meditation.onAction,"Repeat build: no second AutoMindful group, and upstream's own option is left intact")
-settings:getOption("generalContextMenu"):setValue(true)
-local root2=ISContextMenu:new();root2.player=1
-local foreign=root2:addOption("AutoMindful",player2,function() end)
-Context.generalMenu(1,root2,{},false);Context.generalMenu(1,root2,{},false)
-assert(#root2.options==2 and root2.options[1]==foreign and not foreign.iconTexture)
-assert(root2.options[2].iconTexture==art("Mindful") and root2.options[2].target==player2)
-Controller.state.active=true;Controller.state.mode="both";Context.generalMenu(1,root2,{},false)
-assert(#root2.options==2 and root2.options[2].name=="AutoMindful (running)" and root2.width==#root2.options[2].name)
-Controller.state.mode="recovery";Context.generalMenu(1,root2,{},false)
-assert(#root2.options==2 and root2.options[2].name=="AutoMindful (recovery)" and root2.width==#root2.options[2].name)
-Controller.state.active=false
-local reused=root2.options[2];root2.options={}  -- stock clear/alloc wipes pooled options before reuse
-for k in pairs(reused) do reused[k]=nil end
-reused.name="Pooled other action";root2.options[1]=reused
-Context.generalMenu(1,root2,{},false)
-assert(#root2.options==2 and root2.options[2]~=reused and not reused.iconTexture)
-local dry=ISContextMenu:new();Context.generalMenu(0,dry,{},true);assert(#dry.options==0)
-for _,n in ipairs({"Mindful","Open","Supplies","Meditate","Yoga","Endurance","Mat","Bowl","Once"}) do
-    assert(textureLoads[art(n).path]==1,"Each available texture is looked up once: "..n)
+-- Real hit testing: move the pointer over a row (or one of its buttons), press and release.
+local function click(window, wanted)
+    local body = window.body
+    body:prerender()
+    for _, entry in ipairs(body.layout) do
+        if entry.row == wanted then
+            mouseX, mouseY = body:getAbsoluteX() + entry.x + 5, body:getAbsoluteY() + entry.y + 5
+        end
+        for _, zone in ipairs(entry.zones or {}) do
+            if zone.target == wanted then mouseX, mouseY = body:getAbsoluteX() + zone.x + 4, body:getAbsoluteY() + zone.y + 4 end
+        end
+    end
+    body:onMouseMove()
+    assert(body:onMouseDown(), "nothing to press")
+    window:refresh() -- the half-second refresh can land while the button is down
+    body:onMouseUp()
 end
-local tut=ISContextMenu:new()
-function tut:addOption() return nil end -- stock tutorial suppresses a colliding label
-Context.generalMenu(0,tut,{},false);assert(#tut.options==0)
-settings:getOption("generalContextMenu"):setValue(false)
-local window = UI.open(player)
-local scout = window.scouting
-assert(search.name == scout.option and not scout:isSelected(1), "Both surfaces show the same saved setting and label")
-assert(window.nearby:isSelected(1), "A fresh pane enables adjacent supplies even if global scouting was saved off")
-window:onStart(window.starts[1])
-assert(Controller.state.collectNearby == true, "Starting from a fresh pane keeps the adjacent default")
-Controller.state.active = false
-window:refresh()
-window.nearby:click()
-assert(not window.nearby:isSelected(1) and player.data.AutoMindfulPreferences.collectNearby == false,
-    "Opting out explicitly persists false for this survivor")
-assert(trainQuick.onSelect(trainQuick.target, trainQuick.param1))
-assert(Controller.state.collectNearby == false, "Saved adjacent-off also applies to quick actions")
-Controller.state.active = false
-window:refresh()
-search.element = ISTickBox:new() -- native Mods page was constructed while scouting was off
-local saves = PZAPI.ModOptions.saves or 0
-scout:click()
-assert(Options.searchNearby() and search.element:isSelected(1) and PZAPI.ModOptions.savedSearch,
-    "Clicking the pane updates both the native option and its existing widget, and persists the choice")
-window:refresh()
-assert(PZAPI.ModOptions.saves == saves + 1 and not window.nearby:isSelected(1),
-    "Ordinary refresh neither saves the setting again nor changes the separate adjacent preference")
-search.element:setSelected(1, false)
-search.value = search.element:isSelected(1) -- the native Mods Apply path
-PZAPI.ModOptions:save()
-now = now + 600; window:update()
-assert(not scout:isSelected(1) and PZAPI.ModOptions.savedSearch == false,
-    "Applying a change in Mods updates an already-open training pane")
-window:close()
-assert(UI.open(player)==window and not scout:isSelected(1) and not window.nearby:isSelected(1),
-    "Reopening the same pane does not reapply either default")
-window:close()
-local saved = player.data.AutoMindfulPreferences
-UI.windows[0]=nil
-local previousWindow = window
-window=UI.open(player)
-scout=window.scouting
-assert(window~=previousWindow and player.data.AutoMindfulPreferences==saved
-    and saved.collectNearby==false and not window.nearby:isSelected(1)
-    and not scout:isSelected(1) and not Options.searchNearby(),
-    "Recreated pane respects both off choices with the existing survivor modData")
-local function assertFooterVisible(view)
-    local footer
-    for _, child in ipairs(view.children) do
-        if child.text and child.text:find("Close to hide.", 1, true) then footer = child end
-    end
-    assert(footer and footer:getScrollHeight() <= footer.height, "Both footer instructions fit inside their clipped panel")
-    assert(footer:getBottom() <= view.height, "Footer instructions remain inside the window")
-    assert(view.stopButton:getBottom() <= view.checked.y and view.checked:getBottom() <= footer.y,
-        "Buttons, refresh confirmation, and footer have separate visible rows")
-    assert(view.body:getBottom() <= view.scouting.y and view.scouting.y == view.nearby.y
-        and view.scouting.x + view.scouting.width <= view.nearby.x + .01
-        and view.nearby:getBottom() <= view.cycle.y and view.cycle:getBottom() <= view.starts[1].y,
-        "Supply choices and cycle selector fit without overlapping the training controls")
-    assert(view.starts[1]:getBottom() <= view.tierButtons[1].y
-        and view.tierButtons[1].y == view.tierButtons[2].y
-        and view.tierButtons[1].x + view.tierButtons[1].width < view.tierButtons[2].x
-        and view.tierButtons[2]:getBottom() <= view.recoveryButton.y
-        and view.recoveryButton:getBottom() <= view.check.y,
-        "Tier shortcuts share one compact row without covering training or Recovery controls")
-    assert(view.recoveryButton.width==view.body.width and not view.recoverEnduranceButton,
-        "There is one full-width Recovery control")
-    local plain = footer.text:gsub("<LINE>", "\n"):gsub("<[^>]+>", "")
-    for line in plain:gmatch("[^\n]+") do
-        assert(getTextManager():MeasureStringX(UIFont.Small, line) <= footer.width, "Footer instructions fit on two unwrapped lines")
-    end
+local function button(window, label)
+    for _, row in ipairs(rows(window, "buttons")) do for _, b in ipairs(row.buttons) do if b.text == label then return b end end end
 end
-assertFooterVisible(window)
 
-local guideChildren = #window.body.children
-local progressScroll = -17
-window.body:setYScroll(progressScroll)
-local stopsBefore = Controller.stops
-window.skillGuideButton:click()
-assert(window.wellnessOpen and window.wellnessFrame.visible and not window.progressFrame.visible
-    and not window.ledger.visible and window.stopButton.visible and window.wellnessText.blockMouseWheel
-    and window.wellnessCard.heading=="Skill details" and window.wellnessTabs[1].guideSelected, "Guide switches the scroll body, not the fixed controls")
-assert(Controller.stops==stopsBefore and #window.body.children==guideChildren)
-window.body:setYScroll(-23)
-window.wellnessBack:click()
-assert(not window.wellnessOpen and not window.wellnessFrame.visible and window.progressFrame.visible
-    and window.body:getYScroll()==progressScroll, "Back restores the training scroll position")
-window.skillGuideButton:click()
-assert(window.body:getYScroll()==-23 and #window.body.children==guideChildren, "Reopening restores the help scroll without duplicate children")
-assert(window.wellnessTabs[2]:getIsVisible() and not window.wellnessTabs[3]:getIsVisible(),
-    "Only available pages appear for an unverified dependency")
-window.wellnessTabs[2]:click()
-assert(window.wellnessCard.heading=="Meditation" and window.wellnessTabs[2].guideSelected and window.body:getYScroll()==0,
-    "Each selected topic updates its own card and resets scroll")
-window.wellnessBack:click()
-local screenHeight = core.getScreenHeight
-core.getScreenHeight = function() return 480 end
-local shortPlayer = {data={}, getModData=player.getModData, getPlayerNum=function() return 1 end, isDead=player.isDead}
-local shortWindow = UI.open(shortPlayer)
-assertFooterVisible(shortWindow)
+-- Idle -----------------------------------------------------------------------
+files["AutoMindful/window-0.txt"] = "1 62 25 538 828 1\n"
+local before
+local window = Window.open(player)
+assert(window:getX() == 62 and window:getY() == 25 and window.width < 400 and window.height < 420, "The old position carries over, the old size does not")
+assert(job(window, "Yoga") and job(window, "Meditation") and job(window, "Yoga and Meditation") and job(window, "Recovery"))
+assert(job(window, "Yoga").sub == "Level 5, 40 of 100 XP" and #rows(window, "title") == 0 and not button(window, "Stop"))
+assert(job(window, "Recovery").sub:find("Nothing needs attention", 1, true) and #rows(window, "chips") == 0, "No need, no chips")
+player.moodles.THIRST, player.moodles.BORED = 2, 1
+window:invalidate()
+assert(rows(window, "chips")[1].chips[1].text == "Thirsty" and job(window, "Recovery").sub == "Looks after: thirsty, bored")
+passed("idle shows the jobs that apply, live needs, and nothing else")
 
-do
-    local x,y=shortWindow.scouting.x,shortWindow.scouting.y
-    local children=#shortWindow.body.children
-    shortWindow.skillGuideButton:click()
-    assert(shortWindow.body.width>0 and shortWindow.wellnessText.width>0 and shortWindow.scouting.x==x
-        and shortWindow.scouting.y==y and shortWindow.wellnessFrame.visible, "Guide leaves compact fixed controls in place")
-    shortWindow:setWidth(415);shortWindow:onResize()
-    assert(shortWindow.wellnessBack.x+shortWindow.wellnessBack.width<=shortWindow.wellnessFrame.width)
-    shortWindow:close()
-    assert(not shortWindow.wellnessOpen and #shortWindow.body.children==children and not shortWindow:getIsVisible())
+assert(job(window, "Reach a moodle tier").sub == "Practise, then stop. Up to Mindfulness or Zen III", job(window, "Reach a moodle tier").sub)
+tierNow.meditation, tierNow.yoga = 1, 3
+window:invalidate()
+assert(not job(window, "Reach a moodle tier"), "Nothing left to reach")
+tierNow.meditation, tierNow.yoga = 0, 0
+state.yoga = 10; state.progress.yoga = {level=10, capped=true, fraction=1}
+window:invalidate()
+assert(not job(window, "Yoga and Meditation") and job(window, "Yoga").sub:find("Level 10", 1, true) and not job(window, "Yoga").fraction,
+    "Training both means nothing once one is finished")
+state.yoga = 5; state.progress.yoga = {level=5, current=40, required=100, fraction=0.4}
+gates.yoga = {ready=false, kind="endurance", temporary=true, reason=" <RED>Too exhausted"}
+window:invalidate()
+assert(job(window, "Yoga").sub:find("Rests first: Too exhausted", 1, true) and not job(window, "Yoga").disabled, "A passing blocker is information, not a refusal")
+gates.yoga = {ready=true, kind="ready"}
+refuse.yoga = "Not while zombies are nearby."
+window:invalidate()
+assert(job(window, "Yoga").disabled and job(window, "Yoga").sub == "Not while zombies are nearby.")
+click(window, job(window, "Yoga"))
+assert(#launches == 0, "A refused job cannot be started")
+refuse.yoga = nil
+gates, refuse.recovery = nil, "Enable Lifestyle: Hobbies with yoga support before starting AutoMindful."
+window:invalidate()
+assert(#rows(window, "job") == 0 and text(window):find("Enable Lifestyle", 1, true), "One clear sentence instead of a wall of dead buttons")
+refuse.recovery, refuse.both = nil, "Lifestyle Wellness is disabled in this world."
+window:invalidate()
+assert(#rows(window, "job") == 1 and job(window, "Recovery") and text(window):find("Wellness is disabled", 1, true), "Recovery needs no Wellness")
+gates, refuse.both = {meditation={ready=true}, yoga={ready=true}}, nil
+window:invalidate()
+passed("blocked, finished and unreachable jobs explain themselves or disappear")
+
+-- Start, run, switch, stop ----------------------------------------------------
+click(window, job(window, "Yoga"))
+assert(#launches == 1 and launches[1].mode == "yoga" and launches[1].collect == true and launches[1].player == player)
+state.decisionLabel, state.decisionDetail, state.phase = "Practicing Yoga", nil, "yoga"
+state.message, state.elapsed = "Practicing yoga. Poses may fail normally.", 754000
+state.startProgress = {yoga={level=5, current=10, required=100, fraction=0.1}}
+window:invalidate()
+assert(#rows(window, "job") == 0 and rows(window, "title")[1].text == "Yoga" and rows(window, "title")[1].right == "12m 34s")
+local bar = rows(window, "bar")
+assert(#bar == 1 and bar[1].label == "Yoga 5" and bar[1].gain == "+30 XP", "Only the trained skill, with what this session earned")
+click(window, button(window, "Switch"))
+assert(not named(lastMenu, "Yoga") and named(lastMenu, "Meditation") and named(lastMenu, "Recovery"), "Every other job")
+choose(named(lastMenu, "Recovery"))
+assert(launches[2].mode == "recovery")
+state.mode = "yoga"
+window:invalidate()
+click(window, button(window, "Stop"))
+assert(#stops == 1 and not state.active and job(window, "Yoga") and text(window):find("You stopped AutoMindful", 1, true))
+refuse.launch = "Stop moving before training."
+click(window, job(window, "Meditation"))
+assert(text(window):find("Stop moving before training", 1, true), "A refusal is shown where it was clicked")
+refuse.launch = nil
+state.active, state.mode = true, "yoga"; window:invalidate(); before = prepares
+for _ = 1, 40 do now = now + 500; window:update() end
+assert(prepares == before, "A running job scans nothing the window does not show")
+state.active, state.mode = false, nil; window:invalidate()
+passed("start, switch and stop by clicking, with the result visible")
+
+state.active, state.mode = true, "recovery"
+click(window, job(window, "Recovery") or window.body.rows[1])
+state.active, state.mode, state.phase = false, nil, "idle"
+window:show("now"); window:invalidate()
+click(window, job(window, "Reach a moodle tier"))
+assert(named(lastMenu, "Mindfulness") and named(lastMenu, "Zen"), names(lastMenu))
+local zen = lastMenu:getSubMenu(named(lastMenu, "Zen").subOption)
+assert(names(zen) == "Zen I|Zen II|Zen III", names(zen))
+choose(zen.options[1])
+assert(launches[#launches].mode == "yogaTo" and launches[#launches].tier == 1)
+state.active, state.mode = false, nil
+passed("tiers open as submenus holding only what can be reached")
+
+-- Other tabs -------------------------------------------------------------------
+window:show("supplies")
+local columns = rows(window, "columns")
+assert(columns[2].label == "Food" and columns[2].cells[1].text == "1" and columns[2].cells[2].text == "3")
+assert(text(window):find("6 containers have not been looked into", 1, true) and text(window):find("too dark to read", 1, true))
+before = prepares
+window:show("log"); now = now + 20000; window:update(); now = now + 20000; window:update()
+assert(prepares == before, "Tabs that do not show supplies never scan for them")
+window:show("now"); local base = prepares
+for _ = 1, 8 do now = now + 500; window:update() end
+assert(prepares - base <= 1, "The idle view does not rescan twice a second: " .. (prepares - base))
+decisions = {{clock="08:41", code="drinking", label="Drinking", message="Using Water Bottle."}, {clock="08:40", code="stopped", label="AutoMindful stopped"}}
+window:show("log")
+assert(rows(window, "entry")[1].clock == "08:41" and rows(window, "entry")[1].detail == "Using Water Bottle.")
+click(window, button(window, "Copy report"))
+assert(Clipboard.text:find("AutoMindful report", 1, true) and Clipboard.text:find("08:41 Drinking", 1, true))
+passed("supplies, log and report show live facts and scan only when looked at")
+
+window:show("supplies")
+click(window, setting(window, "Look for supplies"))
+assert(#lastMenu.options == 3 and named(lastMenu, "Walk to nearby supplies").checkMark)
+choose(named(lastMenu, "Only what you carry"))
+assert(Preferences.range(player) == "carried" and not Options.searchNearby() and Controller.collect == false
+    and not setting(window, "Search radius"), "One choice sets both stored switches; the radius only matters when walking")
+click(window, setting(window, "Look for supplies")); choose(named(lastMenu, "Only what is within reach"))
+assert(Preferences.range(player) == "reach" and Controller.collect == true)
+click(window, setting(window, "Look for supplies")); choose(named(lastMenu, "Walk to nearby supplies"))
+click(window, setting(window, "Search radius")); choose(named(lastMenu, "20 tiles"))
+assert(Options.searchRadius() == 20 and PZAPI.ModOptions.saves > 0)
+window:show("settings")
+local relief = setting(window, "Practise for relief"); assert(relief.toggle == true)
+click(window, relief); assert(Options.practiceCare() == false and setting(window, "Practise for relief").toggle == false)
+click(window, setting(window, "Training both")); choose(named(lastMenu, "Lowest progress first")); assert(Options.cyclePolicy() == "lowest")
+click(window, setting(window, "Relief tier"))
+local mind = lastMenu:getSubMenu(lastMenu.options[1].subOption)
+choose(mind.options[1]); assert(Options.minimumTier("recovery", "meditation") == 0)
+click(window, setting(window, "Log detail")); choose(named(lastMenu, "Decisions")); assert(Options.logLevel() == 2)
+Options.set("logLevel", 3)
+local shown = 0
+local addTip = ISToolTip.addToUIManager
+ISToolTip.addToUIManager = function(self) shown = shown + 1; return addTip(self) end
+window.body:prerender()
+for _, entry in ipairs(window.body.layout) do
+    if entry.row.label == "Practise for relief" then mouseX, mouseY = window.body:getAbsoluteX() + entry.x + 5, window.body:getAbsoluteY() + entry.y + 5 end
 end
-do
-    local oldModInfo, oldTextManager, oldScreenWidth = getModInfoByID, getTextManager, core.getScreenWidth
-    local oldWidth=window.width
-    getModInfoByID=function(id)
-        if id=="LifestyleHobbies" then return {getModVersion=function() return "0.4.0.3" end} end
-    end
-    getTextManager=function()
-        return {getFontHeight=function() return 23 end,MeasureStringX=function(_,_,value) return #value*10 end}
-    end
-    local view=UI.open(player)
-    core.getScreenWidth=function() return 454 end; view:syncScreen()
-    view.skillGuideButton:click()
-    assert(#view.wellnessTabs==5 and view.wellnessTabs[5]:getIsVisible())
-    assert(view.wellnessTabs[5].y>view.wellnessTabs[1].y,"Tabs wrap instead of overlapping at larger fonts")
-    for _, tab in ipairs(view.wellnessTabs) do
-        assert(tab.x+tab.width<=view.wellnessFrame.width-11 and tab:getBottom()<view.wellnessCard.y)
-    end
-    for _, tab in ipairs(view.wellnessTabs) do
-        tab:click(); assert(view.wellnessCard.heading==tab.guideLabel and tab.guideSelected)
-        view:refresh(); assert(view.wellnessCard.heading==tab.guideLabel)
-    end
-    assert(view.wellnessText.contentKey:lower():find("multiplayer",1,true),"Lessons card has verified content")
-    for _, width in ipairs({310, 430, 560}) do
-        core.getScreenWidth=function() return width+24 end; view:syncScreen()
-        for _, index in ipairs({2, 4}) do
-            view.wellnessTabs[index]:click()
-            local guide = view.wellnessText
-            local count, accent, numeric = 0, nil, false
-            for _, line in ipairs(guide.rendered) do
-                assert(getTextManager():MeasureStringX(UIFont.Small,line.text) <= guide.width - 4,
-                    "every line fits the guide at narrow widths and large fonts")
-                assert(line.y + 23 <= guide.height and not line.text:find("×",1,true)
-                    and not line.text:find("–",1,true), "no vertical overflow or unsupported glyphs")
-                accent = accent or line.color
-                if line.text:match("^[+-]%d") and line.color ~= accent then numeric = true end
-                for _, run in ipairs(line.runs or {}) do
-                    if run.text:find("x1.1",1,true) and run.color ~= accent then numeric = true end
-                    assert(run.x + getTextManager():MeasureStringX(UIFont.Small,run.text) <= guide.width - 4)
-                end
-                count = count + 1
+window.body:onMouseMove(); window.body:prerender()
+assert(shown == 1 and window.body.tipUI.description:find("ease a need", 1, true), "Hovering explains a setting")
+window.body:onMouseMoveOutside(); window.body:prerender()
+assert(not window.body.tipUI:getIsVisible())
+passed("every setting is changed in place and saved at once, and explains itself on hover")
+
+click(window, setting(window, "Open and close key"))
+assert(window.capturing and window.wantsKeys and window:isKeyConsumed(50))
+window:onKeyRelease(33); assert(window.capturing and setting(window, "Open and close key").value:find("in use", 1, true), "A key another mod uses is refused, visibly")
+window:onKeyRelease(50); assert(not window.capturing and Options.windowKey() == 50)
+assert(window:isKeyConsumed(50) and not window:isKeyConsumed(50))
+click(window, setting(window, "Open and close key")); window:onKeyRelease(Keyboard.KEY_ESCAPE)
+assert(not window.capturing and Options.windowKey() == 50)
+local function press(key) for _, f in ipairs(Events.OnKeyPressed.handlers) do f(key) end end
+press(50); assert(not window:getIsVisible()); press(50); assert(window:getIsVisible(), "The same key opens and closes")
+press(Keyboard.KEY_ESCAPE); assert(window:getIsVisible(), "Escape belongs to the game")
+passed("the shortcut can be bound, refuses taken keys, and toggles the window")
+
+-- Size and place ---------------------------------------------------------------
+window:show("now")
+local fitted = window.height
+window:show("settings"); assert(window.height > fitted, "Fits its contents")
+window:show("now"); assert(window.height == fitted, "And back")
+window.dragOrigin = nil
+window:onMouseDown(); window:setX(300); window:setY(200); window:onMouseUp()
+assert(files["AutoMindful/window-0.txt"] == "2 300 200 - - 0\n", files["AutoMindful/window-0.txt"])
+window:onMouseDown(); window:setX(420); window:invalidate(); assert(window:getX() == 420, "A refresh does not snatch it back mid-drag")
+window:setX(300); window:onMouseUp()
+assert(window.resizeWidget.x == window.width - 12 and window.resizeWidget.y == window.height - 12
+    and window.resizeWidget2.y == window.height - 12 and window.resizeWidget2.width == window.width - 12, "The handles are where they are drawn")
+window:onUserResize(500, 250); window:saveGeometry()
+assert(window.width == 500 and window.height == 250)
+window:show("settings"); assert(window.height == 250 and window.body.contentHeight > window.body.height and window.body.vscroll.visible
+    and window.body.vscroll.height == window.body.height)
+window.body:onMouseWheel(1); assert(window.body:getYScroll() < 0, "Scrolls when the player chose a smaller size")
+window:resetSize(); assert(window.height > 250)
+screenW, screenH = 800, 500
+window:invalidate(true)
+assert(window.x + window.width <= 800 and window.y + window.height <= 500, "Always on screen")
+screenW, screenH = 1920, 1036
+window:show("now")
+state.active, state.mode, state.phase = true, "yoga", "yoga"
+window:invalidate()
+window:toggleMini(); assert(window.mini and window.height < 60 and window.strip.visible and not window.body.visible)
+drawn = {}; window.strip:prerender(); assert(drawn[1].text == "Stop" and drawn[2].text == "Practicing Yoga"); drawn = nil
+window.strip:onRightMouseUp(); assert(named(lastMenu, "Stop"), "Right-click reaches the window through its parts")
+window.strip.pointer = true
+mouseX = window.strip:getAbsoluteX() + 5; window.strip:onMouseDown(); assert(state.active)
+mouseX = window.strip:getAbsoluteX() + window.strip.width - 12; window.strip:onMouseDown(); assert(not state.active, "Stop stays in reach")
+state.active, state.phase = true, "yoga"; window:invalidate()
+state.active = false; window:invalidate()
+assert(not window.mini and window.body.visible, "Nothing to shrink while idle")
+before = prepares; window:show("supplies"); click(window, button(window, "Look again"))
+assert(prepares > before, "A remembered strip never hides supplies while idle")
+window:show("now")
+window:toggleMini()
+passed("it fits its contents, remembers what the player chose, and shrinks to one line")
+
+-- Nothing is drawn outside the window, at any font size, in any tab.
+for _, font in ipairs({{5, 13}, {7, 16}, {10, 22}, {14, 30}}) do
+    charWidth, lineHeight = font[1], font[2]
+    for _, active in ipairs({false, true}) do
+        state.active, state.mode = active, active and "both" or nil
+        for _, view in ipairs({"now", "supplies", "log", "guide", "settings"}) do
+            window.view = view; window:invalidate(true)
+            drawn = {}
+            window.body.pointer = nil
+            window.body:prerender()
+            for _, item in ipairs(drawn) do
+                assert(item.left >= -1 and item.right <= item.width + 1, view .. " at font " .. font[2] .. ": " .. item.text .. " " .. item.left .. ".." .. item.right .. " of " .. item.width)
             end
-            assert(count > 12 and numeric, "rate and multiplier rows remain readable and visually distinct")
+            assert(#drawn > 0)
+            drawn = nil
         end
     end
-    view.wellnessBack:click()
-    core.getScreenWidth=function() return 334 end; view:syncScreen()
-    assert(view.recoveryButton.width == view.body.width and view.recoveryButton:getBottom() < view.check.y,
-        "Recovery stays directly accessible on a narrow window")
-    for _,tick in ipairs({view.scouting,view.nearby}) do
-        assert(getTextManager():MeasureStringX(UIFont.Small,tick.option)+tick.boxSize+tick.textGap<=tick.width
-            and tick.tooltip:find("supplies",1,true),"A shortened caption still has its complete explanation")
-    end
-    assert(view.scouting.option~=Options.scoutingLabel and view.nearby.option~="Use adjacent supplies")
-    for _,button in ipairs({view.starts[1],view.starts[2],view.starts[3],view.tierButtons[1],view.tierButtons[2],
-            view.recoveryButton,view.check,view.stopButton}) do
-        assert(getTextManager():MeasureStringX(UIFont.Small,button.name)+12<=button.width,
-            "Narrow large-font button caption fits its own cell")
-    end
-    getModInfoByID, getTextManager, core.getScreenWidth=oldModInfo, oldTextManager, oldScreenWidth
-    view:syncScreen()
-    assert(view.width==oldWidth)
 end
-assert(shortWindow.nearby:isSelected(1) and not shortWindow.scouting:isSelected(1)
-        and not window.nearby:isSelected(1),
-    "A fresh split survivor gets adjacent on; the existing survivor stays off and scouting off is global")
-assert(shortWindow.body.height > 0 and shortWindow.body:getScrollHeight() > shortWindow.body.height,
-    "Short screens preserve the fixed controls and scroll the body")
-shortWindow:close()
-UI.windows[1] = nil
-core.getScreenHeight = screenHeight
-assert(window.recoveryButton.enable and window.recoveryButton.name == "Recovery" and window.recoveryButton.mode == "recovery"
-    and not window.recoverEnduranceButton,
-    "The window offers one persistent Recovery mode while idle")
-assert(window.stopButton.name == "Stop All" and window.stopButton.tooltip:find("workouts from other mods keep running",1,true))
-scout:click()
-assert(Options.searchNearby() and not window.nearby:isSelected(1), "Enabling global scouting does not enable this survivor's adjacent preference")
-window.recoveryButton:click()
-assert(Controller.state.mode == "recovery" and not Controller.state.collectNearby
-    and not window.recoveryButton.enable,
-    "Persistent Recovery respects adjacent preference and cannot be replaced while active")
-Controller.state.phase, Controller.state.endurance = "recovery-idle", .999
-window:refresh()
-assert(window.activity.text:find("Recovery on",1,true) and window.activity.text:find("Endurance: 99%",1,true)
-    and window.progressFrame.heading=="Skill reference" and not window.skills[1].bar.visible and window.skillGuideButton.visible,
-    "Recovery stays on, shows actual endurance, and does not present XP as the goal")
-Controller.state.phase="manual"
-window:refresh()
-assert(window.activity.text:find("Recovery on (yielding)",1,true))
-local previousRecoveryStops=Controller.stops
-window:close()
-assert(Controller.state.active and Controller.stops==previousRecoveryStops)
-assert(UI.open(player)==window and Controller.state.mode=="recovery", "Hide/reopen does not change Recovery")
-Controller.state.active = false
-window:refresh()
-window.nearby:click() -- Explicitly enable saved adjacent collection for Recovery.
-window.recoveryButton:click()
-assert(Controller.state.mode == "recovery" and Controller.state.collectNearby,
-    "Recovery respects saved supplies and stays active")
-window.nearby:click()
-scout:click() -- Restore existing off preference for the remainder of the UI contracts.
-Controller.state.endurance = .999
-window:refresh()
-assert(window.activity.text:find("Recovery on", 1, true) and window.activity.text:find("Endurance: 99%",1,true),
-    "Active endurance is rounded down and does not show 100% early")
-Controller.state.endurance = nil
-window:refresh()
-assert(window.activity.text:find("Recovery on", 1, true) and not window.activity.text:find("Endurance:", 1, true),
-    "An unreadable stat does not claim a percentage")
-Controller.state.careWaiting=true
-window:refresh()
-assert(window.activity.text:find("Recovery on (paused for care)",1,true) and window.stopButton.enable)
-Controller.state.active, Controller.state.careWaiting, Controller.state.phase, Controller.state.endurance=false,false,"complete",1
-window:refresh()
-assert(window.activity.text:find("Recovery complete",1,true) and window.activity.text:find("Endurance: 100%",1,true)
-    and window.recoveryButton.enable and window.skills[1].bar.visible)
-Controller.state.active, Controller.state.phase, Controller.state.endurance=true,"meditation",nil
-local careFixtureState=Controller.state
-careFixtureState.mode="both"
-careFixtureState.careWaiting=true
-careFixtureState.message="Care is paused while the context menu is open."
-window:refresh()
-assert(window.activity.text:find("Paused for care",1,true) and not window.activity.text:find("Training both",1,true),
-    "An armed care wait must look paused while Stop remains available")
-assert(window.stopButton.enable and not window.recoveryButton.enable)
-careFixtureState.cycle = {due="yoga", gates={yoga={ready=false, reason="Too exhausted"}}}
-window:refresh()
-assert(window.activity.text:find("Yoga is still next: Too exhausted",1,true), "The native blocker is visible while the Yoga turn is owed")
-careFixtureState.cycle.gates.yoga.ready = true
-window:refresh()
-assert(window.activity.text:find("Next practice: Yoga",1,true), "A recovered Yoga gate leaves the debt visible without stale denial")
-careFixtureState.cycle = nil
-careFixtureState.careWaiting=nil
-Controller.state.active = false
-window:refresh()
-assert(Controller.lastScope.collect == false and Controller.lastScope.preview == true, "Preview uses the actual collection setting")
-assert(window.report.food == 3 and window.report.nearbyFood == 5)
-assert(window.skills[1].bar.progress == 0.125 and window.skills[2].bar.progress == 0.4, "Skill bars represent XP within the current level")
-assert(window.skills[1].label.name=="Meditation - Level 2 / 10" and window.skills[1].bar.text=="25 / 200 XP (12.5%)")
-assert(not window.skills[1].flash and not window.skills[2].flash, "The first sample must not invent XP gains")
-assert(not window.activity.hasScrollbars and window.activity:getScrollHeight() <= window.activity.height,
-    "Ordinary activity text fits without an inner scrollbox")
-assert(window.resizable and window.body:getScrollHeight() <= window.body.height,
-    "The ordinary window fits its content and exposes native resizing")
-Controller.state.progress.meditation={level=2,current=30,required=200,fraction=0.15,total=180}
-now=now+200; window:refresh()
-local flash=window.skills[1].flash
-assert(flash and flash.text=="+5 XP" and flash.positive)
-window.progressFrame.draws={}; window.progressFrame:prerender()
-local startDraw=window.progressFrame.draws[#window.progressFrame.draws]
-assert(startDraw.text=="+5 XP" and startDraw.g>startDraw.r and startDraw.a==1)
-now=now+500; window.progressFrame.draws={}; window.progressFrame:prerender()
-local laterDraw=window.progressFrame.draws[#window.progressFrame.draws]
-assert(laterDraw.y<startDraw.y and laterDraw.a==0.5,"The one-second XP indication rises and fades")
-Controller.state.progress.meditation={level=2,current=27,required=200,fraction=0.135,total=177}
-now=now+100; window:refresh(); window.progressFrame.draws={}; window.progressFrame:prerender()
-local loss=window.progressFrame.draws[#window.progressFrame.draws]
-assert(loss.text=="-3 XP" and loss.r>loss.g,"XP losses show the amount in red")
-now=now+1001; window.progressFrame:prerender()
-assert(not window.skills[1].flash,"XP indication expires after one second")
-Controller.state.meditation=3
-Controller.state.progress.meditation={level=3,current=2,required=500,fraction=0.004,total=352}
-window:refresh()
-assert(window.skills[1].flash.text=="+175 XP" and window.skills[1].bar.progress==0.004,
-    "Level transitions retain the actual cumulative XP change")
-Controller.state.yoga=1
-Controller.state.progress.yoga={level=1,current=5,required=250,fraction=0.02}
-window:refresh()
-assert(window.skills[2].flash.text=="+65 XP","A Yoga level transition counts the previous threshold and new progress")
-Controller.state.yoga=9
-Controller.state.progress.yoga={level=9,current=8995,required=9000,fraction=8995/9000}
-window:refresh()
-Controller.state.yoga=10
-Controller.state.progress.yoga={level=10,current=0,required=0,fraction=1,capped=true}
-window:refresh()
-assert(window.skills[2].bar.text=="MAX" and window.skills[2].bar.progress==1 and window.skills[2].flash.text=="+1 level",
-    "Yoga cap uses an honest level indication when upstream does not retain the exact XP award")
-window:setWidth(760); window:setHeight(850); window:onResize()
-assert(window.body.width==736 and window.ledger.width==721 and math.abs(window.starts[1].width-(736-12)/3)<1)
-assert(window.body:getScrollHeight()<=window.body.height and localLayouts["AutoMindful/window-0.txt"]:find(" 760 850 ",1,true)
-    and not window.player.data.AutoMindfulPreferences.width,"Resizing reflows content and saves dimensions only in the local layout")
-assertFooterVisible(window)
-Controller.state.message="First line\nSecond line\nThird line\nFourth line"
-window:refresh()
-assert(window.activity:getScrollHeight()<=window.activity.height and not window.activity.hasScrollbars,
-    "Long activity text grows its frame instead of hiding status behind an inner scrollbar")
-Controller.state.message="Choose a mode."
-Controller.inventory.warnings={}
-for index=1,12 do Controller.inventory.warnings[index]="Supply warning "..index end
-window:refresh()
-assert(window.guidance.hasScrollbars and window.guidance:getScrollHeight()>window.guidance.height,
-    "Long preparation details remain accessible through their own scroll area")
-Controller.inventory.warnings={};window:refresh()
-assert(window.checked.name == "Supplies checked just now")
-Controller.inventory.food = 7
-now = now + 600
-window:update()
-assert(window.report.food == 7, "Visible supply counts update without reopening")
-Controller.state.active, Controller.state.mode = true, "meditation"
-window.nearby:setSelected(1, true)
-window:onNearbyChanged()
-assert(Controller.lastNearby == true and Controller.state.active and Controller.stops == 0, "Collection can change during training without cancellation")
-assert(Controller.lastScope.collect == true and Controller.lastScope.preview == true)
-Controller.inventory.food = 0
-window:checkSupplies()
-assert(Controller.lastScope.force == true, "Check supplies forces a fresh radius snapshot")
-assert(window.report.food == 0 and Controller.state.active and Controller.stops == 0, "Checking supplies refreshes read-only during training")
-Controller.state.careNotice = "Continuing while hunger is safe."
-Controller.state.active = false
-window:refresh()
-assert(not window.guidance.text:find(Controller.state.careNotice, 1, true), "Stopped sessions must not show an old continuing-care notice")
-Controller.state.active = true
-window:refresh()
-assert(window.guidance.text:find(Controller.state.careNotice, 1, true), "An active care notice remains visible")
-Controller.state.careNotice = nil
-Controller.state.painNotice = "No usable stock Painkillers found."
-window:refresh()
-assert(window.guidance.text:find(Controller.state.painNotice, 1, true), "A pain-care blocker is visible in the pane")
-Controller.state.painNotice = nil
-window.ledger:prerender()
-local painRow, stockFooter
-for _, draw in ipairs(window.ledger.draws) do
-    if draw.text == "Painkillers" then painRow = draw.y end
-    if draw.text == "Care trips: enabled" or draw.text == "Adjacent only; care trips off" then stockFooter = draw.y end
-end
-assert(painRow and stockFooter and painRow + window.ledger.line < stockFooter,
-    "The painkiller count has its own readable row above the footer")
-local foodY
-for _, draw in ipairs(window.ledger.draws) do if draw.text == "Food" then foodY = draw.y end end
-local zero
-for _, draw in ipairs(window.ledger.draws) do if draw.y == foodY and draw.text == "0" then zero = draw end end
-assert(zero and zero.r > zero.g, "Missing supply quantities are visibly distinguished")
-window.x, window.y = 120, 130
-window.ledger.tooltipUI = Widget:new()
-window:close()
-assert(not window.ledger.tooltipUI:getIsVisible() and window.ledger.tooltipUI.removed, "Closing resets tooltip visibility so it can appear after reopening")
-local scans = Controller.scans
-now = now + 600
-Controller.state.progress.meditation={level=3,current=52,required=500,fraction=0.104,total=402}
-window:update()
-assert(Controller.scans == scans and Controller.state.active and Controller.stops == 0, "Closing hides the view without ending the loop")
-assert(UI.open(player) == window and window.x == 120 and window.y == 130 and window.nearby:isSelected(1), "Reopening preserves position and collection preference")
-assert(window.width==760 and window.height==850 and not window.skills[1].flash and not window.skills[2].flash,
-    "Reopening preserves geometry and establishes a fresh XP baseline without replaying hidden gains")
+charWidth, lineHeight, window.view, state.active, state.mode = 7, 16, "now", false, nil
+window:invalidate(true)
+passed("text stays inside the window at every font size, in every tab, idle and running")
 
-require "AutoMindful_Main"
-local openBind, useDefault = settings:getOption("openWindow"), settings:getOption("defaultWindowKey")
-local opens, open = 0, UI.open
-UI.open = function(...) opens = opens + 1; return open(...) end
-local startsAtShortcut = Controller.starts
-textEntry = true
-AutoMindful.uiEvents.key(Keyboard.KEY_0)
-textEntry, ISChat = false, {focused=true}
-AutoMindful.uiEvents.key(Keyboard.KEY_0)
-assert(opens == 0, "The shortcut does not fire into text entry or chat")
-ISChat.focused = false
-AutoMindful.uiEvents.key(Keyboard.KEY_0)
-assert(opens == 1 and window.recoveryButton.visible and Controller.starts == startsAtShortcut and Controller.stops == 0,
-    "The free default only opens the pane with Recovery visible")
-assert(window.footer.text:find("Open with 0",1,true))
-keyBinding = {{value="Other stock or registered action", key=16, alt=0}}
-nativeAlt["Other stock or registered action"] = Keyboard.KEY_0
-assert(Options.windowKey() == 0, "An alternate binding also reserves the key")
-AutoMindful.uiEvents.key(Keyboard.KEY_0)
-assert(opens == 1)
-nativeAlt["Other stock or registered action"] = nil
-local foreignOption = PZAPI.ModOptions:create("ForeignKey"):addKeyBind("key","Another mod action",Keyboard.KEY_0)
-assert(Options.windowKey() == 0, "A different Mod Options binding reserves the default")
-foreignOption:setValue(0)
-useDefault:setValue(false)
-assert(Options.windowKey() == 0, "The default shortcut can be switched off without changing binds")
-openBind:setValue(66)
-assert(Options.windowKey() == 66, "A previous user's choice overrides the built-in fallback")
-AutoMindful.uiEvents.key(Keyboard.KEY_0)
-assert(opens == 1)
-nativeKeys["Other stock or registered action"] = 66
-assert(Options.windowKey()==0, "Conflicting explicit overrides are also suppressed")
-AutoMindful.uiEvents.key(66)
-assert(opens == 1)
-nativeKeys["Other stock or registered action"] = nil
-registered[66] = opaqueBinding("Custom key registration", 66)
-assert(Options.windowKey()==0)
-registered[66] = opaqueBinding("Open AutoMindful window", 66)
-registered["Open AutoMindful window"] = registered[66]
-AutoMindful.uiEvents.key(66)
-assert(opens == 2 and Controller.starts==startsAtShortcut, "Our own registered binding still opens without starting a mode")
-registered[66], registered["Open AutoMindful window"] = nil, nil
-assert(keyRecordReads == 0, "Opaque native records must never throw during repeated footer refresh")
-AutoMindful.uiEvents.key(Keyboard.KEY_ESCAPE)
-assert(not window:getIsVisible() and Controller.state.active and Controller.stops == 0, "Escape hides the window without stopping training")
-package.loaded.AutoMindful_Main = nil
-require "AutoMindful_Main"
-assert(#Events.OnKeyPressed.handlers == 1 and #Events.OnFillWorldObjectContextMenu.handlers == 1, "Reload does not duplicate input handlers")
--- Fresh Lua environment with no loose asset mount (the default client-only loader).
--- Known symbolic names come from stock B42.22.2 UI/UI2 pack metadata, not another mod.
-do
-    local previousTexture,previousFileExists=getTexture,fileExists
-    local ls = {Open="Item_Clipboard", Supplies="Item_Backpack", Yoga="Item_Dumbbell",
-        Meditate="Item_Candle", Endurance="Moodle_Icon_Endurance", Once="ArrowRight",
-        Mat="Item_Bathtowel", Bowl="Item_Bowl", Mindful="FavoriteStar"}
-    local mounted, lookup, native, poisoned = {}, {}, {}, {}
-    local function path(key) return "media/ui/AutoMindful/"..key..".png" end
-    for _,key in pairs(ls) do native[key]={key=key} end
-    function fileExists(key) return mounted[key]~=nil end
-    function getTexture(key)
-        lookup[key]=(lookup[key] or 0)+1
-        if key:match("^media/") then
-            if not mounted[key] then poisoned[key]=true end
-            if poisoned[key] then return nil end
-            local t=mounted[key]
-            if t=="throw" then error("unavailable texture provider") end
-            return t
-        end
-        return native[key]
-    end
-    package.loaded["AutoMindful/ContextMenu"]=nil
-    local tested=require "AutoMindful/ContextMenu"
-    local function leaves(mode,who,verified)
-        local root=ISContextMenu:new();root.player=who:getPlayerNum()
-        local ref=mode=="yoga" and yoga or meditation
-        local top=root:addOption(mode,{},ref.onAction,ref,who)
-        if verified then top.itemForTexture=verified end
-        tested.attach(root,who);tested.attach(root,who)
-        local sub=root:getSubMenu(top.subOption)
-        assert(#root.options==1 and #sub.options==(mode=="yoga" and 5 or 6))
-        return root,top,sub
-    end
-    local function verifyKeys(sub,keys)
-        local distinct={}
-        for i,key in ipairs(keys) do
-            local texture=sub.options[i].iconTexture
-            assert(texture==native[ls[key]] and texture,"stock glyph required for "..key)
-            assert(not distinct[texture],"duplicate stock glyph");distinct[texture]=true
-        end
-    end
-    local ym,yt,ys=leaves("yoga",player2);verifyKeys(ys,{"Open","Yoga","Supplies","Mindful","Once"})
-    assert(yt.iconTexture==native[ls.Mat] and ys.player==1)
-    local mm,mt,ms=leaves("meditation",player);verifyKeys(ms,{"Open","Endurance","Meditate","Supplies","Mindful","Once"})
-    assert(mt.iconTexture==native[ls.Bowl] and ms.options[2].param1=="recovery")
-    local g=ISContextMenu:new();settings:getOption("generalContextMenu"):setValue(true)
-    tested.generalMenu(0,g,{},false);tested.generalMenu(0,g,{},false)
-    assert(#g.options==1 and g.options[1].iconTexture==native[ls.Mindful])
-    for key in pairs(ls) do assert(not poisoned[path(key)] and not lookup[path(key)],"Do not poison native negative cache with an unmounted path") end
-    -- Late legitimate mount in the same still-live pooled menu upgrades in place.
-    local previouslyForeign,customOpen,customRoot={},{key="branded Open"},{key="branded root"}
-    ys.options[3].iconTexture=previouslyForeign
-    mounted[path("Open")]=customOpen; mounted[path("Mindful")]=customRoot
-    tested.attach(ym,player2);tested.generalMenu(0,g,{},false)
-    assert(ys.options[1].iconTexture==customOpen and g.options[1].iconTexture==customRoot and #ys.options==5 and #g.options==1)
-    assert(ys.options[3].iconTexture==previouslyForeign,"Never overwrite newer upstream icons")
-    -- A late upstream item/tint also outranks our previous provisional art.
-    ys.options[5].itemForTexture={}; tested.attach(ym,player2)
-    assert(not ys.options[5].iconTexture and ys.options[5].itemForTexture~=nil)
-    local mis={getName=function() return "EngineErrorTexture" end}
-    mounted[path("Yoga")]=mis; mounted[path("Meditate")]={isFailure=function() return true end}
-    mounted[path("Endurance")]={isReady=function() return false end}
-    mounted[path("Mat")]="throw";mounted[path("Bowl")]={isDestroyed=function() return true end}
-    tested.attach(ym,player2);tested.attach(mm,player)
-    assert(ys.options[2].iconTexture==native[ls.Yoga] and yt.iconTexture==native[ls.Mat])
-    assert(ms.options[3].iconTexture==native[ls.Meditate] and ms.options[2].iconTexture==native[ls.Endurance] and mt.iconTexture==native[ls.Bowl])
-    native[ls.Yoga]=nil; tested.attach(ym,player2)
-    assert(not ys.options[2].iconTexture and ys.options[2].onSelect and ys.options[2].target==player2)
-    local customYoga={};mounted[path("Yoga")]=customYoga; tested.attach(ym,player2)
-    assert(ys.options[2].iconTexture==customYoga and #ys.options==5)
-    -- No VFS API/throwing probe: stock is safe and row callbacks still exist.
-    fileExists=function() error("no readable VFS") end
-    local realItem={};local _,_,readable=leaves("meditation",player2,realItem)
-    assert(readable.options[3].iconTexture==native[ls.Meditate] and not readable.options[6].iconTexture and readable.options[6].itemForTexture==realItem)
-    fileExists=nil; native[ls.Meditate]=mis
-    local _,_,degraded=leaves("meditation",player)
-    assert(not degraded.options[3].iconTexture and degraded.options[3].onSelect and #degraded.options==6)
-    getTexture,fileExists=previousTexture,previousFileExists
+-- Right-click menu ---------------------------------------------------------------
+local function worldMenu(objects, p)
+    local context = ISContextMenu:new()
+    ZenWellnessContextMenu.doBuildMenu((p or player).index, context, objects)
+    for _, f in ipairs(Events.OnFillWorldObjectContextMenu.handlers) do f((p or player).index, context, objects, false) end
+    return context
 end
--- The callback identity is useful in the console; it cannot establish a
--- physical click (stock dispatch and forceClick pass the same button).
-do
-    local messages, reasons = {}, {}
-    local oldPrint, oldStop = print, Controller.stop
-    print = function(message) messages[#messages+1] = message end
-    Controller.stop = function(who, reason)
-        assert(who == player)
-        reasons[#reasons+1] = reason
-        return oldStop(who, reason)
-    end
-    Controller.state.active, Controller.state.mode = true, "recovery"
-    local view = UI.open(player)
-    assert(view.stopButton.enable)
-    view.stopButton:click()
-    assert(not Controller.state.active)
-    Controller.state.active = true
-    view:refresh()
-    view:onStop()
-    assert(not Controller.state.active)
-    Controller.state.active = true
-    view:close()
-    assert(Controller.state.active, "Closing the pane must not dispatch Stop")
-    print, Controller.stop = oldPrint, oldStop
-    assert(#messages == 2 and messages[1] == "[AutoMindful] stop-request source=pane-stop-control"
-        and messages[2] == "[AutoMindful] stop-request source=pane-stop-callback", "Record source identity, not a physical click")
-    assert(#reasons == 2 and reasons[1] == "AutoMindful received a stop request." and reasons[2] == reasons[1],
-        "The stop reason must not attribute a physical action")
+local function at(x, y, sprite, partner)
+    local o = {getSpriteName=function() return sprite end}
+    local s = square(x, y, {o})
+    if partner then s.getE = function() return square(x + 1, y, {{getSpriteName=function() return partner end}}) end end
+    function o:getSquare() return s end
+    return o
 end
--- Only read bounded history while its panel is open; never present a
--- supply-preview gap as proof that the area contains no water.
-do
-    local oldState,oldInventory,oldRecent=Controller.state,Controller.inventory,Controller.recentDecisions
-    local reads=0
-    Controller.state={active=true,mode="recovery",phase="recovering",message="Critical thirst.",
-        decisionCode="water-unavailable",decisionLabel="No safe water confirmed",decisionRevision=2}
-    Controller.inventory={water=0,nearbyWater=0,unknownContainers=2,unloadedSquares=1,radius=10,warnings={}}
-    function Controller.recentDecisions(who)
-        assert(who==player)
-        reads=reads+1
-        return {{label="No safe water confirmed"},{label="Lifestyle is blocking Yoga",reason="Tapis de yoga requis."}}
-    end
-    local view=UI.open(player)
-    assert(view.activity.text:find("unknown",1,true), "Unloaded/uninspected stock remains explicitly unconfirmed")
-    assert(view.historyButton and not view.historyFrame.visible and reads==0)
-    view.historyButton:click()
-    assert(view.historyFrame.visible and view.historyText.text:find("Tapis de yoga requis.",1,true) and reads==1)
-    local paginates=view.historyText.paginated
-    view:refresh(); view:refresh()
-    assert(reads==1 and view.historyText.paginated==paginates, "Steady refresh does not reread/reflow history")
-    Controller.state.decisionRevision=3
-    view:refresh()
-    assert(reads==2)
-    Controller.inventory.unknownContainers,Controller.inventory.unloadedSquares=0,0
-    view:refresh()
-    assert(view.activity.text:find("found in checked supplies",1,true) and not view.activity.text:find("unknown",1,true))
-    Controller.inventory.nearbyWater=1
-    view:refresh()
-    assert(view.activity.text:find("did not confirm a usable drink",1,true))
-    view:setWidth(310); view:onResize()
-    assert(view.historyText:getBottom()<=view.historyFrame.height and view.historyFrame:getBottom()<view.progressFrame.y,
-        "The expandable history fits a narrow viewport and never covers the activity or controls")
-    view.skillGuideButton:click()
-    assert(not view.historyFrame.visible)
-    view.wellnessBack:click()
-    assert(view.historyFrame.visible and reads==2)
-    view.historyButton:click()
-    assert(not view.historyFrame.visible and view.stopButton.enable, "Showing or hiding history does not affect the mode")
-    view:close()
-    Controller.state,Controller.inventory,Controller.recentDecisions=oldState,oldInventory,oldRecent
-end
--- Fresh content fit is not a resize preference. Match the native MouseUp
--- boundary, then simulate a new game/player in the same local display slot.
-do
-    local oldState,oldWidth,oldHeight=Controller.state,core.getScreenWidth,core.getScreenHeight
-    Controller.state={active=false,phase="idle",message="Ready.\nRegular activity line two.\nRegular activity line three."}
-    local function fresh(slot,saved)
-        return {data={AutoMindfulPreferences=saved},getModData=player.getModData,isDead=player.isDead,
-            getPlayerNum=function() return slot end}
-    end
-    local function fullScreen()
-        core.getScreenWidth=function() return 1280 end
-        core.getScreenHeight=function() return 1050 end
-    end
-    local function shortScreen()
-        core.getScreenWidth=function() return 525 end
-        core.getScreenHeight=function() return 475 end
-    end
-    local id="AutoMindful/window-2.txt"
-    fullScreen()
-    local original=fresh(2)
-    local view=UI.open(original)
-    assert(view.body:getScrollHeight()<=view.body.height and not view.body.vscroll:getIsVisible()
-        and not view.guidance.vscroll:getIsVisible() and not view.geometry.height and not localLayouts[id],
-        "First regular opening measures actual contents and does not save automatic height")
-    local left,right=view.tierButtons[1],view.tierButtons[2]
-    for _,pair in ipairs({{view.scouting,view.nearby},{view.check,view.stopButton}}) do
-        assert(pair[1].x==left.x and pair[2].x==right.x
-            and pair[1].width==left.width and pair[2].width==right.width,
-            "All paired controls share both columns at normal width")
-    end
-    assert(math.abs(left.width-right.width)<=1 and view.starts[1].x==left.x
-        and view.starts[3].x+view.starts[3].width==right.x+right.width
-        and view.starts[2].x-(view.starts[1].x+view.starts[1].width)==right.x-(left.x+left.width),
-        "The three-way row uses the same full span, integer widths and gaps")
-    local toggle,stop=Settings.toggles,Controller.stops
-    assert(view.settingsButton.image==textureHandles["media/ui/inventoryPanes/Button_Gear.png"]
-        and view.settingsButton.y+view.settingsButton.height<view.body.y)
-    view.settingsButton:click()
-    assert(Settings.toggles==toggle+1 and Settings.parent==view and Controller.stops==stop)
-    view:close()
-    assert(Settings.closedParent==view and not view:getIsVisible() and not localLayouts[id])
-    assert(UI.open(original)==view and not view.body.vscroll:getIsVisible())
+local here, far = at(10, 11), at(40, 40)
+local context = worldMenu({far})
+assert(names(context) == "Wellness", "Idle adds nothing at the top level: " .. names(context))
+local wellness = context:getSubMenu(context.options[1].subOption)
+assert(names(wellness) == "Yoga|AutoMindful", names(wellness))
+local native = wellness.options[1]
+assert(native.onSelect == nativeYoga.onAction and native.param1 == nativeYoga and native.toolTip == "native tip" and not native.subOption,
+    "Lifestyle's own action is untouched and still one click")
+local ours = wellness:getSubMenu(wellness.options[2].subOption)
+assert(names(ours) == "Yoga|Meditation|Yoga and Meditation|Reach a moodle tier|Recovery|Show window", names(ours))
+assert(named(ours, "Yoga").toolTip.description == "Level 5, 40 of 100 XP" and not named(ours, "Yoga").notAvailable)
+refuse.meditation = "Not while zombies are nearby."
+context = worldMenu({far}); wellness = context:getSubMenu(context.options[1].subOption); ours = wellness:getSubMenu(wellness.options[2].subOption)
+assert(named(ours, "Meditation").notAvailable and named(ours, "Meditation").toolTip.description == "Not while zombies are nearby.")
+refuse.meditation = nil
+WorldMenu.attach(context, player); WorldMenu.attach(context, player)
+assert(#wellness.options == 2, "Never twice")
+choose(named(ours, "Yoga")); assert(launches[#launches].mode == "yoga")
+passed("idle: one entry beside Lifestyle's own actions, listing what can be done now")
 
-    local grip=view.resizeWidget
-    grip.resizing=true
-    grip.resizeFunction(view,650,780)
-    assert(view.width==650 and view.height==780 and not localLayouts[id],
-        "Native resize previews dimensions before one local save on release")
-    grip:onMouseUp(0,0)
-    assert(geometryWrites[id]==1 and not original.data.AutoMindfulPreferences.width)
-    view:onMouseDown(8,8)
-    view:setX(550); view:setY(220)
-    view:onMouseUpOutside(0,0)
-    assert(geometryWrites[id]==2 and localLayouts[id]=="1 550 220 650 780 1\n")
-    view:close(); UI.windows[2]=nil
-    assert(geometryWrites[id]==2,"Closing an unchanged panel does not rewrite")
-    local restored=fresh(2)
-    shortScreen()
-    view=UI.open(restored)
-    assert(view.x+view.width<=525 and view.y+view.height<=475 and view.body.vscroll:getIsVisible())
-    view:close()
-    assert(geometryWrites[id]==2 and not restored.data.AutoMindfulPreferences.height,
-        "The smaller display never clobbers the saved size/position")
-    fullScreen()
-    view=UI.open(restored)
-    assert(view.x==550 and view.y==220 and view.width==650 and view.height==780)
-    shortScreen()
-    view:update()
-    assert(view.x+view.width<=525 and view.y+view.height<=475 and geometryWrites[id]==2)
-    fullScreen()
-    view:update()
-    assert(view.x==550 and view.y==220 and view.width==650 and view.height==780,
-        "A live resolution change is reversible without reopening")
-    view:close(); UI.windows[2]=nil
-    shortScreen()
-    core.getScreenHeight=function() return 570 end
-    view=UI.open(restored)
-    grip=view.resizeWidget2
-    grip.resizing=true; grip.resizeFunction(view,view.width,475); grip:onMouseUp(0,0)
-    assert(localLayouts[id]=="1 550 220 650 475 1\n",
-        "A vertical resize does not save the temporarily narrowed width or repositioned window")
-    view:close(); UI.windows[2]=nil
+context = worldMenu({far})
+assert(names(context) == "Wellness" and #context:getSubMenu(context.options[1].subOption).options == 1, "An idle Recovery adds no second entry")
+player.busy = true
+context = worldMenu({far})
+assert(#context.options == 0, "Running, and you clicked somewhere else: nothing in the way")
+context = worldMenu({here})
+assert(names(context) == "AutoMindful: Yoga", names(context))
+ours = context:getSubMenu(context.options[1].subOption)
+assert(names(ours) == "Stop|Switch to|Show window", names(ours))
+local switch = ours:getSubMenu(named(ours, "Switch to").subOption)
+assert(not named(switch, "Yoga") and named(switch, "Recovery"))
+choose(named(ours, "Stop")); assert(stops[#stops] == "You stopped AutoMindful." and not state.active)
+player.busy = false
+context = worldMenu({at(30, 30, "floors_rugs_01_52")}); assert(names(context) == "Wellness", "Half a mat is no place to train")
+context = worldMenu({at(30, 30, "floors_rugs_01_52", "floors_rugs_01_53")})
+ours = context:getSubMenu(named(context, "AutoMindful").subOption)
+assert(names(ours) == "Train Yoga here|Show window", names(ours))
+choose(ours.options[1])
+local walk = ISTimedActionQueue.queued[1]
+assert(walk and walk.square:getX() == 30, "Walk onto that mat first")
+local count = #launches; walk.done(); assert(#launches == count + 1 and launches[#launches].mode == "yoga")
+state.active, state.mode = false, nil
+context = worldMenu({at(30, 30, "floors_rugs_01_10")}); assert(names(context) == "Wellness", "Other rugs are just rugs")
+Options.set("generalContextMenu", true)
+context = worldMenu({far}); assert(names(context) == "Wellness|AutoMindful")
+Options.set("generalContextMenu", false)
+player.dead = true; context = worldMenu({here}); assert(names(context) == "Wellness" and #context:getSubMenu(context.options[1].subOption).options == 1)
+player.dead = false
+passed("running: on your survivor only; on a mat: train here; elsewhere: nothing")
 
-    local otherID="AutoMindful/window-3.txt"
-    local other=fresh(3)
-    shortScreen()
-    view=UI.open(other)
-    assert(view.body.vscroll:getIsVisible() and not view.geometry.height)
-    view:close(); UI.windows[3]=nil
-    assert(not localLayouts[otherID] and not other.data.AutoMindfulPreferences.height)
-    fullScreen()
-    view=UI.open(other)
-    assert(view.body:getScrollHeight()<=view.body.height and not view.body.vscroll:getIsVisible(),
-        "First opening on a small screen does not turn its fallback into a preference")
-    grip=view.resizeWidget
-    grip.resizing=true; grip.resizeFunction(view,620,view.height); grip:onMouseUpOutside(0,0)
-    assert(localLayouts[otherID]=="1 - - 620 - 1\n","Changing width alone does not freeze the adaptive height")
-    view:close(); UI.windows[3]=nil
-
-    local legacy={x="1130",y=800,width=680,height="720",pin=false,collectNearby=false}
-    localLayouts[otherID]="unrecognized geometry\n"
-    view=UI.open(fresh(3,legacy))
-    assert(view.width==680 and view.height==720 and view.x==600 and view.y==330 and not view.pin
-        and view.pinButton:getIsVisible() and not view.collapseButton:getIsVisible() and not view.nearby:isSelected(1))
-    view:close()
-    assert(legacy.x=="1130" and legacy.y==800 and localLayouts[otherID]=="unrecognized geometry\n",
-        "Legacy values are read and clamped, not replaced by fallback geometry")
-    UI.windows[3]=nil
-
-    local oldDefault={x=70,y=70,width=540,height=832}
-    view=UI.open(fresh(3,oldDefault))
-    assert(not view.geometry.height and view.height~=832 and view.body:getScrollHeight()<=view.body.height,
-        "The exact legacy autosaved default height is measured afresh")
-    view:close(); UI.windows[3]=nil
-    shortScreen()
-    local oldLimited={x=24,y=40,width=501,height=435}
-    view=UI.open(fresh(3,oldLimited))
-    assert(not view.geometry.height and view.body.vscroll:getIsVisible(),
-        "Recognize the old default that was clamped to a small display only at the stock position")
-    view:close(); UI.windows[3]=nil
-    oldLimited.x=17
-    view=UI.open(fresh(3,oldLimited))
-    assert(view.geometry.height==435,"Unclear legacy size stays as saved")
-    view:close(); UI.windows[3]=nil
-    core.getScreenWidth,core.getScreenHeight,Controller.state=oldWidth,oldHeight,oldState
-end
-print("ui-contracts: PASS (local layout persistence, measured fit, aligned buttons, stock gear, decision history and native art)")
+-- Two local players never see each other's window, menu or job.
+local second = Window.open(player2)
+assert(second ~= window and second.player == player2 and Window.windows[1] == second)
+local replacement = survivor(0)
+player = replacement
+assert(Window.open(replacement) ~= window and not window:getIsVisible(), "A new survivor gets a new window")
+replacement.dead = true; now = now + 5000; Window.windows[0]:update()
+assert(not Window.windows[0]:getIsVisible())
+passed("windows belong to one local survivor")
+print("UI PASS")

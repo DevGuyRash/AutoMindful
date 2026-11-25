@@ -362,14 +362,14 @@ do
     local rejected={}
     local first=find("water",10,rejected)
     assert(first.unknown and first.container==a)
-    assert(Route.reject(rejected,first,"water",now)=="until-navigation-changes")
+    assert(Route.reject(rejected,first,"water",now)=="when-navigation-changes-after-15s")
     local second=find("water",10,rejected)
     assert(second.unknown and second.container==b)
     Route.reject(rejected,second,"water",now)
     for _,elapsed in ipairs({16000,60000,3600000}) do
         now=now+elapsed; refresh()
         assert(not find("water",10,rejected) and not find("literature",10,rejected),
-            "Expired legacy cooldowns must not re-arm unchanged unconfirmed routes")
+            "Elapsed time alone must not re-arm unchanged unconfirmed routes")
     end
     b.items={item({water=true})}; refresh()
     local known=find("water",10,rejected)

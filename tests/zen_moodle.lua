@@ -25,7 +25,10 @@ function core:getGoodHighlitedColor()
 end
 function getCore() return core end
 Registries={MOODLE_TYPE={values=function() return {size=function() return 0 end} end}}
-SandboxVars={Debug={}}
+SandboxVars={Debug={}, Text={DividerMeditationNew=true}, Meditation={EffectMultiplier=2, HealFactor=2}}
+CharacterTrait={DISCIPLINED="disciplined",SMOKER="smoker"}
+Perks={Meditation="meditation",Fitness="fitness",Nimble="nimble"}
+local rank, disciplined, smoker = 6, false, false
 function getTextManager()
     return {getFontHeight=function() return 13 end, MeasureStringX=function(_,_,s) return 6*#s end}
 end
@@ -49,6 +52,10 @@ function ISUIElement:setHeight() end
 function getTexture() end
 function ZombRand() return 0 end
 function getText(key)
+    if key == "Original Mindfulness Title" then return key end
+    if key:find("MindfulState",1,true) and not key:find("desc",1,true) then
+        return "Original Mindfulness Title"
+    end
     if key == "Moodles_zen_Good_desc" or key:lower():find("desc") then
         return "A clear mind and a centered chi will help you improve your body faster. Namaste!"
     end
@@ -61,8 +68,10 @@ function ISUIElement:getHeight() return 32 end
 function ISUIElement:drawRect(x,y,w,h) rect={x=x,y=y,w=w,h=h} end
 function ISUIElement:drawTextRight(s) painted[#painted+1]=s end
 function getPlayerScreenTop() return 0 end
-local md={LSMoodles={Zen={Value=.2,Level=0,Alignment="Good",Icon=3,Tiers=1},Other={Value=.8,Level=0,Alignment="Good",Icon=3,Tiers=1}},LSZenActive={squats=.4,press=.6}}
-local p={getModData=function() return md end,getMoodles=function() return {} end}
+local md={LSMoodles={Zen={Value=.2,Level=0,Alignment="Good",Icon=3,Tiers=1},MindfulState={Value=.2,Level=0,Alignment="Good",Icon=3,Tiers=2},Other={Value=.8,Level=0,Alignment="Good",Icon=3,Tiers=1}},LSZenActive={squats=.4,press=.6}}
+local p={getModData=function() return md end,getMoodles=function() return {} end,
+    hasModData=function() return true end,getPerkLevel=function(_,perk) return perk=="meditation" and rank or 6 end,
+    hasTrait=function(_,trait) if trait=="disciplined" then return disciplined end return smoker end}
 function getPlayer() return p end
 UIManager={getUI=function()
     return {size=function() return #widgets end,get=function(_,i) return widgets[i+1] end}
@@ -75,7 +84,7 @@ else
         local cls=ISUIElement:derive("ISMoodles")
         function cls:updateLSMoodles() end
         function cls:render()
-            self:mouseOverMoodle(name, "Zen", getText("desc"))
+            self:mouseOverMoodle(name, name=="MindfulState" and "Original Mindfulness Title" or "Zen", getText("desc"))
         end
         function cls:level()
             local value=player:getModData().LSMoodles[name].Value
@@ -98,8 +107,10 @@ Events.OnPostUIDraw={
 local factory = LSMoodleManager.newType
 LSMoodleManager.createType(p,"Other")
 LSMoodleManager.createType(p,"Zen")
-local hudZen = widgets[#widgets]:getTable()
-local hudOther = widgets[#widgets-1]:getTable()
+LSMoodleManager.createType(p,"MindfulState")
+local hudMindful = widgets[#widgets]:getTable()
+local hudZen = widgets[#widgets-1]:getTable()
+local hudOther = widgets[#widgets-2]:getTable()
 painted={}
 hudZen:render()
 assert(painted[1]=="Zen", "Control: registered before AutoMindful, displaying the upstream hover")
@@ -147,11 +158,38 @@ for i, marker in ipairs({"I","II","III","IV"}) do
     assert(out:find("- Workout XP setting: +0.30",1,true))
     assert(rect and rect.y+700+rect.h<=720 and rect.x+900>=0)
 end
+local function mindfulRender(value)
+    md.LSMoodles.MindfulState.Value=value
+    painted,rect={},nil
+    hudMindful:render()
+    assert(painted[1]=="Original Mindfulness Title")
+    return table.concat(painted," ")
+end
+local out=mindfulRender(.39)
+assert(out:find("Per in-game minute",1,true))
+assert(out:find("Stress: -9 percentage points",1,true) and not out:find("Hunger",1,true))
+assert(not out:find("Nicotine",1,true))
+smoker=true
+out=mindfulRender(.4)
+assert(out:find("Hunger: -0.72 percentage points",1,true) and not out:find("Health",1,true))
+assert(out:find("Nicotine withdrawal: -9 percentage points",1,true))
+rank, disciplined = 10, true
+SandboxVars.Meditation.EffectMultiplier=3
+SandboxVars.Meditation.HealFactor=3
+out=mindfulRender(.6)
+assert(out:find("Health: +18 points shared across damaged body parts",1,true))
+assert(out:find("Panic: -35 points",1,true))
+assert(not render():find("Meditation XP",1,true) and table.concat(painted," "):find("Yoga pose XP",1,true))
+SandboxVars.Text.DividerMeditationNew=false
+assert(not mindfulRender(.6):find("Panic",1,true))
+SandboxVars.Text.DividerMeditationNew=true
+rank=6
 assert(md.LSMoodles.Zen.Level == 0 and md.LSMoodles.Zen.Value == .71)
 FitnessExercises.exercisesType.press.xpMod=1.2
 assert(not render():find("Workout",1,true),"Unequal exercise deltas must not be attributed to Zen")
 supported=false
 assert(painted and not render():find("XP",1,true) and painted[1]=="Zen IV")
+assert(not mindfulRender(.6):find("Panic",1,true))
 mx,my=0,0
 assert(render()=="" and not rect)
 mx,my=905,707

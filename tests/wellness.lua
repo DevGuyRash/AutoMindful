@@ -59,7 +59,7 @@ has(text,"Meditate with Localized Strong active");has(text,"also restores genera
 has(text,"fade one tier at a time");has(text,"9m in-game left in this tier")
 has(text,"every 10 in-game minutes");has(text,"no separate built-in countdown")
 has(text,"Fitness and Nimble XP");has(text,"Active now: Zen tier 1 | Meditation XP x1.1 | Yoga pose XP factor +1")
-has(text,"x1.1, x2.2, x3.3 or x4.4");has(text,"Zen tiers 1-2 add 1");has(text,"tiers 3-4 add 2")
+has(text,"x1.1, x2.2, x3.3 or x4.4");has(text,"Zen tiers 1-4 add 1, 1, 2, 2 to the pose")
 has(text,"already-loaded value, so extra workout XP is not guaranteed")
 has(text,"Successful poses can award Yoga, Fitness and Nimble XP. This is not a general multiplier")
 has(text,"Yoga XP setting: x0.75 (current sandbox");has(text,"Active now: Yoga lesson boost")

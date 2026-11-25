@@ -1,0 +1,3 @@
+- Hover Mindfulness, Strong Mindfulness, or Perfect Mindfulness for the current relief rates. The original title and description are unchanged. Rates use the active effect thresholds, your Meditation rank, applicable traits, and the current sandbox settings, before game stat limits.
+- Zen now uses source-derived XP formulas and omits bonuses for capped skills that can no longer earn that XP. The workout setting shown is a live configuration difference, not a guarantee of awarded XP.
+- Exact effect numbers are shown only for the verified Lifestyle rules. The tooltip never runs the buff, changes stats, or advances its timer.

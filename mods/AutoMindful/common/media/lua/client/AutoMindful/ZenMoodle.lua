@@ -1,4 +1,4 @@
--- Augment the existing Lifestyle Zen icon, not the player's moodle state.
+-- Augment the existing Lifestyle HUD, not the player's moodle state.
 local Info = require "AutoMindful/WellnessInfo"
 local Zen = {}
 local numerals = {"I", "II", "III", "IV"}
@@ -39,31 +39,36 @@ local function wrap(lines, tm, font, text, maxWidth)
     if line then lines[#lines+1] = line end
 end
 
-local function draw(ui, player, title, description)
+local function draw(ui, player, name, title, description)
     local x, y, w, h = ui:getX(), ui:getY(), ui:getWidth(), ui:getHeight()
     if not ui:isMouseOver() then
         local mx, my = getMouseX(), getMouseY()
         if mx < x or mx > x+w or my < y or my > y+h then return end
     end
-    -- Ask the original widget for the current tier. Its Value-to-Level rules
-    -- stay upstream and updates are reflected immediately on the same icon.
-    local tier = ui:level()
-    local suffix = numerals[tier]
-    if not suffix then return end
+    local details = {}
+    if name == "Zen" then
+        -- The same native HUD tier that Yoga and Meditation read as Level.
+        local tier = ui:level()
+        local suffix = numerals[tier]
+        if not suffix then return end
+        title = title .. " " .. suffix
+        local xp, pose = Info.zenXPForPlayer(player, tier)
+        if xp then details[#details+1] = string.format("- Meditation XP: +%d%% (x%.1f)", math.floor((xp-1)*100+0.5), xp) end
+        if pose then details[#details+1] = string.format("- Yoga pose XP factor: +%d", pose) end
+        local workout = Info.supported() and workoutBonus(player)
+        if workout and workout >= 0.005 then
+            details[#details+1] = string.format("- Workout XP setting: +%.2f (cached values may not update)", workout)
+        end
+    else
+        details = Info.mindfulnessHover(player)
+        if not details then return end
+    end
     local font, tm = UIFont.Small, getTextManager()
     local lineHeight, pad, right = tm:getFontHeight(font), 7, -4
     local maxWidth = math.max(1, math.min(350, x - 2 * pad + right))
-    local lines = {title .. " " .. suffix}
+    local lines = {title}
     wrap(lines, tm, font, description, maxWidth)
-    local xp, pose = Info.zenEffects(tier)
-    if xp then
-        wrap(lines, tm, font, string.format("- Meditation XP: +%d%% (x%.1f)", math.floor((xp-1)*100+0.5), xp), maxWidth)
-        wrap(lines, tm, font, string.format("- Yoga pose XP factor: +%d", pose), maxWidth)
-        local workout = workoutBonus(player)
-        if workout and workout >= 0.005 then
-            wrap(lines, tm, font, string.format("- Workout XP setting: +%.2f (cached values may not update)", workout), maxWidth)
-        end
-    end
+    for _, line in ipairs(details) do wrap(lines, tm, font, line, maxWidth) end
     local width = 0
     for _, line in ipairs(lines) do width = math.max(width, tm:MeasureStringX(font, line)) end
     local height = lineHeight * #lines + 2 * pad
@@ -84,12 +89,16 @@ local function attach(ui, player)
         or type(ui.level) ~= "function" or wrappedWidgets[ui] == ui.mouseOverMoodle then return end
     local originalHover = ui.mouseOverMoodle
     local function hover(self, hovered, title, description)
-        if hovered ~= "Zen" or type(title) ~= "string" or type(description) ~= "string" then
+        if (hovered ~= "Zen" and hovered ~= "MindfulState") or type(title) ~= "string" or type(description) ~= "string" then
             return originalHover(self, hovered, title, description)
         end
-        if draw(self, player, title, description) and not loggedHover then
-            loggedHover = true
-            print("[AutoMindful] Zen tooltip rendered on Lifestyle's HUD.")
+        if draw(self, player, hovered, title, description) then
+            if hovered == "Zen" and not loggedHover then
+                loggedHover = true
+                print("[AutoMindful] Zen tooltip rendered on Lifestyle's HUD.")
+            end
+        elseif hovered == "MindfulState" then
+            return originalHover(self, hovered, title, description)
         end
     end
     ui.mouseOverMoodle = hover
@@ -120,7 +129,7 @@ function Zen.install()
     if not wrappedFactories[original] then
         local function factory(player, name, ...)
             local ui = original(player, name, ...)
-            if name == "Zen" then attach(ui, player) end
+            if name == "Zen" or name == "MindfulState" then attach(ui, player) end
             return ui
         end
         wrappedFactories[factory] = true

@@ -24,7 +24,7 @@ end
 -- The XP mechanisms are distinct; the pose factor is not a global multiplier.
 function Info.zenEffects(tier)
     if not supported() or type(tier) ~= "number" or tier % 1 ~= 0 or tier < 1 or tier > 4 then return end
-    return tier * 1.1, math.ceil(tier / 2)
+    return tier * Facts.zenExperience[1], math.ceil(tier / Facts.zenExperience[2])
 end
 
 local function rawText(key)
@@ -140,7 +140,7 @@ function Info.activeStrong(player)
     if not supported() or not (SandboxVars and SandboxVars.Text and SandboxVars.Text.DividerMeditationNew) then return false end
     local current=moodle(playerData(player),"MindfulState")
     local value=current and current.Value
-    return type(value)=="number" and value>=0.4 and value<=1
+    return type(value)=="number" and value>=Facts.mindfulnessActivation[3] and value<=1
 end
 
 local function real(number)
@@ -376,22 +376,99 @@ function Info.installMeditationTooltip(class)
     Info.meditationClass = class
 end
 
-local function mindfulnessRates(lines, heading, rank, tier, traitSlot, settingScale, healFactor)
-    local strength = Facts.mindfulnessEffect[rank][traitSlot] * settingScale
+local function mindfulnessAmounts(rank, tier, traitSlot, settingScale, healFactor)
+    local row = Facts.mindfulnessEffect[rank]
+    if not row or not tier then return end
+    local strength = row[traitSlot] * settingScale
     local coefficients = Facts.mindfulnessRelief
-    local value = number(strength * coefficients[1])
-    lines[#lines + 1] = heading .. ": Relief per in-game minute"
-    lines[#lines + 1] = "Stress and nicotine withdrawal: -" .. value .. " percentage points each"
-    lines[#lines + 1] = "Panic: -" .. value .. " points on the 0-100 scale"
+    local result = {stress=strength * coefficients[1], panic=strength * coefficients[1],
+        nicotine=strength * Facts.mindfulnessNicotine * 100}
     if tier >= 2 then
         local precision = 10 ^ coefficients[4]
-        local hunger = -math.floor(-strength * coefficients[3] * precision + 0.5) * 100 / precision
-        lines[#lines + 1] = "Pain: -" .. number(strength * coefficients[2]) .. " points on the 0-100 scale"
-        lines[#lines + 1] = "Hunger: -" .. number(hunger) .. " percentage points"
+        result.pain = strength * coefficients[2]
+        result.hunger = -math.floor(-strength * coefficients[3] * precision + 0.5) * 100 / precision
     end
     if tier >= 3 then
-        local heal = healFactor * (rank == Facts.meditationUnlocks[3] and Facts.mindfulnessHealing[traitSlot + 1] or 1)
-        lines[#lines + 1] = "Healing: +" .. number(heal) .. " health points shared across damaged body parts"
+        result.healing = healFactor * (rank == Facts.meditationUnlocks[3] and Facts.mindfulnessHealing[traitSlot + 1] or 1)
+    end
+    return result
+end
+
+local function mindfulnessTier(value)
+    if not real(value) then return end
+    local native = Facts.mindfulnessActivation
+    for tier = 3, 1, -1 do
+        if value >= native[tier + 1] then return tier end
+    end
+end
+
+local function perkLevel(player, key)
+    return safe(function()
+        local perk = Perks and Perks[key]
+        if player and perk then return player:getPerkLevel(perk) end
+    end)
+end
+
+function Info.zenXPForPlayer(player, tier)
+    local meditation, pose = Info.zenEffects(tier)
+    local caps = Facts.zenExperience
+    if meditation and (perkLevel(player, "Meditation") or 0) >= caps[3] then meditation = nil end
+    -- Fitness and Nimble still benefit from successful Yoga poses at Yoga cap.
+    if pose and (perkLevel(player, "Fitness") or 0) >= caps[5] and (perkLevel(player, "Nimble") or 0) >= caps[6] then
+        local yoga = safe(function() return HiddenSkills.getLevel(player, "Yoga") end)
+        if real(yoga) and yoga >= caps[4] then pose = nil end
+    end
+    return meditation, pose
+end
+
+function Info.mindfulnessHover(player)
+    if not supported() or not settings("Text").DividerMeditationNew then return end
+    local rank, disciplined = perkLevel(player, "Meditation"), hasTrait(player, "DISCIPLINED")
+    if not real(rank) or rank < Facts.mindfulnessActivation[1] or type(disciplined) ~= "boolean" then return end
+    local current = moodle(playerData(player), "MindfulState")
+    -- Lifestyle's generic HUD tier need not match the effect thresholds.
+    -- Use the unrounded Value as the native per-minute function does.
+    local tier = mindfulnessTier(current and current.Value)
+    if not tier then return end
+    local options = settings("Meditation")
+    local heal = real(options.HealFactor) and options.HealFactor or Facts.mindfulnessHealing[1]
+    local effects = mindfulnessAmounts(rank, tier, disciplined and 2 or 1,
+        Facts.mindfulnessEffectScale[options.EffectMultiplier] or 1, heal)
+    if not effects then return end
+    local lines = {"Per in-game minute (before stat limits):",
+        "- Stress: -" .. number(effects.stress) .. " percentage points",
+        "- Panic: -" .. number(effects.panic) .. " points"}
+    if hasTrait(player, "SMOKER") == true then
+        lines[#lines+1] = "- Nicotine withdrawal: -" .. number(effects.nicotine) .. " percentage points"
+    end
+    if effects.pain then
+        lines[#lines+1] = "- Pain: -" .. number(effects.pain) .. " points"
+        lines[#lines+1] = "- Hunger: -" .. number(effects.hunger) .. " percentage points"
+    end
+    if effects.healing and effects.healing ~= 0 then
+        lines[#lines+1] = "- Health: " .. (effects.healing > 0 and "+" or "") .. number(effects.healing)
+            .. " points shared across damaged body parts"
+    end
+    return lines, effects
+end
+
+local function mindfulnessRates(lines, heading, rank, tier, traitSlot, settingScale, healFactor)
+    local effects = mindfulnessAmounts(rank, tier, traitSlot, settingScale, healFactor)
+    if not effects then return end
+    lines[#lines + 1] = heading .. ": Relief per in-game minute"
+    if math.abs(effects.stress - effects.nicotine) < 0.00001 then
+        lines[#lines + 1] = "Stress and nicotine withdrawal: -" .. number(effects.stress) .. " percentage points each"
+    else
+        lines[#lines + 1] = "Stress: -" .. number(effects.stress) .. " percentage points"
+        lines[#lines + 1] = "Nicotine withdrawal: -" .. number(effects.nicotine) .. " percentage points"
+    end
+    lines[#lines + 1] = "Panic: -" .. number(effects.panic) .. " points on the 0-100 scale"
+    if effects.pain then
+        lines[#lines + 1] = "Pain: -" .. number(effects.pain) .. " points on the 0-100 scale"
+        lines[#lines + 1] = "Hunger: -" .. number(effects.hunger) .. " percentage points"
+    end
+    if effects.healing then
+        lines[#lines + 1] = "Healing: +" .. number(effects.healing) .. " health points shared across damaged body parts"
     end
 end
 
@@ -459,8 +536,8 @@ function Info.guide(player, progress)
     end
     local current = moodle(data, "MindfulState")
     local value = current and current.Value
-    if not disabled and real(value) and value >= 0.2 and value <= 1 then
-        local tier = value >= 0.6 and 3 or value >= 0.4 and 2 or 1
+    local tier = mindfulnessTier(value)
+    if not disabled and tier then
         local remaining = data.MindfulnessMinutes
         mindful[#mindful + 1] = "Active now: " .. mindfulName(tier) .. (real(remaining) and remaining > 0
             and (" | " .. readableTime(math.ceil(remaining), true) .. " in-game left in this tier.") or " | No current countdown available.")
@@ -487,10 +564,17 @@ function Info.guide(player, progress)
 
     -- These are three different native mechanisms, not one global XP bonus.
     -- LSMeditateAction:adjustStatsGetChanges, LSYogaAction:grantXP/fitnessBonus.
+    local zenMeditation, zenPose = {}, {}
+    for i = 1, 4 do
+        local multiplier, addend = Info.zenEffects(i)
+        zenMeditation[i], zenPose[i] = string.format("x%.1f", multiplier), string.format("%d", addend)
+    end
     local zen = {
         "How to earn: Finish Yoga successfully at Yoga rank 1 or higher. Your starting rank sets the initial Zen strength.",
-        "Meditation XP: Zen tiers 1-4 multiply the action's base Meditation XP by x1.1, x2.2, x3.3 or x4.4. Mood and game XP settings still apply.",
-        "Yoga pose XP: Zen tiers 1-2 add 1 to the pose's XP factor; tiers 3-4 add 2. Successful poses can award Yoga, Fitness and Nimble XP. This is not a general multiplier for those skills.",
+        "Meditation XP: Zen tiers 1-4 multiply the action's base Meditation XP by "
+            .. table.concat(zenMeditation, ", ", 1, 3) .. " or " .. zenMeditation[4] .. ". Mood and game XP settings still apply.",
+        "Yoga pose XP: Zen tiers 1-4 add " .. table.concat(zenPose, ", ")
+            .. " to the pose's XP factor respectively. Successful poses can award Yoga, Fitness and Nimble XP. This is not a general multiplier for those skills.",
         "Regular workouts: Lifestyle raises the exercise's XP setting. Build 42 can keep an already-loaded value, so extra workout XP is not guaranteed.",
         "Fade: Zen weakens every 10 in-game minutes. There is no separate built-in countdown.",
     }

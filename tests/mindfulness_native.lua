@@ -118,6 +118,37 @@ local function prepare(rank, stat, value, mode)
     return p
 end
 
+-- Compare read-only hover data directly with the official function's next
+-- contribution; compare before clamping and before the network flush.
+local Info=require "AutoMindful/WellnessInfo"
+do
+    local function near(a,b)
+        assert(math.abs(a-b)<1e-8, tostring(a).." ~= "..tostring(b))
+    end
+    for _, config in ipairs({{9,false,1,.39},{6,false,2,.4},{[1]=10,[2]=true,[3]=3,[4]=.6},
+            {[1]=10,[2]=false,[3]=1,[4]=.59999},{[1]=3,[2]=false,[3]=2,[4]=.2}}) do
+        local rank,disc,scale,value=config[1],config[2],config[3],config[4]
+        local p=prepare(rank,"STRESS",.9)
+        function p:hasModData() return true end
+        p.traits.disciplined,p.traits.smoker=disc,true
+        p.data.LSMoodles.MindfulState.Value,p.data.MindfulnessMinutes=value,5
+        SandboxVars.Meditation.EffectMultiplier=scale
+        local lines,rates=Info.mindfulnessHover(p)
+        assert(lines and p.data.MindfulnessMinutes==5 and LSMoodHandler.PerMin.Stress==nil
+            and #pending==0, "Hover must not advance or run the effect")
+        AdjustPlayerMindfulness(p)
+        local buffs=LSMoodHandler.PerMin
+        near(rates.stress,-100*buffs.Stress[1]); near(rates.panic,-buffs.Panic[1])
+        near(rates.nicotine,-100*buffs.Nicotine_Withdrawal[1])
+        if buffs.Hunger then near(rates.hunger,-100*buffs.Hunger[1]); near(rates.pain,-buffs.Pain[1])
+        else assert(not rates.hunger and not rates.pain) end
+        if pending[1] then near(rates.healing,pending[1].delta) else assert(not rates.healing) end
+        C.stop(p)
+    end
+    SandboxVars.Meditation.EffectMultiplier=2
+    print("NATIVE PASS hover amounts match official next-tick Mindfulness at tier boundaries with live traits and settings")
+end
+
 local function step(p,second,stepRoute)
     local previous=math.floor(world+0.0001)
     T.now,world=T.now+1000,second/5

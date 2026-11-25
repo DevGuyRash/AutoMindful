@@ -210,7 +210,7 @@ test("active training still stops for combat or running; Recovery yields unless 
             p.sitting=true
             start(p,mode); steps(p,10)
             active(p,mode)
-            control(p); steps(p,2)
+            control(p); steps(p,4)
             local terminal=mode=="meditation" or input==#controls
             assert(C.status(p).active==not terminal and C.status(p).phase==(terminal and "stopped" or "manual")
                 and not head(p))

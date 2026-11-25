@@ -48,21 +48,29 @@ function Supplies.eligibleLiterature(player, item)
     return state == "unread" or state == "reread"
 end
 
-local function containers(player)
+-- The loot window belongs to the player: a refresh rebuilds its buttons, sorts
+-- its list, and fires an event other inventory and crafting mods act on. The
+-- game already refreshes it on every step and turn, and containers are live
+-- objects, so looking needs none. One per new square covers a hidden window.
+local staleMs, arrivalMs = 30000, 1000
+local function containers(player, arriving)
     local index = player:getPlayerNum()
     local loot = getPlayerLoot(index)
     if not getPlayerInventory(index) or not loot then return nil end
     local now, square = getTimestampMs(), player:getSquare()
     local previous = refreshes[player]
-    if not previous or previous.square ~= square or now - previous.time >= 1000 then
+    if not previous or previous.square ~= square or now < previous.time
+            or now - previous.time >= (arriving and arrivalMs or staleMs) then
         loot:refreshBackpacks()
         refreshes[player] = {square = square, time = now}
     end
     return ISInventoryPaneContextMenu.getContainers(player)
 end
 
+-- Arrived somewhere, or about to use something: current contents matter, and
+-- in multiplayer this is what requests them.
 function Supplies.refreshNearby(player)
-    return containers(player)
+    return containers(player, true)
 end
 
 local function reachable(player, square)
@@ -142,10 +150,12 @@ function Supplies.scan(player, includeNearby, useNearbyTools)
                         if consumable.food then result.food[#result.food + 1] = entry end
                         if consumable.water then result.water[#result.water + 1] = entry end
                     end
-                    if Fluids.container(item) and consumable.reason and not consumable.needsVessel then
+                    if Fluids.container(item) and consumable.reason and not consumable.needsVessel and not consumable.unsafeFluid then
                         result.fluidReason = result.fluidReason or consumable.reason
                     end
-                    if consumable.needsOpening and consumable.reason then result.openingReason = consumable.reason end
+                    if consumable.needsOpening and consumable.reason and instanceof(item, "Food") then
+                        result.openingReason = consumable.reason
+                    end
                     local reading = readingState(player, item)
                     if reading == "cooldown" then
                         local key = owned and "cooldownLiterature" or "nearbyCooldownLiterature"
@@ -184,10 +194,14 @@ function Supplies.scan(player, includeNearby, useNearbyTools)
             if source.description.water then result.water[#result.water + 1] = source end
             if source.worldSource and source.description.water then result.worldFluidSourceCount = result.worldFluidSourceCount + 1 end
         else
-            result.transferReason = result.transferReason or reason or "A clean empty drinking vessel is needed for bulk liquids."
+            reason = reason or "A clean empty drinking vessel is needed for bulk liquids."
+            if source.description.water then result.waterReason = result.waterReason or reason end
+            if source.description.food then result.foodReason = result.foodReason or reason end
         end
     end
-    result.fluidReason = result.transferReason or result.fluidReason
+    -- A reason is only shown for the need that supply would have met.
+    result.waterReason = result.waterReason or result.fluidReason
+    result.fluidReason = result.waterReason
     return result
 end
 
@@ -266,9 +280,11 @@ function Supplies.scoutIntakeDetails(item)
         .." tainted="..tostring(fluid and fluid:isTainted() or false)
 end
 
--- This is evidence about an item on one need, not a blacklist of its crate.
--- Refilled, opened or replaced stock must go through normal eligibility again.
-function Supplies.rejectScoutIntake(rejected,item,kind)
+-- This is evidence about an item on one need, not a blacklist of its crate or
+-- a permanent ban: a late server receipt looks exactly like an item that did
+-- nothing. Changed contents clear it at once; otherwise the wait doubles, and
+-- starts longer for an item that also costs a walk.
+function Supplies.rejectScoutIntake(rejected,item,kind,carried)
     rejected[intakeKey]=rejected[intakeKey] or {}
     local id=item:getID()
     local byItem=rejected[intakeKey]
@@ -277,7 +293,10 @@ function Supplies.rejectScoutIntake(rejected,item,kind)
         entry={stamp=stockStamp(item)}
         byItem[id]=entry
     end
-    entry[kind]=true
+    local record=entry[kind] or {count=0}
+    record.count=record.count+1
+    record.nextAt=getTimestampMs()+math.min(1800000,(carried and 60000 or 600000)*2^(record.count-1))
+    entry[kind]=record
 end
 
 local function rejectedIntake(rejected,item,kind)
@@ -290,7 +309,7 @@ local function rejectedIntake(rejected,item,kind)
         evidence[id]=nil
         return false
     end
-    return entry[kind]==true
+    return entry[kind]~=nil and getTimestampMs()<entry[kind].nextAt
 end
 
 local function preparationCost(player, entry)
@@ -344,6 +363,12 @@ local function better(candidate, best, kind, critical)
     comparisons[#comparisons + 1] = {candidate.plan.secondary > 0 and 1 or 0, best.plan.secondary > 0 and 1 or 0}
     if kind == "water" then comparisons[#comparisons + 1] = {candidate.reserve, best.reserve} end
     comparisons[#comparisons + 1] = {-candidate.cost, -best.cost}
+    -- Otherwise equal: do not make the survivor unhappier, then eat what will
+    -- spoil first.
+    if kind == "food" then
+        comparisons[#comparisons + 1] = {-candidate.gloom, -best.gloom}
+        comparisons[#comparisons + 1] = {-candidate.keeps, -best.keeps}
+    end
     for _, comparison in ipairs(comparisons) do
         if math.abs(comparison[1] - comparison[2]) > 0.000001 then return comparison[1] > comparison[2] end
     end
@@ -356,6 +381,13 @@ local function consider(player, candidate, best, kind, critical)
     local reserve = candidate.transfer and candidate.transfer.source.description or candidate.description
     candidate.reserve = reserve.remainingLiters or reserve.thirstRelief * 2
     candidate.cost = preparationCost(player, candidate)
+    candidate.gloom, candidate.keeps = 0, 1000
+    local food = candidate.item
+    if kind == "food" and food and instanceof(food, "Food") then
+        candidate.gloom = math.max(0, food.getUnhappyChange and food:getUnhappyChange() or 0)
+        local limit, age = food.getOffAgeMax and food:getOffAgeMax(), food.getAge and food:getAge()
+        if type(limit) == "number" and type(age) == "number" then candidate.keeps = math.max(0, math.min(1000, limit - age)) end
+    end
     if better(candidate, best, kind, critical) then return candidate end
     return best
 end
@@ -432,7 +464,7 @@ function Supplies.scoutProbe(player,kind,rejected)
         if not canCollect(player,source) then return false end
         if kind=="literature" then return Supplies.eligibleLiterature(player,item) end
         if kind=="pain" then return PainCare.eligible(item) end
-        local d=Consumables.inspect(player,item,false)
+        local d=Consumables.inspect(player,item,false,holder)
         if not d[kind] then return false end
         if not d.needsVessel then return Consumables.plan(player,d,kind)~=nil end
         source.description=d
@@ -466,9 +498,20 @@ function Supplies.scoutedStock(player,kind,container,rejected)
     return false
 end
 
-function Supplies.choose(player, kind, includeNearby, rejected, worldOnly, exactContainer)
+-- explain, when given, receives one line per candidate: its score or the
+-- reason it was not eligible. It never changes the choice.
+function Supplies.choose(player, kind, includeNearby, rejected, worldOnly, exactContainer, explain)
     if exactContainer and (not includeNearby or worldOnly) then return nil end
     local scan = Supplies.scan(player, includeNearby)
+    local function note(entry, why, candidate)
+        if not explain or #explain >= 8 then return end
+        local plan = candidate and candidate.plan
+        explain[#explain + 1] = (entry.item and (tostring(entry.item:getFullType()) .. "#" .. tostring(entry.item:getID())) or "fixture")
+            .. (entry.owned and " owned" or " nearby") .. " "
+            .. (why or plan and string.format("utility=%.2f relief=%.2f cost=%d", plan.utility, plan.primary, candidate.cost or 0) or "eligible")
+    end
+    if explain and scan.fluidReason then explain[1] = "fluids: " .. scan.fluidReason end
+    if explain and scan.openingReason then explain[#explain + 1] = "opening: " .. scan.openingReason end
     local function selected(entry)
         return not exactContainer or (not entry.worldSource and entry.item and entry.item:getContainer()==exactContainer)
     end
@@ -498,24 +541,31 @@ function Supplies.choose(player, kind, includeNearby, rejected, worldOnly, exact
     local critical = player:getMoodles():getMoodleLevel(kind == "water" and MoodleType.THIRST or MoodleType.HUNGRY) >= 4
     if not worldOnly then
         for _, entry in ipairs(scan[kind]) do
-            if selected(entry) and not rejectedSource(rejected, entry) and not rejectedIntake(rejected,entry.item,kind)
-                    and canCollect(player, entry) then
-                if entry.description.needsVessel then
-                    entry.useNearbyTools = includeNearby == true
-                    for _, vessel in ipairs(scan.vessels) do
-                        if not rejectedItem(rejected, vessel.item:getID()) then
-                            local candidate = Supplies.transferPlan(player, entry, vessel, kind)
-                            if candidate then best = consider(player, candidate, best, kind, critical) end
-                        end
+            local blocked = not selected(entry) and "not-in-the-inspected-container"
+                or rejectedSource(rejected, entry) and "rejected-earlier" or rejectedIntake(rejected,entry.item,kind) and "no-relief-last-time"
+                or not canCollect(player, entry) and "no-room-to-carry"
+            if blocked then note(entry, blocked)
+            elseif entry.description.needsVessel then
+                entry.useNearbyTools = includeNearby == true
+                for _, vessel in ipairs(scan.vessels) do
+                    if not rejectedItem(rejected, vessel.item:getID()) then
+                        local candidate, reason = Supplies.transferPlan(player, entry, vessel, kind)
+                        if candidate then best = consider(player, candidate, best, kind, critical) end
+                        note(entry, not candidate and reason or nil, candidate)
                     end
-                else best = consider(player, entry, best, kind, critical) end
+                end
+            else
+                best = consider(player, entry, best, kind, critical)
+                note(entry, not entry.plan and "cannot-take-a-useful-portion" or nil, entry)
             end
         end
     end
     if kind == "water" and not exactContainer then
         for _, source in ipairs(scan.waterSources) do
             if not rejectedItem(rejected, source.object) and not (source.item and rejectedItem(rejected, source.item:getID())) then
-                best = consider(player, {source = source, description = source.description}, best, kind, critical)
+                local candidate = {source = source, description = source.description}
+                best = consider(player, candidate, best, kind, critical)
+                note(candidate, nil, candidate)
             end
         end
     end
@@ -795,6 +845,7 @@ function Supplies.report(player, includeNearby, collectNearby, area, collectArea
     report.cooldownLiterature, report.nearbyCooldownLiterature = scan.cooldownLiterature, scan.nearbyCooldownLiterature
     report.openingReason = scan.openingReason
     report.fluidReason = scan.fluidReason
+    report.foodReason = scan.foodReason or scan.openingReason
     report.nearbyWaterSourceCount = scan.worldFluidSourceCount
     report.waterSourceReason = scan.waterSources.reason
     local nearbyKeys = {food = "nearbyFood", water = "nearbyWater", literature = "nearbyLiterature", pain = "nearbyPain"}
@@ -825,7 +876,7 @@ function Supplies.report(player, includeNearby, collectNearby, area, collectArea
     if includeNearby and not collectNearby then report.warnings[#report.warnings + 1] = "Nearby stock is visible, but collection is off. Enable it or move supplies into your inventory." end
     local foodWarning
     if usableFood == 0 then
-        foodWarning = scan.fluidReason or scan.openingReason or "Bring safe food or a nourishing drink. Opening tools must be available for sealed food."
+        foodWarning = report.foodReason or "Bring safe food or a nourishing drink. Opening tools must be available for sealed food."
         report.warnings[#report.warnings + 1] = foodWarning
     end
     if usableWater == 0 then
@@ -838,7 +889,6 @@ function Supplies.report(player, includeNearby, collectNearby, area, collectArea
             or "Bring boredom-reducing literature that is unread or past the game's reread cooldown. Yoga can also help."
     end
     if player:tooDarkToRead() then report.warnings[#report.warnings + 1] = "It is too dark to read here. Use a lit training spot." end
-    if SandboxVars.Yoga and SandboxVars.Yoga.RequiresMat then report.warnings[#report.warnings + 1] = "Yoga requires a deployed, complete yoga mat under your current square." end
     local lines = {string.format("In your inventory: %d food, %d hydrating drinks, %d useful literature.", report.food, report.water, report.literature)}
     if includeNearby then
         local scope = area and ("Known within " .. tostring(area.radius) .. " tiles") or "Within adjacent loot range"

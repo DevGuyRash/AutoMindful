@@ -15,6 +15,10 @@ function Tiers.providerCompatible()
     end)
     return ok and version == Facts.version
 end
+function Tiers.providerMismatch()
+    return getModInfoByID ~= nil and getModInfoByID("LifestyleHobbies") ~= nil and not Tiers.providerCompatible()
+end
+
 local kinds = {
     meditation = {
         key="MindfulState", thresholds={0.2, 0.4, 0.6}, ranks=Facts.meditationUnlocks,

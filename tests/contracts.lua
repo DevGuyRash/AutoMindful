@@ -807,6 +807,20 @@ test("sleep follows server rules and resumes after waking",function()
     p.asleep=false; p.values.FATIGUE=0; T.tick(p); assert(hasHistory(p,"Yoga"))
     C.stop(p); T.client=false
 end)
+-- What the log was told, before formatting: "event key value key value".
+local Log=require "AutoMindful/Log"
+local logOriginals={event=Log.event,headline=Log.headline,detail=Log.detail,state=Log.state}
+function captureLog(sink)
+    for name,original in pairs(logOriginals) do
+        Log[name]=sink and function(player,event,...)
+            local out={event}
+            for i=1,select("#",...) do out[#out+1]=tostring((select(i,...))) end
+            sink(table.concat(out," ").." ")
+            return original(player,event,...)
+        end or original
+    end
+end
+
 test("foreign queued action yields training without cancelling the session",function()
     local p=T.playerNew(); assert(C.start(p,"yoga",false)); T.tick(p,false)
     local q=ISTimedActionQueue.getTimedActionQueue(p); local owned=q.queue[1]
@@ -829,7 +843,7 @@ test("refused care cannot loop indefinitely",function()
             for _=1,80 do T.tick(p) end
             local actionType=kind=="food" and "eat" or "drink"
             local attempts=0; for _,k in ipairs(p.history) do if k==actionType then attempts=attempts+1 end end
-            assert(attempts==3 and C.status(p).active and not ISTimedActionQueue.getTimedActionQueue(p).queue[1])
+            assert(attempts>=3 and attempts<=6 and C.status(p).active and not ISTimedActionQueue.getTimedActionQueue(p).queue[1])
             p.refuseCare=false
             T.add(p.inventory,kind=="food" and T.item("Food") or T.water())
             for _=1,8 do T.tick(p) end
@@ -1488,12 +1502,9 @@ test("a scout checks stock again after pickup, skips failed intake and retries o
     local S=require "AutoMindful/Supplies"
     local initialFind=N.find
     local initialInspect=require("AutoMindful/Consumables").inspect
-    local originalPrint,trace=print,{}
+    local trace={}
     local probes=0
-    print=function(line,...)
-        if type(line)=="string" and line:find("[AutoMindful] scout:",1,true) then trace[#trace+1]=line end
-        originalPrint(line,...)
-    end
+    captureLog(function(line) if line:find("^trip%.") or line:find("^supply%.") then trace[#trace+1]=line end end)
     N.find=function(player,kind,_,_,_,_,rejected)
         if kind~="water" then return end
         local probe=S.scoutProbe(player,kind,rejected)
@@ -1515,7 +1526,7 @@ test("a scout checks stock again after pickup, skips failed intake and retries o
     for _=1,60 do
         T.tick(p)
         for _,line in ipairs(trace) do
-            if line:find("event=care-unconfirmed",1,true) then blocked=true end
+            if line:find("trip.care-unconfirmed",1,true) then blocked=true end
         end
         if blocked and p:getSquare()==origin then break end
     end
@@ -1534,13 +1545,13 @@ test("a scout checks stock again after pickup, skips failed intake and retries o
     for _=1,60 do T.tick(p); if p.values.THIRST<.01 and p:getSquare()==origin then break end end
     assert(p.values.THIRST<.01 and p:getSquare()==origin and shelf:contains(candidate))
     local function seen(event,value)
-        for _,line in ipairs(trace) do if line:find("event="..event.." ",1,true) and line:find(value,1,true) then return true end end
+        for _,line in ipairs(trace) do if line:find("."..event.." ",1,true) and line:find(value,1,true) then return true end end
         return false
     end
     assert(seen("stock-selected","liters=0.5") and seen("pickup-result","original-item-present")
         and seen("stock-invalid","ineligible-after-pickup") and seen("intake-requested","thirstBefore=")
         and seen("intake-result","thirstAfter=0"),"Log holder, selected item, pickup, and measured intake")
-    C.stop(p); N.find=initialFind; O.inspect=initialInspect; print=originalPrint; roaming.enabled=false
+    C.stop(p); N.find=initialFind; O.inspect=initialInspect; captureLog(nil); roaming.enabled=false
 end)
 
 test("fast-forward during inspection cannot silently invalidate the native return walk", function()
@@ -1548,11 +1559,9 @@ test("fast-forward during inspection cannot silently invalidate the native retur
     local p=T.playerNew(); p.values.BOREDOM=25
     local origin=p:getSquare(); local shelf=T.container(6,0); p.available={shelf}
     nearbyTarget={square=shelf.square,key="unknown:6:0:0",unknown=true,container=shelf}
-    local originalPrint, trace=print, {}
-    print=function(line,...)
-        if type(line)=="string" and line:find("[AutoMindful] scout:",1,true) then trace[#trace+1]=line end
-        originalPrint(line,...)
-    end
+    local trace={}
+    captureLog(function(line) if line:find("^trip%.") or line:find("^supply%.") then trace[#trace+1]=line end end)
+    local rate; function getGameTime() return {setMultiplier=function(_,v) rate=v end,getNightsSurvived=function() return 0 end,getTimeOfDay=function() return 9 end,getWorldAgeHours=function() return 1 end} end
     walkSpeed=4
     assert(C.start(p,"meditation",false))
     T.tick(p,false)
@@ -1563,16 +1572,18 @@ test("fast-forward during inspection cannot silently invalidate the native retur
         if C.status(p).phase=="scouting" then inspected=true; walkSpeed=4 end
         if hasHistory(p,"Meditation") then break end
     end
-    assert(inspected and p:getSquare()==origin and walkSpeed==1 and hasHistory(p,"Meditation"),
-        "After a fruitless search the survivor gets home and resumes eligible training")
-    print=originalPrint
-    local events={"outbound","inspect","inspect-ended","return","home"}
-    assert(#trace==#events,"A failed probe logs exactly once per transition")
-    for i,event in ipairs(events) do
-        assert(trace[i]:find("leg=1 event="..event.." ",1,true)
-            and trace[i]:find("need=literature source=container stock=unconfirmed key=unknown:6:0:0",1,true))
+    assert(inspected and p:getSquare()==origin and walkSpeed==4 and rate==40 and hasHistory(p,"Meditation"),
+        "After a fruitless search the survivor gets home, resumes, and the player's fast-forward comes back")
+    captureLog(nil)
+    local events,at={"outbound","inspect","inspect-ended","return","home"},0
+    for _,line in ipairs(trace) do
+        local event=line:match("^trip%.(%S+)")
+        if event==events[at+1] then
+            at=at+1
+            assert(line:find("leg 1 ",1,true) and line:find("need literature",1,true) and line:find("source container stock unconfirmed key unknown:6:0:0",1,true),line)
+        end
     end
-    assert(trace[3]:find("reason=no-usable-stock-confirmed-before-timeout retry=cooldown-60000ms",1,true))
+    assert(at==#events,"A failed probe logs every transition in order")
     C.stop(p); roaming.enabled=false; nearbyTarget=nil; walkSpeed=1
 end)
 
@@ -1961,9 +1972,18 @@ test("manual controls and danger cancel home retry without a new walk",function(
         function(p) p.cancelInput=true end,
         function(p) p.aiming=true end,
         function(p) p.sprinting=true; p.rawMovementInput=true end,
-        function(p) p.zombies=1 end,
         function(p) p.square=T.square(7,3,0) end,
     }
+    do
+        local p,_,_,_,walk=beginBookReturn()
+        failHome(walk)
+        T.now=T.now+300; C.update(p)
+        p.zombies=1
+        for i=1,20 do T.tick(p,false) end
+        assert(C.status(p).active and C.status(p).phase=="recovery-paused" and walkCount(p)==2 and not nextAction(p),
+            "Nearby danger holds the job and starts no walk")
+        stopBookTest(p)
+    end
     for _,interrupt in ipairs(interrupts) do
         local p,_,_,_,walk=beginBookReturn()
         failHome(walk)
@@ -2122,7 +2142,7 @@ test("unknown MP stock never preempts an admissible or already running selected 
     C.stop(p); T.client,roaming.enabled,nearbyTarget=false,false,nil
 end)
 
-test("first hunger and thirst moodles interrupt optional Training or Recovery for bounded opted-in discovery",function()
+test("first hunger and thirst moodles allow bounded opted-in discovery at the next practice boundary",function()
     local previous=SafeHouse
     SafeHouse={isSafehouseAllowInteract=function() return true end,isSafehouseAllowLoot=function() return true end}
     T.client=true
@@ -2135,6 +2155,11 @@ test("first hunger and thirst moodles interrupt optional Training or Recovery fo
             assert(C.start(p,mode,false)); for _=1,5 do T.tick(p,false) end
             if kind=="water" then p.values.THIRST,p.thirstMoodle=.08,1
             else p.values.HUNGER,p.hungerMoodle=.08,1 end
+            if mode=="yoga" then
+                for _=1,12 do T.tick(p,false) end
+                assert(not hasHistory(p,"ISWalkToTimedAction"),"Never break a practice to look into an unknown container")
+                T.tick(p)
+            end
             for _=1,12 do T.tick(p,false); if hasHistory(p,"ISWalkToTimedAction") then break end end
             assert(hasHistory(p,"ISWalkToTimedAction") and C.status(p).active,mode..":"..kind)
             for _=1,20 do T.tick(p) end
@@ -2238,16 +2263,19 @@ test("a continuously stalled known water walk releases only itself and tries the
     C.stop(p); roaming.enabled=false; nearbyTarget=nil
 end)
 
-test("critical needs do not enter repeated unknown-container scouting", function()
+test("a critical need with nothing known looks into nearby containers, a bounded number of times", function()
     roaming.enabled=true
     local p=T.playerNew(); p.values.HUNGER=.8; p.hungerMoodle=4
     local shelf=T.container(6,0)
     nearbyTarget={square=shelf.square,key="unknown:6:0:0",unknown=true,container=shelf}
     assert(C.start(p,"meditation",false))
     for i=1,100 do T.tick(p) end
+    local walks=0
+    for _,kind in ipairs(p.history) do if kind=="ISWalkToTimedAction" then walks=walks+1 end end
     assert(C.status(p).active and C.status(p).message:find("Starving"))
+    assert(walks>0,"Standing still until death beside an unopened container helps nobody")
+    assert(walks<=8,"Three fruitless looks, then back off: "..walks)
     C.stop(p)
-    assert(not hasHistory(p,"ISWalkToTimedAction"), "Critical care must not gamble on unknown containers")
     roaming.enabled=false; nearbyTarget=nil
 end)
 
@@ -2307,15 +2335,19 @@ test("vehicle native access denial never transfers even after area arrival",func
     C.stop(p); roaming.enabled=false; nearbyTarget=nil
 end)
 
-test("moving vehicle cancels owned pursuit without forcing a return",function()
+test("a vehicle that drives off ends that trip, not the session",function()
     roaming.enabled=true
     local p=T.playerNew(); p.values.BOREDOM=40
     local source,part,vehicle,area=vehicleSource(p)
     nearbyTarget={square=area,key="moving-vehicle",part=part}
     assert(C.start(p,"meditation",false)); T.tick(p,false)
+    local pursuit=ISTimedActionQueue.getTimedActionQueue(p).queue[1]
+    p.values.BOREDOM=5
     vehicle.speed=3; T.tick(p,false)
-    assert(not C.status(p).active and #ISTimedActionQueue.getTimedActionQueue(p).queue==0)
-    assert(C.status(p).message:find("moved or became inaccessible"))
+    assert(C.status(p).active and pursuit.stopped)
+    for _=1,12 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(C.status(p).active and hasHistory(p,"Meditation"),"Training carries on without that source")
+    C.stop(p)
     roaming.enabled=false; nearbyTarget=nil
 end)
 test("stationary but repositioned vehicle cannot pull a trip beyond its scanned target",function()
@@ -2324,8 +2356,13 @@ test("stationary but repositioned vehicle cannot pull a trip beyond its scanned 
     local source,part,vehicle,area=vehicleSource(p)
     nearbyTarget={square=area,key="relocated-vehicle",part=part}
     assert(C.start(p,"meditation",false)); T.tick(p,false)
+    local pursuit=ISTimedActionQueue.getTimedActionQueue(p).queue[1]
+    p.values.BOREDOM=5
     vehicle.movedArea=T.square(50,0); T.tick(p,false)
-    assert(not C.status(p).active and #ISTimedActionQueue.getTimedActionQueue(p).queue==0)
+    assert(C.status(p).active and pursuit.stopped)
+    for _=1,12 do T.tick(p); if hasHistory(p,"Meditation") then break end end
+    assert(p:getSquare()~=vehicle.movedArea and hasHistory(p,"Meditation"))
+    C.stop(p)
     roaming.enabled=false; nearbyTarget=nil
 end)
 

@@ -1,10 +1,10 @@
 -- Admission and negative evidence for care supply routes. The engine
 -- still owns every movement, collision, stop and actual interaction.
 local Route = {}
-local scopeKey={}
+local scopeKey,roomsKey={},{}
 
 function Route.tracks(kind)
-    return kind=="food" or kind=="water" or kind=="pain"
+    return kind=="food" or kind=="water" or kind=="pain" or kind=="literature"
 end
 
 function Route.known(target,kind)
@@ -15,46 +15,80 @@ function Route.identity(target)
     return target.container or target.object or target.item or target.key
 end
 
--- This table shares the existing rejection map with short, numeric stock and
--- replication cooldowns. Never let one water fixture reject its neighbor on
--- the same square. No route/objects are persisted to the save or ModData.
--- Keep at most the failed sources from the active search area. In particular,
--- persistent Recovery must not retain old chunks when its survivor relocates.
+local retryMs, retryLimitMs = 15000, 900000
+
+-- Records belong to one search area, so a survivor who relocates does not
+-- carry another base's failures. Nothing here is saved.
 function Route.scope(rejections,scope)
     if rejections[scopeKey] and rejections[scopeKey]~=scope then
         for key,r in pairs(rejections) do
             if type(r)=="table" and r.sources then rejections[key]=nil end
         end
-        rejections[scopeKey]=nil
+        rejections[scopeKey],rejections[roomsKey]=nil,nil
     end
 end
 
--- An unconfirmed target can become observed stock without changing the map.
--- Only suppress the same speculative route; a confirmed candidate has its own key.
+-- One door decides for everything behind it. After the game finds no path to
+-- two different things in another room, the rest are not worth a walk each.
+-- One alone may just be boxed in.
+local function roomOf(square)
+    return square and square.getRoom and square:getRoom() or nil
+end
+
+function Route.rejectRoom(rejections,target,home,now)
+    local room=roomOf(target.square)
+    if not room or room==roomOf(home) then return false end
+    local rooms=rejections[roomsKey] or {}
+    rejections[roomsKey]=rooms
+    local r=rooms[room]
+    if not r or r.layout~=target.routeLayout then r={count=r and r.count or 0,seen={}}; rooms[room]=r end
+    local id=Route.identity(target)
+    r.layout=target.routeLayout
+    if not r.seen[id] then r.seen[id],r.distinct=true,(r.distinct or 0)+1 end
+    if r.distinct<2 then return false end
+    r.count=r.count+1
+    r.nextAt=now+math.min(retryLimitMs,retryMs*4^r.count)
+    return true
+end
+
+function Route.roomBlocked(rejections,square,here,layout,now)
+    local rooms=rejections and rejections[roomsKey]
+    local room=rooms and roomOf(square)
+    local r=room and rooms[room]
+    if not r or not r.nextAt or room==roomOf(here) then return false end
+    return r.layout~=nil and layout==r.layout or now<r.nextAt
+end
+
+-- Every way a trip can fail ends here. The same source is left alone while
+-- the surroundings are unchanged; when they do change it may be tried again,
+-- but each failure lengthens the wait, so a flapping door cannot restart the
+-- whole list every few seconds.
 function Route.reject(rejections,target,kind,now)
-    if not (target.unknown or Route.known(target,kind)) or not target.routeLayout then
-        rejections[target.key]=now+15000
-        return "cooldown-15s"
-    end
     if target.routeScope then
         Route.scope(rejections,target.routeScope)
         rejections[scopeKey]=target.routeScope
     end
     local r=rejections[target.key]
-    if type(r)~="table" or r.layout~=target.routeLayout then
-        r={layout=target.routeLayout, sources={}}
+    if type(r)~="table" or not r.sources then
+        r={sources={}}
         rejections[target.key]=r
     end
-    r.sources[Route.identity(target)]=true
-    return "until-navigation-changes"
+    local id=Route.identity(target)
+    local source=r.sources[id] or {count=0}
+    r.sources[id]=source
+    source.layout=target.routeLayout
+    source.count=source.count+1
+    local wait=math.min(retryLimitMs,retryMs*4^(source.count-1))
+    source.nextAt=now+wait
+    return (source.layout and "when-navigation-changes-after-" or "after-")..math.floor(wait/1000).."s"
 end
 
 function Route.blocked(rejections,key,entry,layout,now)
     local r=rejections[key]
     if type(r)=="table" and r.sources then
-        if layout==r.layout then return r.sources[Route.identity(entry)]==true end
-        rejections[key]=nil
-        return false
+        local source=r.sources[Route.identity(entry)]
+        if not source then return false end
+        return source.layout~=nil and layout==source.layout or now<source.nextAt
     end
     if type(r)=="number" and now>=r then rejections[key]=nil; return false end
     return r

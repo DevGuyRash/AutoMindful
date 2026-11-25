@@ -5,9 +5,11 @@ local Supplies = require "AutoMindful/Supplies"
 local Restroom = require "AutoMindful/RestroomCare"
 local Hygiene = require "AutoMindful/HygieneCare"
 local ScoutMemory = require "AutoMindful/ScoutMemory"
+local SurvivalRoute = require "AutoMindful/SurvivalRoute"
+local Log = require "AutoMindful/Log"
 local Care = {}
 local adapters = {restroom=Restroom, hygiene=Hygiene}
-local SCAN_MS, COOLDOWN_MS = 1000, 15000
+local SCAN_MS, EMPTY_SCAN_MS, COOLDOWN_MS, COOLDOWN_LIMIT_MS = 1000, 10000, 15000, 900000
 
 local function checked(f, ...)
     if type(f) ~= "function" then return nil end
@@ -25,6 +27,7 @@ local function fixtureTarget(player, state, kind, object, square, index, distanc
     if not object or not square then return nil end
     local key = kind .. ":" .. square:getX() .. ":" .. square:getY() .. ":" .. square:getZ() .. ":" .. index
     if state.lifestyleRejected and state.lifestyleRejected[key] then return nil end
+    if SurvivalRoute.roomBlocked(state.travelRejected,square,player:getSquare(),nil,getTimestampMs()) then return nil end
     local a=adapters[kind]
     local data=checked(a.inspect,player,object)
     if data then
@@ -63,7 +66,8 @@ local function fixture(player, state, kind, radius, now, origin)
     state.lifestyleScan = cache
     local cacheKey=kind .. ":" .. radius
     local old = cache[cacheKey]
-    if old and old.here == here and old.origin==origin and old.radius == radius and now >= old.at and now-old.at < SCAN_MS then
+    if old and old.here == here and old.origin==origin and old.radius == radius and now >= old.at
+            and now-old.at < (old.target and SCAN_MS or EMPTY_SCAN_MS) then
         return old.target
     end
     local x0,y0,z = origin:getX(),origin:getY(),origin:getZ()
@@ -96,8 +100,14 @@ local function fixture(player, state, kind, radius, now, origin)
 end
 
 function Care.reject(state, target, now)
+    -- The same fixture failing again and again is not worth the same walk.
+    state.lifestyleMisses = state.lifestyleMisses or {}
+    local misses = (state.lifestyleMisses[target.key] or 0) + 1
+    state.lifestyleMisses[target.key] = misses
+    local wait = math.min(COOLDOWN_LIMIT_MS, COOLDOWN_MS * 4 ^ (misses - 1))
+    Log.event(state.player, "lifestyle.reject", "kind", target.kind, "key", target.key, "misses", misses, "waitS", wait / 1000)
     state.lifestyleRejected = state.lifestyleRejected or {}
-    state.lifestyleRejected[target.key] = now+COOLDOWN_MS
+    state.lifestyleRejected[target.key] = now+wait
     state.lifestyleScan = nil
 end
 
@@ -121,6 +131,7 @@ function Care.ready(player, state, now, collect, scoutRadius, origin, served)
     end
     local restroomNeeded=Care.need(player,"restroom")
     if not restroomNeeded then state.restroomToolsTried=nil end
+    if not restroomNeeded and not Care.need(player,"hygiene") then state.lifestyleMisses=nil end
     if restroomNeeded and not (served and served.restroom) then
         local target=selectFixture("restroom")
         if target then return target end
@@ -135,7 +146,7 @@ function Care.ready(player, state, now, collect, scoutRadius, origin, served)
             end,collect or scoutRadius~=nil)
             if item then return {kind="hygiene", key="hygiene:item:"..item:getID(), item=item,close=true} end
         end
-        return selectFixture("hygiene")
+        if not Hygiene.washable or checked(Hygiene.washable,player)==true then return selectFixture("hygiene") end
     end
 end
 

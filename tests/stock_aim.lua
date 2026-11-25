@@ -83,14 +83,14 @@ local function test(name,f)
     else failed=failed+1; print("FAIL "..name..": "..tostring(err)) end
 end
 for _,during in ipairs({false,true}) do
-    test("native actual-aim stop retains foreign identities (callback append="..tostring(during)..")",function()
+    test("native attack stop retains foreign identities (callback append="..tostring(during)..")",function()
         local p=player(); local own=begin(p)
         local first,second=T.action(p,"ISFitnessAction"),T.action(p,"ISReadWorldMap")
         ISTimedActionQueue.add(first)
         if during then own.onStop=function() ISTimedActionQueue.add(second) end else ISTimedActionQueue.add(second) end
-        p.contextOpen=true; p.aiming=true
-        p:StopAllActionQueue() -- outside Controller.update, actual aim only seen in stop callback
-        p.aiming=false; p.aimInput=false -- released before next controller poll
+        p.contextOpen=true; p.attacking=true
+        p:StopAllActionQueue() -- outside Controller.update, the attack is only seen in the stop callback
+        p.attacking=nil; p.aimInput=false -- released before next controller poll
         step(p,3)
         assert(not C.status(p).active,"Actual combat interruption remained armed behind stale context menu")
         assert(#p.cards==1 and p.cards[1].title=="Meditation session stopped","Expected one terminal stopped card")
@@ -119,7 +119,7 @@ for _,immediateArm in ipairs({false,true}) do
         q.clearQueue=function(self) clearCalls=clearCalls+1; return stockClear(self) end
         local reset,clear=q.resetQueue,q.clearQueue
         own.onStop=function() ISTimedActionQueue.add(foreign) end
-        p.aiming=true; p:StopAllActionQueue(); p.aiming=false
+        p.attacking=true; p:StopAllActionQueue(); p.attacking=nil
         assert(q.resetQueue==reset and q.clearQueue==clear,"Per-instance queue methods were not restored")
         assert(q.queue[1]==own and q.queue[2]==foreign and not foreign.starts,"Handoff happened inside native clear")
         if immediateArm then
@@ -157,7 +157,7 @@ for _,entry in ipairs({"update","stop","error"}) do
             assert(own.stops==1 and not first.starts and not second.starts,"Reentrant stop started/canceled native work")
             if entry=="error" then error("intentional concrete stop failure") end
         end
-        p.aiming=true
+        p.attacking=true
         local ok,err=pcall(function() p:StopAllActionQueue() end)
         assert(ok==(entry~="error"),"Unexpected native callback success/failure")
         assert(q.resetQueue==priorReset and q.clearQueue==priorClear,"Failure/reentry leaked queue overrides")
@@ -170,7 +170,7 @@ for _,entry in ipairs({"update","stop","error"}) do
             assert(p.nativeHead==own.action and not first.starts,"Error path stole a still-live native handle")
             p.nativeHead=nil; p.clearing=false
         end
-        p.aiming=false; step(p,3)
+        p.attacking=nil; step(p,3)
         assert(not C.status(p).active and #p.cards==1)
         assert(q.tick==priorTick and not q.autoMindfulHandoff,"Deferred wrapper leaked after drain")
         assert(q.queue[1]==first and q.queue[2]==second and #q.queue==2)
@@ -191,6 +191,20 @@ test("ordinary workout/map queued takeover stays resumable and preserves success
     finish(p,workout); finish(p,map); step(p,5)
     assert(C.status(p).active and #p.cards==0 and p.nativeHead and p.nativeHead.lua.Type=="Meditation")
     C.stop(p,"test cleanup")
+end)
+-- In the running game a 150 ms right-click on the ground reports isAiming()
+-- before its context menu opens, and ended the session.
+test("a right-click that briefly reports aim is not combat; holding aim is",function()
+    local p=player(); local own=begin(p)
+    p.aiming=true; p:StopAllActionQueue(); p.aiming=false
+    p.contextOpen=true; step(p,2); p.contextOpen=false
+    assert(C.status(p).active and #p.cards==0 and own.stops==1)
+    step(p,8)
+    assert(C.status(p).active and p.nativeHead and p.nativeHead.lua.Type=="Meditation","It carries on by itself")
+    p.aiming=true
+    for _=1,8 do step(p) end
+    assert(not C.status(p).active and #p.cards==1 and C.status(p).message:find("aiming",1,true))
+    p.aiming=false
 end)
 -- Raw RMB/menu gesture is not evidence of actual combat. It remains resumable.
 test("raw UI interruption holds then resumes without terminal toast",function()
@@ -229,12 +243,12 @@ for _,kind in ipairs({"Meditation","Yoga"}) do
         end)
     end
 end
-for _,control in ipairs({"running","sprinting","cancelInput","attacking","zombies"}) do
+for _,control in ipairs({"running","sprinting","cancelInput","attacking"}) do
     test("between-poll hard stop remains terminal after "..control.." clears",function()
         local p=player(); local old=begin(p)
         local other=T.action(p,"UnknownWorkout")
         old.onStop=function() ISTimedActionQueue.add(other) end
-        p[control]=control=="zombies" and 1 or true
+        p[control]=true
         p.rawMovementInput=control=="running" or control=="sprinting"
         p:StopAllActionQueue(); p[control]=nil; p.rawMovementInput=nil
         step(p,4)
@@ -301,7 +315,7 @@ for _,input in ipairs({"aim","run","cancel"}) do
         local p=player()
         T.add(p.inventory,T.water({thirst=-0.8}))
         p.values.THIRST,p.thirstMoodle,p.values.ENDURANCE=.48,4,.6
-        assert(C.start(p,"recoverEndurance",false)); step(p,4)
+        assert(C.start(p,"recovery",false)); step(p,4)
         local q=ISTimedActionQueue.getTimedActionQueue(p)
         local own=q.queue[1]
         assert(own and own.Type=="drink" and own.autoMindfulOwner)
@@ -316,11 +330,11 @@ for _,input in ipairs({"aim","run","cancel"}) do
             and not first.starts and not second.starts,"A stock stop erased or started someone else's work")
         p.nativeHead=nil; q:tick(); step(p)
         assert(first.starts==1 and not second.starts and not first.autoMindfulOwner and not first.cancels)
-        assert(C.status(p).active==(input~="cancel") and #p.cards==(input=="cancel" and 1 or 0))
+        assert(C.status(p).active==(input~="cancel") and #p.cards==0)
         finish(p,first); assert(q.queue[1]==second and second.starts==1 and not second.cancels)
         finish(p,second); step(p,5)
         if input=="cancel" then
-            assert(not C.status(p).active and not q.queue[1] and #p.cards==1)
+            assert(not C.status(p).active and not q.queue[1] and #p.cards==0)
         else
             assert(C.status(p).active and #p.cards==0 and q.queue[1]~=own and q.queue[1].Type=="drink")
             C.stop(p,"test cleanup")

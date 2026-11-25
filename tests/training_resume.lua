@@ -121,19 +121,18 @@ return function(T, C, test)
             assert(count()==1 and #p.cards==1 and not queue(p)[1])
         end)
     end)
-    test("a pending retry honors explicit Stop, death, danger, disability and completion without rearming",function()
-        for _,control in ipairs({"stop","death","danger","disable","goal"}) do
+    test("a pending retry honors explicit Stop, death, disability and completion without rearming",function()
+        for _,control in ipairs({"stop","death","disable","goal"}) do
             local p=start("both","Meditation"); await(p,"Meditation"):stop()
             step(p,1); assert(C.status(p).active and #p.cards==0)
             local option=ZenWellnessContextMenu.Options.Meditation
             if control=="stop" then C.stop(p,"Stopped by you.")
             elseif control=="death" then p.dead=true; Events.OnPlayerDeath.callback(p)
-            elseif control=="danger" then p.zombies=1
             elseif control=="disable" then ZenWellnessContextMenu.Options.Meditation=nil
             else p.meditation=10; p.yoga[1]=10 end
             for _=1,8 do step(p,3000) end
             ZenWellnessContextMenu.Options.Meditation=option
-            p.zombies=nil; p.dead=nil
+            p.dead=nil
             for _=1,8 do step(p,3000) end
             local s=C.status(p)
             if control=="goal" then assert(s.active and s.mode=="recovery",control)

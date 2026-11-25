@@ -14,7 +14,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_PATTERN = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 MENU_ICONS = {"mods/AutoMindful/common/media/ui/AutoMindful/" + name + ".png"
-              for name in ("Mindful", "Open", "Supplies", "Yoga", "Meditate", "Endurance", "Once", "Mat", "Bowl")}
+              for name in ("Mindful", "Yoga", "Meditate", "Endurance")}
 
 
 def release_version(tag: str) -> str:

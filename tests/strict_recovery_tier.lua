@@ -285,12 +285,9 @@ test("paused and unobserved wall time are not practice; eight active minutes wit
     C.stop(p)
 end)
 
-test("Recover to Full and explicit one-shot do not inherit the strict objective",function()
-    local p=survivor(); p.values.ENDURANCE=.55; p.values.STRESS=.60
-    start(p,"recoverEndurance"); local a=await(p,"Meditation")
-    p.values.STRESS=.10; step(p); assert(a.stopped and not head(p) and C.status(p).active)
-    p.values.ENDURANCE=1; steps(p,12); assert(C.status(p).phase=="complete")
-    p=survivor(); p.values.STRESS=.05
+test("an explicit tier goal does not inherit the strict objective",function()
+    local a
+    local p=survivor(); p.values.STRESS=.05
     start(p,"meditateTo",2); a=await(p,"Meditation")
     badge(p,"meditation",.4); step(p)
     assert(a.stopped and C.status(p).phase=="complete" and not C.status(p).active)

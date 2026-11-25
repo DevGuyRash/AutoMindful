@@ -75,7 +75,7 @@ function Nearby.scan(player, originSquare, radius, force)
             result.pain[#result.pain + 1] = entry
             return
         end
-        local description = Consumables.inspect(player, item, false)
+        local description = Consumables.inspect(player, item, false, container)
         entry.description = description
         if description.needsVessel and (description.food or description.water) then
             result.potentialBulk = result.potentialBulk + 1
@@ -185,7 +185,9 @@ end
 function Nearby.routeEvidence(player,origin,radius,area)
     local here=player:getSquare()
     area=area or Nearby.scan(player,origin,radius)
-    if here and area and area.routeLayout then return area.routeLayout..":"..key(here), area.routeLayout end
+    -- The layout starts with its origin, so a new training spot is a new answer;
+    -- a source refused part-way along a trip is still refused back at home.
+    if here and area and area.routeLayout then return area.routeLayout, key(origin).."/"..tostring(radius) end
 end
 
 function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWorldWater, rejectedItems)
@@ -215,6 +217,7 @@ function Nearby.find(player, kind, originSquare, radius, rejectedTargets, onlyWo
             local dx, dy = square:getX() - here:getX(), square:getY() - here:getY()
             local targetKey = (entry.unknown and "unknown:" or kind .. ":") .. entry.key
             local rejection=SurvivalRoute.blocked(rejectedTargets,targetKey,entry,routeLayout,now)
+                or SurvivalRoute.roomBlocked(rejectedTargets,square,here,routeLayout,now)
             -- The adjacent drink pass uses native wall-corrected reach to a
             -- fixture's part, not just distance to its uncorrected tile.
             if not rejection and (allowAdjacent or math.abs(dx)>1 or math.abs(dy)>1

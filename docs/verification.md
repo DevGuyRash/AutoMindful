@@ -10,9 +10,11 @@ python3 tools/verify.py
 
 The verification entry point builds the actual archive first, runs controller, supply, context/UI, consumable, world-water, fluid-transfer, and release-integrity contracts, and records results outside the repository. Portable contracts use explicit game-boundary doubles. They check scheduling, provenance, portions, refresh behavior, recovery, and terminal HUD card selection and progress; they do not prove multiplayer acceptance, actual rendering, animations, or a full real-time game journey.
 
-For cooperative training, the contracts track Lua and native action identities separately. They exercise ordinary queued actions, map-reading windows with an empty queue, a chair-to-floor transition, interrupted scout trips, spent supplies, quiet intervals and hard stops. The endurance suite includes full and nearly full values, long workouts, skill-cap meditation without XP, preparation before meditation actually starts, missing stats, and stopped recovery.
+For cooperative training, the contracts track Lua and native action identities separately. They exercise ordinary queued actions, map-reading windows with an empty queue, a chair-to-floor transition, interrupted scout trips, spent supplies, quiet intervals and hard stops.
 
-For gameplay acceptance use a disposable survivor, not a personal save. Start both yoga and meditation separately; insert a workout, open and close a world and paper map, and verify the same mode resumes after each without a stop card. Check an occupied chair is left only after existing actions finish. Start endurance meditation below full, inspect the unchanged native stat during recovery, and confirm one completion at actual full. Verify genuine aiming, travel, danger and explicit Stop still terminate while waiting.
+For gameplay acceptance use a disposable survivor, not a personal save. Start both yoga and meditation separately; insert a workout, open and close a world and paper map, and verify the same mode resumes after each without a stop card. Check an occupied chair is left only after existing actions finish. Right-click the ground briefly while training and confirm it continues; hold aim and confirm it stops. Show a zombie and confirm the job pauses, then continues about ten seconds after it is gone.
+
+`tests/ui.lua` drives the real window and menus over widget doubles: it measures, draws and clicks rows, and checks that no text leaves the window at four font sizes. `tests/stock_menu.lua` repeats the menus over the installed `ISContextMenu`. `tests/log.lua` reads the log file back after scheduler runs. `tests/regressions.lua` holds the smallest reproduction of each defect reported from play or review.
 
 ### Train Both cycle
 
@@ -37,10 +39,10 @@ On Linux, install Xvfb and run the real client on its own display and cache.
 Use a direct Python interpreter for these stateful, long-running checks if your usual `python3` is intercepted by a command cache. Do not replay a game/server launch against the same cache. Always identify the live client and its display from the current `session.json` before driving controls.
 
 ```sh
-python3 tools/play.py --game /path/to/ProjectZomboid/projectzomboid --lifestyle /path/to/workshop/mods/Lifestyle --evidence /path/to/new/evidence-directory
+python3 tools/play.py --game /path/to/ProjectZomboid/projectzomboid --lifestyle /path/to/workshop/mods/Lifestyle --evidence /path/to/new/evidence-directory --profile-options ~/Zomboid/options.ini
 ```
 
-The command prints its display, process IDs, and cache path in `session.json`. It installs a freshly built AutoMindful archive in that cache and creates a disposable hard-link mirror of Lifestyle. Native script discovery fails on a directory symlink in the tested game build, so the mirror preserves the actual installed bytes without adding upstream files to the project. Do not edit files in the mirror. Choose a cache on the same filesystem as the Workshop installation. A normal launch without `--extra-mod` starts at the game's menu. Keep your personal game separate.
+`--profile-options` copies screen size and fonts from your own options file. A fresh cache stops at the game's terms screen for you to answer. The command prints its display, process IDs, and cache path in `session.json`. It installs a freshly built AutoMindful archive in that cache and creates a disposable hard-link mirror of Lifestyle. Native script discovery fails on a directory symlink in the tested game build, so the mirror preserves the actual installed bytes without adding upstream files to the project. Do not edit files in the mirror. Choose a cache on the same filesystem as the Workshop installation. A normal launch without `--extra-mod` starts at the game's menu. Keep your personal game separate.
 
 For the controlled single-player fixture, add `--extra-mod tests/live/AutoMindfulFixture`. This development mod creates a zombie-free disposable scenario with food, clean water, and books. It uses the permitted sandbox XP settings of 1000 for Meditation and 5 for Yoga. It never ships in the product archive. Start AutoMindful through the actual context menu and controls. Its optional `fast` test command accelerates the world clock; this is a test condition, not an AutoMindful feature or a normal-speed progression measurement.
 
@@ -48,8 +50,9 @@ Fixture commands belong in the disposable cache's `Lua/automindful-fixture-comma
 
 Cover these user journeys before a release:
 
-- Open the world context menu, inspect preparations, start each training mode, cancel, hide the window, reopen it, and inspect the saved nearby-collection preference.
-- Check standing and ground-sitting Wellness submenus, the preserved manual action, quick training and supply actions, the active-only reopen entry, optional general entry, and configured shortcut. Inspect tooltips and the full footer at normal and short window heights.
+- Right-click the ground while idle: only Lifestyle's Wellness entry, with AutoMindful beside its own action. Start each job from there and from the window, switch without stopping, stop from the menu, the window and the one-line strip. While a job runs, right-click your survivor and then something else: only the first shows AutoMindful. Right-click a yoga mat for **Train Yoga here**.
+- Check every tab at your own font size, the fitted height, a chosen size, and that the window position survives a restart. Confirm the shortcut opens and closes it and that Escape leaves it alone.
+- Open the newest `Lua/AutoMindful/log-N.txt` and follow one care trip from the decision to the measured relief.
 - Move into and out of stock range, transfer items manually, toggle collection during training, and confirm live counts and read-only check feedback. Start with no food or drink and ordinary needs; confirm that genuine critical or native action blockers still stop appropriately.
 - Start at zero skill and verify normal Lifestyle yoga and meditation actions, native XP, natural session completion, and automatic resumption.
 - With the AutoMindful window closed, stop a session and reach a level cap in a separate run. Each should show one noninteractive card in the correct player's viewport, with a stop reason or completion, elapsed time, and observed XP or levels. Check that clicks still reach the game and the card fades. Confirm that drinking, scouting, inventory pauses, and loan returns do not add another card.
@@ -75,14 +78,9 @@ The radius suite includes direct corpse contents, duplicate-body/vehicle suppres
 Implementation was checked against the installed Build 42 `ISInventoryPage.refreshBackpacks`, `Vehicles.lua` container access predicates and `ISPathFindAction`. Native container access remains authoritative at arrival. Script container `luaTest` metadata is not exposed to Lua, so distant structural discovery conservatively recognizes standard storage part IDs rather than inventing access to arbitrary modded parts. No door opening, unlocking, entry, network request or loot-generation call is made by radius discovery. Unknown contents are populated only through the existing native adjacent loot refresh.
 
 
-### Clean-install context icons (0.1.14)
+### Clean-install context icons
 
-Portable UI contracts model both an ordinary mod VFS and a client-only loader that restores Lua but does not mount loose artwork. On stock B42.22.2 the nine fallback names were independently checked in the index of the game's own `UI.pack` and `UI2.pack`, without copying game art. The installed `GlobalObject.fileExists` resolves the relative path through `ZomboidFileSystem.getString` before checking existence; the symbolic item keys use the same `getTexture("Item_Pencil")` convention as the stock inventory menu. No local game path, profile, dependency, direct Java cache manipulation, or extra account is part of the mod.
-
-Before a public release, verify the actual exact package in **both** clean environments:
-
-1. Ordinary native mod loading with official Lifestyle: open Wellness → Yoga while standing and Wellness → Meditate while on the floor. Check the branded Open, Train, Supplies, Endurance (meditation only), native Once, and optional general root. Reopen each submenu: one copy of each command, real icons and original disabled/tooltip behavior.
-2. A fresh disposable LuaBuddy profile using normal client-only defaults, no `mount` setting, no duplicate provider and no server-advertised AutoMindful, with normal Lifestyle support. Check the same native menus; use actual screenshots or direct visual evidence that the distinct stock icons render, not merely filenames, Lua return values, or a previously edited profile. Reconnect and repeat without settings changes. Record exact game, provider and package hashes. If either mode is unavailable or fails, say so; no visual/native proof is inferred from the portable or renderer contract tests.
+A normal mod load shows AutoMindful's artwork; a client-only loader that restores Lua without mounting loose images shows built-in game icons. Verify both with real screenshots, not filenames or Lua return values. `tests/stock_menu.lua` covers option pooling and per-player submenus.
 
 ### Yoga in the native Skills layout (0.1.15)
 
@@ -92,7 +90,7 @@ Before publication, open Skills in the same two clean native/client-only configu
 
 ### Skill Guide and rank tooltips
 
-The **Skill Guide** opens in AutoMindful's Progress frame. It switches only the scrollable body; the fixed training and Stop controls remain available. Read, scroll, go back, resize, and repeat while a loop is active. Use the compact window minimum and a large UI font, and confirm the back/close actions remain usable, including when local players swap.
+The **Guide** tab shows the same topics. Read, scroll, resize, and switch tabs while a job runs, at a large UI font.
 
 Meditation's registered row still calls stock rank/XP/boost handling. AutoMindful shortens only a recognized stock description. Use native rank descriptions when available, otherwise installed Lifestyle rank notes, with a version-scoped factual fallback. Unrecognized third-party messages are preserved. Test with and without AllTheInfo (design reference, not a dependency), both load orders, missing rank keys and other languages. The hidden Yoga tooltip measures changed content before positioning it. Near the bottom-right of a small window and at a large UI/tooltip font, move directly from a short rank to the longest translated rank. Check first paint and settled placement separately. Controller focus presents the next or capped box, not all ten ranks.
 

@@ -30,7 +30,7 @@ local function started(p, mode, nearby)
     assert(ok, reason)
     local status = C.status(p)
     assert(status.active and status.mode == mode)
-    if mode ~= "endurance" then assert(status.cycle == nil, "Recovery must not create a training ledger") end
+    assert(status.cycle == nil, "Recovery must not create a training ledger")
 end
 local function survivor(rank)
     local p = T.playerNew()
@@ -273,52 +273,7 @@ test("foreign work stays untouched and new care starts only after its native han
     C.stop(p)
 end)
 
-test("starting one-shot at already full does not claim a recovery or touch a foreign action", function()
-    local p = survivor(0)
-    local job = T.action(p,"ForeignWorkout")
-    Q.add(job)
-    local ok, reason = C.start(p,"recoverEndurance",false)
-    assert(not ok and reason and reason:lower():find("already full",1,true) and not C.status(p).active)
-    untouched(p,job)
-    assert(#p.cards==0)
-    job:perform()
-    steps(p,12)
-    assert(not C.status(p).active and not head(p) and #p.cards==0)
-end)
 
-test("one-shot recovery ignores a transient full sample during foreign work and completes only at quiet, exact full", function()
-    local p = survivor(10)
-    p.values.ENDURANCE=0.55
-    local job = T.action(p,"ForeignWorkout",function() p.values.ENDURANCE=0.9999 end)
-    local follow = T.action(p,"ForeignCleanup")
-    Q.add(job); Q.add(follow)
-    started(p,"recoverEndurance")
-    p.values.ENDURANCE=1
-    steps(p,12)
-    untouched(p,job)
-    assert(C.status(p).active and #p.cards==0)
-    job:perform()
-    steps(p,8)
-    untouched(p,follow)
-    assert(C.status(p).active and p.values.ENDURANCE==0.9999)
-    follow:perform()
-    steps(p,16)
-    assert(C.status(p).active and not head(p) and #p.cards==0)
-    noTraining(p)
-    p.values.ENDURANCE=1
-    for _=1,24 do
-        step(p)
-        if not C.status(p).active then break end
-    end
-    assert(not C.status(p).active and C.status(p).phase=="complete" and not head(p),
-        C.status(p).message or "A quiet exact-full native reading must end the one-shot mode")
-    assert(not job.stopped and not follow.stopped and not follow.autoMindfulOwner)
-    local cards=#p.cards
-    assert(cards==1 and p.cards[1].status=="complete", "A real passive recovery emits exactly one success card")
-    p.values.ENDURANCE=0.7
-    steps(p,16)
-    assert(not C.status(p).active and not head(p) and #p.cards==cards, "Full is terminal, not a loop")
-end)
 
 test("Stop All and world cancel disarm without clearing unrelated native work", function()
     for _, stop in ipairs({"button","world"}) do
@@ -713,16 +668,6 @@ test("falling health suppresses Perfect acquisition and interrupts if it starts 
     SandboxVars.Text=beforeText
 end)
 
-test("legacy endurance meditation still admits its selected native action and ends at full", function()
-    local p = survivor(10)
-    p.values.ENDURANCE = 0.6
-    started(p,"endurance",true)
-    local a=awaitHead(p,"Meditation")
-    assert(a.autoMindfulOwner and a:isStarted() and not C.status(p).collectNearby)
-    p.values.ENDURANCE=1
-    steps(p,8)
-    assert(not C.status(p).active and C.status(p).phase=="complete" and not head(p) and a.stopped)
-end)
 
 for kind, fn in pairs(menus) do ZenWellnessContextMenu.Options[kind].onAction=fn end
 getModInfoByID, Options.practiceCare=previousInfo, previousCare

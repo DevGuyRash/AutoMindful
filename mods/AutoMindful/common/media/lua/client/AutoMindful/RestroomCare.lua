@@ -144,8 +144,12 @@ local function optionSink()
     return sink
 end
 
+-- Lifestyle also counts sterile rags, notes and cash as toilet paper. A player
+-- sees that choice in the menu; unattended care must not spend them.
+local expendable = {["Base.ToiletPaper"]=true, ["Base.Tissue"]=true, ["Base.PaperNapkins"]=true}
+
 local function wipeAllowed(player, item)
-    if not item then return true end -- no paper is legal
+    if not expendable[item:getFullType()] or (item.isFavorite and item:isFavorite()) then return false end
     local container = item:getContainer()
     if not container or not container:contains(item) then return false end
     if container:isInCharacterInventory(player) then return true end
@@ -253,8 +257,8 @@ local function queueToilet(player, entry, before, useOnly, triedTool)
     for _, o in ipairs(sink.options) do
         if not o.notAvailable and not o.isDisabled and o.callback == ToiletContextMenu.onAction and o.target == player
                 and o.a == c.object and o.b == c.group and o.c == c.sprite and type(o.e) == "table" then
-            if o.name==getText("ContextMenu_Toilet_Use") and (o.f=="IsUse" or o.f=="IsFlushAndUse")
-                    and wipeAllowed(player,o.e[4]) then
+            if o.name==getText("ContextMenu_Toilet_Use") and (o.f=="IsUse" or o.f=="IsFlushAndUse") then
+                if o.e[4] and not wipeAllowed(player,o.e[4]) then o.e[4],o.d=nil,nil end -- going without is legal
                 return dispatch(player,o,"LSUseToilet",c.object)
             end
             if o.name==getText("ContextMenu_Toilet_Unclog") and o.f=="IsUnclog" then repair=o end
@@ -279,7 +283,8 @@ local function queueGround(player)
     ToiletGroundContextMenu.doBuildMenu(player:getPlayerNum(), menu, world)
     for _, o in ipairs(menu.options) do
         if o.name == getText("ContextMenu_Toilet_Ground") and not o.notAvailable and not o.isDisabled
-                and type(o.callback) == "function" and o.target == world and o.a == player and wipeAllowed(player,o.b) then
+                and type(o.callback) == "function" and o.target == world and o.a == player then
+            if o.b and not wipeAllowed(player,o.b) then o.b,o.c = nil,nil end
             return dispatch(player,o,"LSUseToiletGround")
         end
     end

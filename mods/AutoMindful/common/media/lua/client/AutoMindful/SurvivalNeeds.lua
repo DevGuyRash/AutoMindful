@@ -16,6 +16,13 @@ function Needs.due(player,kind,threshold)
     return Needs.valueDue(player:getStats():get(stat),Needs.level(player,kind),threshold)
 end
 
+-- Due is a reason to act between practices. Pressing is a reason to break one
+-- off: the second moodle, where the game's own penalties begin. The first
+-- moodle appears at 12-15% and is not worth a forfeited session.
+function Needs.pressing(player,kind)
+    return Needs.level(player,kind)>=2
+end
+
 function Needs.critical(player,kind)
     return Needs.level(player,kind)>=4
 end

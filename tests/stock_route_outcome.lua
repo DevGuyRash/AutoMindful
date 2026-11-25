@@ -210,20 +210,17 @@ do
     a:stop()
     T.tick(p,false)
     assert(Controller.status(p).active and first(p) and first(p).Type=="ISWalkToTimedAction"
-        and first(p).location==origin, "native failure should return home rather than end the session")
+        and first(p).location:getX()==other.square:getX()-1,
+        "native failure ends neither the session nor the outing: the next known source is tried from here")
     p.moving=false
     first(p):perform()
-    local alternateWalk=false
     for _=1,22 do
         T.tick(p,false)
         local head=first(p)
-        if head and head.Type=="ISWalkToTimedAction" and head.location:getX()==other.square:getX()-1 then
-            alternateWalk=true
-        end
         if head and head.Type=="Meditation" then break end
         if head then head:perform() end
     end
-    assert(alternateWalk and has(p,"drink") and has(p,"Meditation") and p:getSquare()==origin,
+    assert(has(p,"drink") and has(p,"Meditation") and p:getSquare()==origin,
         "use next known route and resume training at home")
     Controller.stop(p)
 end
@@ -241,7 +238,7 @@ do
     assert(not Controller.status(p).active and not first(p) and p:getSquare()~=origin,
         "released manual cancel must not become an automatic walk back")
 end
-print("PASS: stock B42 path failure evidence, fallback and prior callback unchanged; exact home before alternate; no manual reversal")
+print("PASS: stock B42 path failure evidence, fallback and prior callback unchanged; alternate tried on the way, then exact home; no manual reversal")
 
 -- Use the shipped path constructors and update(), not an invented 'successful
 -- fallback' action. Only the navmesh result and local map are boundary doubles.

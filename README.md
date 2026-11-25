@@ -122,9 +122,21 @@ If no usable food is confirmed, eligible Meditation can build Strong Mindfulness
 
 **Practice at max rank:** Start **Train Both** after both skills reach level 10 to alternate Yoga and Meditation while idle, regardless of training order. If only one is maxed, Train Both still trains only the unfinished skill. Start **Yoga** or **Meditation** at its cap to practice only that one, with the usual optional care breaks. Max-rank practice leaves room for other actions and pauses for them; it does not require XP gains. A training session started below the cap switches to Recovery once its selected skill, or both skills in Train Both, reaches level 10. Unfinished hunger relief is not cut short by a level-up or by full endurance. Unlike Recovery, max-rank practice does not need an active care need to start a session.
 
-**Recovery** keeps AutoMindful watching for needs without training toward a rank. It works at rank 0 and at both rank caps. It uses the usual supplies, scouting, and Lifestyle care rules. It can use Yoga or Meditation when the current skill, benefit and safety checks make it useful, but it does not use up a training turn. Available food, water and suitable treatment take priority; Mindfulness cannot replace nutrition, water, or urgent care. After its own work, Recovery leaves a brief opening for other actions, and resumption never cancels a queued foreign action. Ordinary walking pauses Recovery or training and resumes after you settle. Walking away from a supply trip abandons that route rather than forcing you back. Running, aiming, and nearby danger suspend care until the survivor is safe and idle. **Stop** or an explicit game cancel ends Recovery.
+**Recovery** looks after the survivor without training. It works at any rank and has three gears, which it picks by itself:
 
-Recovery can rest normally when endurance is low and stays on at full endurance. Meditation does not directly refill endurance. Urgent needs and available supplies take priority over mild ones, and other actions and movement always come first.
+- **Working:** while you, or another mod, keep the action queue busy, a carried bite or sip goes between two actions. Nothing of yours is cancelled, replaced or reordered.
+- **Here:** while you stand around, it eats and drinks what is within reach. The longer the survivor is left alone (mouse, keyboard and movement all count), the more it does: a walk for a second moodle after 5 seconds and for a first one after 15, resting, reading and practising for relief after 10, sleep after a minute.
+- **Away:** after 3 minutes without input, or at once with **I am going AFK**, it does everything: small needs, a nearby bed and back, filling carried bottles, looking into containers. A step, a key or an aim ends it.
+
+**Danger** comes in degrees. Chased, touched or on fire: hands off. Zombies only in view: no walking, practice or sleep, but eating, drinking, bandaging and a painkiller go on, and someone dying of thirst may still walk to water. Bleeding is bandaged with what is carried or within reach, best dressing first. In a parked vehicle it uses what you carry. The same rules stand behind every training job.
+
+**Looking ahead:** while Recovery runs, the window shows how long the known food and drink would last in real time, carried and within reach, and what would go wrong first. Rates are measured on your survivor. When you leave with something that would likely kill an unattended survivor, it says so at that moment. Later trouble (starving with nothing to eat, zombies, a wound without a bandage, every walk failing) shows a card and plays a sound only you hear, again every few minutes while it lasts.
+
+**It does not give up.** A route that will not settle, an interrupted action or an internal error makes Recovery back off and try again. **Stop** ends it; Escape only makes it step back. If it was on when you left the game, it goes on when you load in. It cannot reconnect you to a server.
+
+**Last resort:** after a minute of Dying of Thirst with nothing clean left, it drinks plain unsafe water. It never eats rotten or poisonous food. Each of these is a switch under **Settings > Recovery**.
+
+Recovery rests normally when endurance is low. Meditation does not directly refill endurance. Yoga and Meditation are used only when the current skill and benefit make them useful for a need; they are never training turns.
 
 ## Report a problem
 

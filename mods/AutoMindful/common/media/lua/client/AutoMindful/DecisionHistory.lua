@@ -13,7 +13,7 @@ local labels = {
     ["restoring-mask"]="Putting the mask back on", ["return-wait"]="Waiting to retry the way back", care="Taking a care break",
     resuming="Rechecking after a pause", stopped="AutoMindful stopped", complete="Mode complete",
     ["current-action"]="Waiting for your current action", walking="Waiting for movement to settle",
-    ["manual-input"]="Waiting for your controls to settle", ["recovery-danger"]="Paused for safety",
+    ["manual-input"]="Waiting for your controls to settle", ["recovery-danger"]="Careful: not safe here",
     ["inspection-open"]="Waiting for the map or dialog to close", interrupted="Checking an interrupted action",
     ["settling-action"]="Waiting for the previous action to settle",
     ["admission-retry"]="Lifestyle did not start the practice",
@@ -32,6 +32,7 @@ local liveDetails = {
     ["settling-action"]="AutoMindful will resume when the queue is clear.",
     ["manual-input"]="It resumes when you are idle.",
     ["recovery-danger"]="The job stays on and continues when it is safe.",
+    setback="It stays on and tries again in a while.",
 }
 
 local function nativeText(value)

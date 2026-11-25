@@ -203,9 +203,14 @@ do
     p.values.HUNGER,p.values.THIRST,p.values.FATIGUE=.12,.12,.65
     T.add(p.inventory,T.water({thirst=-.8}))
     T.add(p.inventory,T.item("Food",{hunger=-.8,baseHunger=-.8,calories=500}))
-    start(p); steps(p,12)
-    assert(p:isAsleep() and not head(p) and not T.hasHistory(p,"eat") and not T.hasHistory(p,"drink"),
-        "Admitted sleep beats the new early preventive triggers")
+    start(p)
+    for _=1,40 do
+        step(p)
+        if head(p) then head(p):perform() end
+        if p:isAsleep() then break end
+    end
+    assert(p:isAsleep() and not head(p) and T.hasHistory(p,"eat") and T.hasHistory(p,"drink"),
+        "A sip and a bite before eight hours without either, then sleep")
     C.stop(p)
     p=new()
     p.values.STRESS=.35
@@ -220,4 +225,4 @@ do
     assert(relaxing.stopped and not relaxing.autoMindfulFinished)
     drink:perform(); C.stop(p)
 end
-print("PASS preventive early needs wait for admitted sleep and an actual ongoing relief action; ordinary water still wins")
+print("PASS a small need is met before sleep but never breaks an ongoing relief action; ordinary water still wins")

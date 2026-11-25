@@ -73,6 +73,8 @@ local function notices(player, status, report, startError)
     end
     add(startError, colors.bad)
     if status.active then
+        for _, alert in ipairs(status.alerts or {}) do add(alert.text, colors.bad) end
+        add(status.aidNotice, colors.bad)
         add(status.careNotice)
         add(status.painNotice)
     end
@@ -96,6 +98,28 @@ local function appendNotices(rows, list)
     gap(rows, 4)
     head(rows, "Worth knowing")
     for _, row in ipairs(list) do rows[#rows + 1] = row end
+end
+
+-- Recovery's own part: who it thinks is at the controls, how long the known
+-- supplies last, and what would go wrong first.
+local function outlookRows(rows, player, status)
+    local outlook = Controller.outlook(player)
+    if not outlook then return end
+    local function tone(hours) return hours < 12 and colors.bad or hours < 24 and colors.warn or colors.text end
+    rows[#rows + 1] = {kind="columns", label="Lasts (real time)", color=colors.muted, cells={{text="Carried"}, {text="Within reach"}}}
+    rows[#rows + 1] = {kind="columns", label="Food", cells={{text=outlook.carriedFood, color=tone(outlook.carriedFoodHours)},
+        {text=outlook.food, color=tone(outlook.foodHours)}}}
+    rows[#rows + 1] = {kind="columns", label="Drink", cells={{text=outlook.carriedWater, color=tone(outlook.carriedWaterHours)},
+        outlook.endlessWater and {text="Running tap", color=colors.good} or {text=outlook.water, color=tone(outlook.waterHours)}}}
+    local shown = 0
+    for _, issue in ipairs(outlook.issues) do
+        if shown < 4 then
+            shown = shown + 1
+            rows[#rows + 1] = {kind="text", bullet=true, text=issue.text,
+                color=issue.severity >= 3 and colors.bad or issue.severity == 2 and colors.warn or colors.muted}
+        end
+    end
+    if shown == 0 then rows[#rows + 1] = {kind="text", text="Nothing known would stop it looking after the survivor.", color=colors.good} end
 end
 
 function Views.now(window)
@@ -123,6 +147,16 @@ function Views.now(window)
         gap(rows, 2)
         skillBars(rows, status)
         chips(rows, player)
+        if status.mode == "recovery" then
+            gap(rows, 4)
+            outlookRows(rows, player, status)
+            gap(rows, 4)
+            rows[#rows + 1] = {kind="setting", label=status.away and "Looking after everything" or "Helping while you play",
+                value=status.away and "I am back" or "I am going AFK", valueColor=status.away and colors.warn or colors.recovery,
+                onClick=function() Controller.setAway(player, not status.away); window:invalidate() end,
+                tip="Away: it also walks for small needs, practises for relief, sleeps in bed, fills bottles and warns you out loud. "
+                    .. "It starts by itself after " .. Options.awayMinutes[Options.awayIndex()] .. " minutes without input; moving or a key ends it."}
+        end
         gap(rows, 4)
         rows[#rows + 1] = {kind="buttons", buttons={
             {text="Stop", color=colors.bad, onClick=function() Jobs.stop(player, "window") end,
@@ -266,7 +300,6 @@ function Views.settings(window)
         rows[#rows + 1] = {kind="setting", label=group.label, value=group.summary, menu=true, tip=group.help,
             onClick=function() window:openMinimumMenu(group.id) end}
     end
-    toggle("strictRecoveryTier", "Recovery finishes its tier", "Keep working toward the minimum even if the need that started it clears.")
     head(rows, "Care")
     local range = Preferences.range(player)
     rows[#rows + 1] = {kind="setting", label="Look for supplies", value=Views.rangeLabel(range), menu=true,
@@ -276,6 +309,16 @@ function Views.settings(window)
             onClick=function() window:openRadiusMenu() end}
     end
     toggle("practiceCare", "Practise for relief", "Use Yoga or Meditation when it is the best way to ease a need.")
+    head(rows, "Recovery")
+    rows[#rows + 1] = {kind="setting", label="Away after", value=Options.awayMinutes[Options.awayIndex()] .. " min", menu=true,
+        tip="Without any input. While you are away, Recovery does everything it can.", onClick=function() window:openAwayMenu() end}
+    toggle("recoveryBetween", "Eat and drink between actions", "While you or another mod keep the queue busy, a carried bite or sip goes between two actions.")
+    toggle("recoveryRefill", "Keep carried bottles full", "The game drinks from carried bottles by itself, so a full one keeps the survivor going when nothing else works.")
+    toggle("recoveryBeds", "Sleep in a nearby bed", "Walks there and back. Off: sleeps on the spot.")
+    toggle("recoveryLastResort", "Unsafe water rather than death", "Only after a minute of Dying of Thirst with nothing clean left.")
+    toggle("recoverySound", "Sound when it needs you", "Heard only by you, not by zombies.")
+    toggle("recoveryResume", "Carry on after loading", "If Recovery was on when you left, it starts again.")
+    toggle("strictRecoveryTier", "Finish its moodle tier", "Keep working toward the minimum even if the need that started it clears.")
     head(rows, "Window and menu")
     rows[#rows + 1] = {kind="setting", label="Open and close key", value=window.capturing and (window.keyTaken and (window.keyTaken .. " is in use. Try another") or "Press a key, Esc to cancel")
         or Options.windowKeyLabel(),

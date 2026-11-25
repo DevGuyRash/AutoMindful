@@ -33,6 +33,39 @@ local radius = settings:getOption("searchRadius") or settings:addSlider("searchR
     "Nearby search radius (tiles)", 2, 30, 1, 10,
     "Search distance from the original training spot for each care trip. Default: 10 tiles. The route itself may be longer.")
 
+-- Recovery's own switches. Every one is safe to leave on; each is here because
+-- someone will want the survivor to behave differently.
+Options.awayMinutes = {1, 3, 5, 10}
+local away = settings:getOption("recoveryAway")
+if not away then
+    away = settings:addComboBox("recoveryAway", "Recovery: counts you as away after",
+        "While you are away, Recovery also walks for small needs, sleeps in bed, fills bottles and warns you out loud.")
+    for _, minutes in ipairs(Options.awayMinutes) do away:addItem(minutes == 1 and "1 minute" or minutes .. " minutes") end
+    away:setValue(2)
+end
+
+function Options.awayIndex()
+    local index = tonumber(away:getValue())
+    return index and Options.awayMinutes[index] and index or 2
+end
+
+function Options.awayMs() return Options.awayMinutes[Options.awayIndex()] * 60000 end
+
+local recoveryTicks = {}
+for _, row in ipairs({
+    {"recoveryBetween", "Recovery: eat and drink between your actions", "While you or another mod keep the action queue busy, a carried bite or sip goes between two actions."},
+    {"recoveryRefill", "Recovery: keep carried bottles full", "Refills bottles you carry at clean water. The game drinks from them by itself."},
+    {"recoveryBeds", "Recovery: sleep in a bed when one is near", "Walks to a bed within the search radius and back afterwards. Off: sleeps on the spot."},
+    {"recoveryLastResort", "Recovery: drink unsafe water rather than die", "Only after a minute of Dying of Thirst with nothing clean left. It will make the survivor ill."},
+    {"recoverySound", "Recovery: sound when it needs you", "Heard only by you, not by zombies."},
+    {"recoveryResume", "Recovery: carry on after loading", "If Recovery was on when you left, it starts again when you are back in."},
+}) do
+    recoveryTicks[row[1]] = settings:getOption(row[1]) or settings:addTickBox(row[1], row[2], true, row[3])
+end
+local function ticked(id) return function() return recoveryTicks[id]:getValue() == true end end
+Options.careBetween, Options.refill, Options.useBeds = ticked("recoveryBetween"), ticked("recoveryRefill"), ticked("recoveryBeds")
+Options.lastResort, Options.alertSound, Options.resumeRecovery = ticked("recoveryLastResort"), ticked("recoverySound"), ticked("recoveryResume")
+
 -- PZ stores the stock combo's selected index. Keep this order stable.
 local cycles = {
     {id="alternate", label="Alternate", help="Switch after a completed native practice. A temporarily blocked skill retains its turn."},

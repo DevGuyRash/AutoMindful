@@ -28,7 +28,7 @@ function WaterSources.inspect(player, object, part)
             or (ground and (not SafeHouse.isSafehouseAllowLoot(square, player)
                 or not SafeHouse.isSafehouseAllowLoot(partSquare, player)))) then return nil end
     if instanceof(object, "IsoThumpable") and object:isLockedToCharacter(player) then return nil end
-    if object:getFluidAmount() <= 0 or object:isTaintedWater() then return nil end
+    if object:getFluidAmount() <= 0 or object:isTaintedWater() and not Fluids.allowTainted then return nil end
     local item = ground and object:getItem() or nil
     if item and item:isSealed() then
         return nil, "A nearby fluid container is sealed. Open it before using it as a supply."
@@ -39,7 +39,7 @@ function WaterSources.inspect(player, object, part)
         local reason
         description, reason = Fluids.inspect(fluid)
         if not description then return nil, reason end
-        direct = fluid:isPureFluid(Fluid.Water) and object:hasWater()
+        direct = Fluids.isWater(fluid) and object:hasWater()
         if not direct then
             if not fluid:canPlayerEmpty() then return nil, "A nearby fluid supply cannot currently be opened or poured." end
             if item and Fluids.drinkable(item, fluid) then return nil end
@@ -47,7 +47,9 @@ function WaterSources.inspect(player, object, part)
             description.needsVessel = true
         end
     else
-        if not object:hasWater() or object:getPrimaryFluid() ~= Fluid.Water then return nil end
+        local primary = object:getPrimaryFluid()
+        if not object:hasWater() or primary ~= Fluid.Water
+                and not (Fluids.allowTainted and Fluid.TaintedWater and primary == Fluid.TaintedWater) then return nil end
         direct = true
     end
     local remaining = object:getFluidAmount()

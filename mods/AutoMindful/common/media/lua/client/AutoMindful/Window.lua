@@ -323,6 +323,13 @@ function Window:openRadiusMenu()
     end
 end
 
+function Window:openAwayMenu()
+    local menu = self:menu()
+    for index, minutes in ipairs(Options.awayMinutes) do
+        pick(menu, minutes == 1 and "1 minute" or minutes .. " minutes", index == Options.awayIndex(), self, Window.setOption, "recoveryAway", index)
+    end
+end
+
 function Window:openCycleMenu()
     local menu = self:menu()
     for index, entry in ipairs(Options.cycleChoices()) do

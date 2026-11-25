@@ -196,7 +196,7 @@ test("walking out of a planned care excursion cancels our old route and never wa
     getGameSpeed,luautils,ISWalkToTimedAction=priorSpeed,priorUtils,priorWalk
 end)
 
-test("active training still stops for combat or running; Recovery yields unless explicitly canceled",function()
+test("active training still stops for combat or running; Recovery only steps back",function()
     local controls={
         function(p) p.running,p.rawMovementInput=true,true end,
         function(p) p.sprinting,p.rawMovementInput=true,true end,
@@ -211,7 +211,7 @@ test("active training still stops for combat or running; Recovery yields unless 
             start(p,mode); steps(p,10)
             active(p,mode)
             control(p); steps(p,4)
-            local terminal=mode=="meditation" or input==#controls
+            local terminal=mode=="meditation" -- Escape also opens the game's menu: Recovery only steps back
             assert(C.status(p).active==not terminal and C.status(p).phase==(terminal and "stopped" or "manual")
                 and not head(p))
             p.running,p.sprinting,p.rawMovementInput,p.aiming,p.attacking,p.cancelInput=false,false,false,false,false,false

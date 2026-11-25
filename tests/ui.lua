@@ -186,6 +186,9 @@ function Controller.prepare(_, collect, _, force)
 end
 function Controller.setCollectNearby(_, v) Controller.collect = v end
 function Controller.loans() return loans end
+local outlook, awayCalls = nil, {}
+function Controller.outlook() return outlook end
+function Controller.setAway(_, away) awayCalls[#awayCalls + 1] = away; state.away = away end
 local decisions = {}
 function Controller.recentDecisions() return decisions end
 package.loaded["AutoMindful/Controller"] = Controller
@@ -289,7 +292,7 @@ local window = Window.open(player)
 assert(window:getX() == 62 and window:getY() == 25 and window.width < 400 and window.height < 420, "The old position carries over, the old size does not")
 assert(job(window, "Yoga") and job(window, "Meditation") and job(window, "Yoga and Meditation") and job(window, "Recovery"))
 assert(job(window, "Yoga").sub == "Level 5, 40 of 100 XP" and #rows(window, "title") == 0 and not button(window, "Stop"))
-assert(job(window, "Recovery").sub:find("Nothing needs attention", 1, true) and #rows(window, "chips") == 0, "No need, no chips")
+assert(job(window, "Recovery").sub:find("while you play or are away", 1, true) and #rows(window, "chips") == 0, "No need, no chips")
 player.moodles.THIRST, player.moodles.BORED = 2, 1
 window:invalidate()
 assert(rows(window, "chips")[1].chips[1].text == "Thirsty" and job(window, "Recovery").sub == "Looks after: thirsty, bored")
@@ -365,6 +368,25 @@ choose(zen.options[1])
 assert(launches[#launches].mode == "yogaTo" and launches[#launches].tier == 1)
 state.active, state.mode = false, nil
 passed("tiers open as submenus holding only what can be reached")
+
+-- Recovery shows who it thinks is there, how long things last, what would go wrong.
+outlook = {food="4 h", carriedFood="30 min", water="2 h", carriedWater="1 h", foodHours=50, carriedFoodHours=6, waterHours=22,
+    carriedWaterHours=11, endlessWater=true, issues={{id="bleeding", severity=3, text="Bleeding. It will be bandaged."}}}
+state.active, state.mode, state.phase = true, "recovery", "recovery-idle"
+window:show("now"); window:invalidate(true)
+local cells = {}
+for _, row in ipairs(rows(window, "columns")) do cells[row.label] = row.cells[1].text .. "/" .. row.cells[2].text end
+assert(cells.Food == "30 min/4 h" and cells.Drink == "1 h/Running tap", cells.Drink)
+assert(text(window):find("It will be bandaged", 1, true))
+click(window, setting(window, "Helping while you play"))
+assert(awayCalls[1] == true and setting(window, "Looking after everything"))
+click(window, setting(window, "Looking after everything")); assert(awayCalls[2] == false)
+state.alerts = {{text="Very hungry, and there is nothing to eat within reach."}}
+window:invalidate(true); assert(text(window):find("nothing to eat within reach", 1, true))
+state.alerts, state.active, state.mode, state.phase = nil, false, nil, "idle"
+window:invalidate(true)
+assert(not setting(window, "Helping while you play"), "Nothing about being away while no Recovery runs")
+passed("Recovery says who it thinks is there, how long supplies last, and what would go wrong first")
 
 -- Other tabs -------------------------------------------------------------------
 window:show("supplies")
@@ -472,8 +494,9 @@ passed("it fits its contents, remembers what the player chose, and shrinks to on
 -- Nothing is drawn outside the window, at any font size, in any tab.
 for _, font in ipairs({{5, 13}, {7, 16}, {10, 22}, {14, 30}}) do
     charWidth, lineHeight = font[1], font[2]
-    for _, active in ipairs({false, true}) do
-        state.active, state.mode = active, active and "both" or nil
+    for _, mode in ipairs({"none", "both", "recovery"}) do
+        local active = mode ~= "none"
+        state.active, state.mode = active, active and mode or nil
         for _, view in ipairs({"now", "supplies", "log", "guide", "settings"}) do
             window.view = view; window:invalidate(true)
             drawn = {}
@@ -534,6 +557,11 @@ context = worldMenu({here})
 assert(names(context) == "AutoMindful: Yoga", names(context))
 ours = context:getSubMenu(context.options[1].subOption)
 assert(names(ours) == "Stop|Switch to|Show window", names(ours))
+state.mode = "recovery"
+local helping = worldMenu({here}); helping = helping:getSubMenu(helping.options[1].subOption)
+assert(names(helping) == "Stop|I am going AFK|Switch to|Show window", names(helping))
+choose(named(helping, "I am going AFK")); assert(awayCalls[#awayCalls] == true)
+state.away, state.mode = nil, "yoga"
 local switch = ours:getSubMenu(named(ours, "Switch to").subOption)
 assert(not named(switch, "Yoga") and named(switch, "Recovery"))
 choose(named(ours, "Stop")); assert(stops[#stops] == "You stopped AutoMindful." and not state.active)

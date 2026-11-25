@@ -21,8 +21,8 @@ local function canUse(player, from, to, onArrival)
         and (not from.isHoppableTo or not from:isHoppableTo(to))
 end
 
-function Egress.options(player, from)
-    if not Egress.obstructed(from) or not Storage.permitted(player,from) then return end
+function Egress.options(player, from, boxedIn)
+    if not (boxedIn or Egress.obstructed(from)) or not Storage.permitted(player,from) then return end
     local goals, candidates, signature = {}, {}, {key(from)}
     local x,y,z = from:getX(),from:getY(),from:getZ()
     local cell = getCell()

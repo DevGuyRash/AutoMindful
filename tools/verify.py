@@ -62,7 +62,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     for name, script in (("scout-memory", "scout_memory.lua"),
                          ("lifestyle-care-journey", "lifestyle_care_journey.lua"),
                          ("lifestyle-restroom", "restroom_care.lua"), ("lifestyle-hygiene", "hygiene_care.lua"),
-                         ("ui-contracts", "ui.lua"), ("log-contracts", "log.lua"), ("regressions", "regressions.lua"), ("decision-status", "decision_status.lua"), ("training-cycle", "training_cycle.lua"),
+                         ("ui-contracts", "ui.lua"), ("log-contracts", "log.lua"), ("regressions", "regressions.lua"), ("recovery-steward", "recovery_steward.lua"), ("decision-status", "decision_status.lua"), ("training-cycle", "training_cycle.lua"),
                          ("training-scheduler-integration", "training_scheduler_integration.lua"),
                          ("tier-targets", "tier_targets.lua"), ("tier-options", "tier_options.lua"),
                          ("wellness-provider", "wellness_provider.lua"),
@@ -100,6 +100,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                             [lua, "tests/stock_queue.lua", str(game / "media"), "--kahlua-queue-lookup"]))
         checks.append(check(evidence, "stock-native-aim-stop", [lua, "tests/stock_aim.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-scout-route-outcome", [lua, "tests/stock_route_outcome.lua", str(game / "media")]))
+        checks.append(check(evidence, "stock-interject", [lua, "tests/stock_interject.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-menu", [lua, "tests/stock_menu.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-pain-action", [lua, "tests/stock_pain.lua", str(game / "media")]))
         checks.append(check(evidence, "stock-supply-loans", [lua, "tests/stock_supply_loans.lua", str(game / "media")]))
@@ -122,7 +123,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-lifestyle-restroom", "restroom_care.lua"),
                                      ("native-lifestyle-stock-wash", "stock_hygiene.lua"),
                                      ("native-lifestyle-hygiene", "lifestyle_hygiene.lua"),
-                                     ("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"), ("native-log-contracts", "log.lua"), ("native-regressions", "regressions.lua"),
+                                     ("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"), ("native-log-contracts", "log.lua"), ("native-regressions", "regressions.lua"), ("native-recovery-steward", "recovery_steward.lua"), ("native-stock-interject", "stock_interject.lua"),
                                      ("native-decision-status", "decision_status.lua"),
                                      ("native-training-cycle", "training_cycle.lua"),
                                      ("native-training-scheduler-integration", "training_scheduler_integration.lua"),
@@ -150,7 +151,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-nearby-contracts", "nearby.lua")):
                     if script in ("lifestyle_hygiene.lua", "mindfulness_native.lua") and not reference_root:
                         continue
-                    suite_reference = game / "media" if script in ("stock_route_outcome.lua", "stock_hygiene.lua", "stock_supply_loans.lua", "stock_care_ownership.lua", "sleep_healing.lua", "water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "stock_aim.lua", "stock_pain.lua", "stock_menu.lua", "stock_skills_pane.lua", "tier_options.lua") else reference_root
+                    suite_reference = game / "media" if script in ("stock_route_outcome.lua", "stock_hygiene.lua", "stock_supply_loans.lua", "stock_care_ownership.lua", "sleep_healing.lua", "water_sources.lua", "fluid_transfers.lua", "stock_queue.lua", "stock_aim.lua", "stock_pain.lua", "stock_menu.lua", "stock_interject.lua", "stock_skills_pane.lua", "tier_options.lua") else reference_root
                     command = [str(java), "-Xmx512m", "-Djava.awt.headless=true", "-cp", os.pathsep.join((str(classes), str(jar))),
                                "KahluaCheck", str(ROOT), str(suite_reference) if suite_reference else "-", script]
                     if script == "mindfulness_native.lua":

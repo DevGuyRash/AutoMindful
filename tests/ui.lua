@@ -497,6 +497,16 @@ do
     corner:onMouseDoubleClick(3, 3); corner:onMouseUp(0, 0); corner:onMouseMove(0, 0)
     assert(window.geometry.width == nil and window.geometry.height == nil and window.width == startW, "Double click the corner: both fit")
     assert(files["AutoMindful/window-0.txt"]:find("- - 0", 1, true), files["AutoMindful/window-0.txt"])
+    local fitted = window.height
+    mouseX, mouseY = 600, 400
+    corner:onMouseDown(0, 0); mouseX = 480; corner:onMouseMoveOutside(0, 0); corner:onMouseUp(0, 0)
+    corner:onMouseDoubleClick(3, 3); window:invalidate()
+    assert(window.width == startW and window.height == fitted, "From a narrow window, too: " .. window.height .. " not " .. fitted)
+    corner:onMouseDown(0, 0); mouseX = 520; corner:onMouseMoveOutside(0, 0)
+    window:close(); assert(not window.resize and not corner.captured, "Closing lets go")
+    window = Window.open(player); startW = window.width
+    mouseX = 900; corner:onMouseMove(0, 0); assert(window.width == startW)
+    corner:onMouseDown(0, 0); corner:onMouseUp(0, 0); corner:onMouseDoubleClick(0, 0); window:invalidate()
     passed("resizing follows the mouse exactly, and a double click fits the contents")
 end
 window:onUserResize(500, 250); window:saveGeometry()

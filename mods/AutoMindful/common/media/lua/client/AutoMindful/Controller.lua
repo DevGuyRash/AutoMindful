@@ -891,6 +891,7 @@ unsafeReason = function(player, state)
         local foreignMove=ActionYield.foreignMoving(player,queueFor(player),state)
         if walked or foreignMove then
             ActionYield.rememberPosition(state,player)
+            state.parkedTrip=nil
             if state.excursion then
                 -- The player or a real foreign job took over movement. Do
                 -- not pull them back to an old location after it finishes.
@@ -944,6 +945,9 @@ function Controller.recoveryInterruption(player,state,queue)
     if player:isDead() then return "Stopped because the survivor died.","stop" end
     local priorContext=state.contextVisible
     state.contextVisible=ActionYield.contextOpen(player)
+    if (state.contextVisible or state.inspectingUI) and Recovery.unattended(player,state,getTimestampMs()) then
+        state.contextVisible,state.inspectingUI=false,nil
+    end
     if player:pressedCancelAction() then
         if priorContext or state.contextVisible then state.uiCancelHeld=true end
         -- Escape also opens the game's own menu. It means "not now", never
@@ -959,7 +963,7 @@ function Controller.recoveryInterruption(player,state,queue)
             or (player:isPlayerMoving() and not ownWalk) or ActionYield.leftArea(state,player,ownWalk)
         if walking then
             ActionYield.rememberPosition(state,player)
-            state.excursion,state.walkTakenOver=nil,nil
+            state.excursion,state.walkTakenOver,state.parkedTrip=nil,nil,nil
         end
     else
         state.motionZ=nil
@@ -970,7 +974,7 @@ function Controller.recoveryInterruption(player,state,queue)
     if not square then level,unsafe="engaged","the survivor's area is not loaded"
     else level,unsafe=Recovery.readGuard(player,state) end
     if level=="engaged" or state.guard and Recovery.optionalWork(player,state) then
-        state.excursion=nil
+        Recovery.parkTrip(state)
         return "Recovery paused: "..unsafe..".", "recovery-danger"
     end
     if walking then return "Recovery is waiting for your movement to settle.","walking" end
@@ -1203,8 +1207,7 @@ local function yieldToPlayer(player, state, unexplained, walking, settling, paus
         -- care target, item or portion. A failed walk is retained as read-only
         -- evidence of the draining Java handle, not an action to replay.
         local trip = state.excursion
-        state.bedTry = nil
-        if cause=="walking" then state.parkedTrip=nil end
+        state.bedTry, state.aidTry = nil, nil
         if trip and trip.egressPlan then
             state.excursion=nil
         elseif trip then
@@ -1746,6 +1749,7 @@ end
 local function arrivedHome(player,state,trip,now)
     Controller.scoutTrace(player,state,trip,"home","original-training-tile-reached")
     Controller.restoreSpeed(trip)
+    state.parkedTrip=nil
     if trip.outing then
         local t,origin=trip.walkTiming,trip.origin
         local sample
@@ -1916,7 +1920,7 @@ local function tryExcursion(player,state,kind,onlyWorldWater,selectedCare,target
         if target.unknown or target.square:getZ()~=origin.z or dx*dx+dy*dy>radius*radius
                 or not LifestyleCare.frontInRange(selectedCare,origin.x,origin.y,origin.z,radius) then return false end
     end
-    state.excursion = {origin = prior and prior.origin or rememberOrigin(player, here), target = target, kind = kind,
+    state.excursion = {origin = prior and prior.origin or state.parkedTrip and state.parkedTrip.origin or rememberOrigin(player, here), target = target, kind = kind,
         resumeSpeed = prior and prior.resumeSpeed, outing = prior and prior.outing or {served={},learned={},turns=0,radius=Options.searchRadius()}, indirect=prior~=nil,
         onlyWorldWater = onlyWorldWater, waterObject = waterObject, careTarget = selectedCare, exactStorage = exact, stage = "outbound"}
     state.travelScan = nil
@@ -3515,6 +3519,11 @@ end
 local function finishPending(player, state, now)
     if state.phase=="firstaid" or state.phase=="refilling" then
         -- Judged by what changed on the survivor, not by how the action ended.
+        if state.aidTry then
+            for _, action in ipairs(state.pending) do
+                if not action.autoMindfulFinished or action.autoMindfulStopped then state.aidTry.cut=true end
+            end
+        end
         local trip=state.excursion
         if state.phase=="refilling" and trip and trip.stage=="care" and trip.outing then
             trip.stage="errands"
@@ -4296,7 +4305,7 @@ function Controller.update(player)
             Recovery.unready(player,state,reason,now)
             return
         end
-        state.unreadyAt=nil
+        Recovery.ready(player,state)
         if not ready then Controller.stop(player, reason); return end
     end
     if state.releasePending then
@@ -4670,7 +4679,7 @@ function Controller.update(player)
         Recovery.guarded(player,state,now)
         return
     end
-    if state.parkedTrip and not state.excursion and not state.guard then state.excursion,state.parkedTrip=state.parkedTrip,nil end
+    if state.parkedTrip and not state.excursion and not state.guard then Recovery.unparkTrip(player,state) end
     local careFirst = state.active and state.lowHealth and not state.excursion
         and (Needs.due(player,"water") or Needs.due(player,"food"))
     if not careFirst and returnBorrowed(player, state) then return end
@@ -4900,6 +4909,7 @@ function Controller.resumeAfterLoad(player)
     if at==true then return end
     if not at then resumed[player]={at=now,tries=0}; return end
     if now>=at.at and now-at.at<resumeAfterMs*2^at.tries then return end
+    if player:isAsleep() then resumed[player]={at=now,tries=at.tries}; return end
     resumed[player]=true
     if not Recovery.remembered(player) or not Options.resumeRecovery() or player:isDead() then return end
     local started,message=Controller.start(player,"recovery",Recovery.collectNearby(player))
@@ -4967,7 +4977,13 @@ Recovery.bind({policy=recoveryPolicy, stat=stat, levels=levels, queueFor=queueFo
     resumeTier=Controller.resumeRecoveryTier, lookInside=Controller.lookInside, fetchWater=Controller.fetchWater,
     painReady=function(player,state,now) return wantsPainCare(player,state,now) end,
     prepareWalk=prepareScoutWalk,
-    available=function(player,state,kind) return comfortSupplyAvailable(player,state,kind,true) end,
+    available=function(player,state,kind)
+        local before=state.travelPeek
+        state.travelPeek=true
+        local found=comfortSupplyAvailable(player,state,kind,true)
+        state.travelPeek=before
+        return found
+    end,
     pause=function(player,state,reason,cause) Controller.pauseRecovery(player,state,reason,cause) end})
 
 return Controller

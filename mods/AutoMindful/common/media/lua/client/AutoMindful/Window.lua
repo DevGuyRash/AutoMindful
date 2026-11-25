@@ -136,6 +136,7 @@ function Window:arrange()
     self.tabs:setVisible(not self.mini)
     self.body:setVisible(not self.mini)
     self.strip:setVisible(self.mini == true)
+    if self.mini and self.resize then self.resize.widget.releaseDrag() end
     self.resizeWidget:setVisible(not self.mini)
     self.resizeWidget2:setVisible(not self.mini)
     -- Anchors only follow size changes after the first frame; this window is
@@ -206,9 +207,11 @@ function Window:bindHandle(widget, corner)
         end
         return true
     end
+    widget.releaseDrag = release
     local function drag()
         local held = window.resize
         if not held or held.widget ~= widget then return end
+        if isMouseButtonDown and not isMouseButtonDown(0) then release(); return end
         local width = corner and held.width + getMouseX() - held.mouseX or nil
         local height = held.height + getMouseY() - held.mouseY
         if not held.changed and height == held.height and (width or held.width) == held.width then return end
@@ -477,8 +480,10 @@ function Window:refresh()
     self.body:setRows(Views[self.view](self))
     local reset = self.resetFit
     self.resetFit = nil
+    -- Rows wrap at the width, and the width may just have changed.
     self:fit(reset)
     self.body:measure()
+    self:fit(reset)
 end
 
 function Window:update()
@@ -498,6 +503,7 @@ end
 
 function Window:close()
     if self.capturing then self:beginCapture() end
+    if self.resize then self.resize.widget.releaseDrag() end
     self:finishMove()
     self.body:hideTip()
     Log.detail(self.player, "ui.close")

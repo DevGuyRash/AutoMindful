@@ -24,7 +24,7 @@ local P -- the Controller's parts, bound once it has loaded
 local watchMs, sampleMs, outlookMs, guardMs = 5000, 15000, 300000, 1500
 local setbackMs, setbackLimitMs, setbackForgetMs = 15000, 600000, 900000
 local aidRetryMs, aidConfirmMs, bedRetryMs, refillRetryMs = 5000, 4000, 900000, 60000
-local lastResortMs, boxedAfter = 60000, 4
+local lastResortMs, stalledMs, boxedAfter = 60000, 120000, 4
 local bedtimeTopUp = 0.05
 
 function Recovery.bind(parts) P = parts end
@@ -128,6 +128,22 @@ function Recovery.collectNearby(player) return Preferences.collectNearby(player)
 
 function Recovery.danger(player) return Danger.read(player) end
 
+-- A trip cannot go on from here, and nothing may wait for its end. The way back
+-- is kept for when it is safe again, and it is the first one that counts.
+function Recovery.parkTrip(state)
+    local trip = state.excursion
+    if not trip then return end
+    if trip.origin and not trip.egressPlan and not state.parkedTrip then state.parkedTrip = {origin=trip.origin, stage="resume-home"} end
+    state.excursion = nil
+end
+
+-- Walked off by someone, or on another floor: home is wherever they are now.
+function Recovery.unparkTrip(player, state)
+    local parked, square = state.parkedTrip, player:getSquare()
+    state.parkedTrip = nil
+    if parked and square and square:getZ() == parked.origin.z then state.excursion = parked end
+end
+
 -- Sets state.guard: what is wrong, and therefore what is still allowed.
 function Recovery.readGuard(player, state)
     local level, reason = Danger.read(player)
@@ -152,7 +168,7 @@ local function aidSettled(player, state, now)
     local try = state.aidTry
     if not try then return true end
     local part, done = try.part, false
-    if try.step == "fetch" then done = try.item:getContainer() == player:getInventory()
+    if try.step == "fetch" then done = Supplies.inventoryItem(player, try.item) ~= nil
     elseif try.step == "remove" then done = not part:bandaged()
     else done = part:bandaged() end
     if done then
@@ -167,10 +183,14 @@ local function aidSettled(player, state, now)
     state.aidHeld = held
     local record = held[part] or {count=0}
     held[part] = record
-    record.count = record.count + 1
-    record.at = now + math.min(setbackLimitMs, 30000 * 2 ^ (record.count - 1))
-    state.rejected[try.item:getID()] = now + 60000
-    Log.event(player, "firstaid.refused", "step", try.step, "part", FirstAid.partName(part), "count", record.count)
+    -- Cut short says nothing about the bandage. Finished without effect does.
+    if try.cut then record.at = now + 10000
+    else
+        record.count = record.count + 1
+        record.at = now + math.min(setbackLimitMs, 30000 * 2 ^ (record.count - 1))
+        state.rejected[try.item:getID()] = now + 60000
+    end
+    Log.event(player, "firstaid.refused", "step", try.step, "part", FirstAid.partName(part), "count", record.count, "cutShort", try.cut)
     return true
 end
 
@@ -242,7 +262,15 @@ function Recovery.prepareCare(player, state, now)
 end
 
 -- The permission belongs to this survivor; the fluid checks are shared.
-function Recovery.allowTainted(state) Fluids.allowTainted = state.active == true and state.lastResort == true end
+function Recovery.allowTainted(state)
+    Fluids.allowTainted = state.active == true and state.lastResort == true and Needs.critical(state.player, "water")
+end
+
+-- Nobody is there to close a menu or a map, and the survivor is going under.
+function Recovery.unattended(player, state, now)
+    if not Presence.away(player, now) then return false end
+    return Needs.level(player, "water") >= 3 or Needs.level(player, "food") >= 3 or state.guard ~= nil and state.guard.level == "bleeding"
+end
 
 -- Lifestyle is gone or still loading: nothing here works without it.
 function Recovery.unready(player, state, reason, now)
@@ -252,6 +280,10 @@ end
 
 function Recovery.errorAlert(player, now, count)
     if count >= 3 then Alerts.raise(player, "error", "AutoMindful hit an error and keeps retrying. Copy report in the Log tab helps fix it.", now, true) end
+end
+
+function Recovery.ready(player, state)
+    if state.unreadyAt then state.unreadyAt = nil; Alerts.clear(player, "unready") end
 end
 
 -- ------------------------------------------------------------------- sleep
@@ -455,13 +487,24 @@ function Recovery.watch(player, state, now)
     local level = Danger.read(player)
     report("danger", away and level == "engaged", "Zombies have found the survivor.")
     report("bleeding", Danger.bleeding(player) and state.aidNotice ~= nil, "Bleeding, and there is no bandage within reach.")
+    state.needSince = state.needSince or {}
     for _, kind in ipairs({"water", "food"}) do
         local need = Needs.level(player, kind)
-        local short = need >= 3 and not P.available(player, state, kind)
-        report(kind, short and (need >= 4 and "dying" or "short") or nil,
-            kind == "water" and "Very thirsty, and nothing safe to drink is within reach."
-            or "Very hungry, and there is nothing to eat within reach.")
+        local since = need >= 3 and (state.needSince[kind] or now) or nil
+        state.needSince[kind] = since
+        -- On the way to it, or already at it.
+        local trip = state.excursion
+        local busy = trip and trip.kind == kind and state.pending ~= nil or state.supplyKind == kind and state.pending ~= nil
+        local short = since and not busy and not P.available(player, state, kind)
+        -- There is something, and still nothing has happened for a while: a
+        -- mask, a menu, a queue that never ends. Say so all the same.
+        local stalled = since and now >= since and now - since >= stalledMs
+        report(kind, (short or stalled) and (need >= 4 and "dying" or "short") or nil,
+            kind == "water" and (short and "Very thirsty, and nothing safe to drink is within reach." or "Very thirsty, and not getting to drink.")
+            or (short and "Very hungry, and there is nothing to eat within reach." or "Very hungry, and not getting to eat."))
     end
+    local errors = state.errors
+    if errors and now - errors.at > 120000 then state.errors = nil; Alerts.clear(player, "error") end
     if state.pathFails and not player:isPlayerMoving() then
         local square = player:getSquare()
         if square and state.pathFails.here ~= square:getX() .. ":" .. square:getY() .. ":" .. square:getZ() then
@@ -511,13 +554,7 @@ end
 function Recovery.guarded(player, state, now)
     local guard = state.guard
     P.sampleIdle(state, now)
-    -- A trip cannot go on from here, and nothing may wait for its end. Training
-    -- keeps the way back to its spot for when it is safe again.
-    local trip = state.excursion
-    if trip then
-        state.parkedTrip = not state.recovery and trip.origin and {origin=trip.origin, stage="resume-home"} or nil
-        state.excursion = nil
-    end
+    Recovery.parkTrip(state)
     if Recovery.firstAid(player, state, now) then return end
     if state.guardAt and now >= state.guardAt and now - state.guardAt < guardMs then return end
     state.guardAt = now

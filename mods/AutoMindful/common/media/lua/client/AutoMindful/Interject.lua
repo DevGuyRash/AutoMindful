@@ -8,6 +8,7 @@ local Yield = require "AutoMindful/ActionYield"
 local Consumables = require "AutoMindful/Consumables"
 local Danger = require "AutoMindful/Danger"
 local Log = require "AutoMindful/Log"
+local MaskRestore = require "AutoMindful/MaskRestore"
 local Needs = require "AutoMindful/SurvivalNeeds"
 local Snap = require "AutoMindful/Snapshot"
 local Supplies = require "AutoMindful/Supplies"
@@ -54,7 +55,11 @@ end
 -- asked for it and wrong when a bite could not be finished.
 local function protect(action, player, receipt)
     action.autoMindfulOwner = receipt
-    local begin, validStart, stop = action.begin, action.isValidStart, action.stop
+    local begin, validStart, stop, perform = action.begin, action.isValidStart, action.stop, action.perform
+    action.perform = function(self, ...)
+        self.autoMindfulFinished = true
+        return perform(self, ...)
+    end
     action.isValidStart = function() return true end
     action.begin = function(self, ...)
         if validStart(self) then return begin(self, ...) end
@@ -80,10 +85,13 @@ local function chooser(player, state, kind, receipt)
         local before = {}
         for _, queued in ipairs(timed.queue) do before[queued] = true end
         receipt.item, receipt.before = item, stat(player, kind)
+        local mask = not state.maskRestore and MaskRestore.capture(player) or nil
         Consumables.consume(player, item, kind)
         for _, queued in ipairs(timed.queue) do
             if not before[queued] then protect(queued, player, receipt); receipt.actions[#receipt.actions + 1] = queued end
         end
+        -- Should the bite be cut short with the mask off, it goes back on later.
+        if mask then state.maskRestore = MaskRestore.track(mask, receipt.actions) end
     end)
     action.autoMindfulInterject = true
     function action:start()
@@ -133,8 +141,6 @@ function Interject.consider(player, state, queue, now)
     local kinds = due(player)
     if #kinds == 0 then return nil end
     state.interjectNext = now + retryMs
-    -- Taking a mask off and putting it back on is too much in between.
-    if ISInventoryPaneContextMenu.getEatingMask(player, false) then return nil end
     local kind
     for _, candidate in ipairs(kinds) do
         if not kind and Interject.supply(player, candidate, state.rejected) then kind = candidate end

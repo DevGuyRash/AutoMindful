@@ -42,7 +42,8 @@ function getTimestampMs() return now end
 local entry,rejected,eaten
 package.loaded["AutoMindful/Log"]={event=function() end,change=function() end,error=function(_,where,message) error(where..": "..tostring(message)) end}
 package.loaded["AutoMindful/Snapshot"]={item=tostring,action=tostring}
-ISInventoryPaneContextMenu={getEatingMask=function(p) return p.mask end}
+local maskTracked
+package.loaded["AutoMindful/MaskRestore"]={capture=function(p) return p.mask end,track=function(mask,batch) maskTracked=#batch; return mask end}
 package.loaded["AutoMindful/Danger"]={read=function(p) return p.danger or "clear" end}
 package.loaded["AutoMindful/Supplies"]={choose=function(_,kind,nearby) assert(nearby==false,"Only what is carried"); return entry and entry.kind==kind and entry or nil end,
     rejectScoutIntake=function(_,item) rejected=item end}
@@ -187,14 +188,27 @@ do
     entry={kind="food",owned=true,item={getID=function() return 1 end},description={}}
     assert(consider(p,state)=="food")
 end
+-- A mask comes off for the bite; if the bite is cut short someone remembers it.
+do
+    local p,state=survivor(),{rejected={},active=true,recovery=true}
+    p.mask={}
+    ISTimedActionQueue.add(work(p,"chop1")); ISTimedActionQueue.add(work(p,"chop2"))
+    p.moodles.hungry,p.stats.HUNGER=2,.5
+    entry={kind="food",owned=true,item={getID=function() return 1 end},description={}}
+    intake=function(who) for _,n in ipairs({"unmask","eat","mask"}) do ISTimedActionQueue.add(work(who,n)) end end
+    assert(consider(p,state)=="food"); finish(p); settle(p)
+    assert(names(p)=="unmask eat mask chop2" and state.maskRestore==p.mask and maskTracked==3)
+    local unmask=ISTimedActionQueue.getTimedActionQueue(p).queue[1]
+    finish(p); assert(unmask.autoMindfulFinished)
+end
 -- When not to.
 do
-    for _,case in ipairs({"engaged","aim","unready","mask"}) do
+    for _,case in ipairs({"engaged","aim","unready"}) do
         local p,state=survivor(),{rejected={},active=true,recovery=true}
         ISTimedActionQueue.add(work(p,"chop1"))
         p.moodles.hungry,p.stats.HUNGER=3,.6
         entry={kind="food",owned=true,item={getID=function() return 9 end},description={needsOpening=case=="unready" or nil}}
-        if case=="engaged" then p.danger="engaged" elseif case=="aim" then p.aim=true elseif case=="mask" then p.mask={} end
+        if case=="engaged" then p.danger="engaged" elseif case=="aim" then p.aim=true end
         assert(not consider(p,state) and names(p)=="chop1",case)
     end
 end

@@ -274,6 +274,45 @@ for _,mode in ipairs({"recovery","meditation"}) do
     assert(leg.cover and dressing,mode..": "..C.status(p).message)
     C.stop(p); N.find=find; scout=false
 end
+do
+    -- Cut short by a step or a zombie: the next try is soon, not in ten minutes.
+    local p=survivor(); local leg=part({blood=true}); wounded(p,{leg}); bandage(p,"Bandage")
+    begin(p)
+    local waited=0
+    for _=1,6 do
+        waited=0
+        while not (queue(p)[1] and queue(p)[1].Type=="bandage") do step(p); waited=waited+.25; assert(waited<30,"waited "..waited) end
+        p.movementInput=true; step(p); p.movementInput=false
+    end
+    C.stop(p)
+end
+do
+    -- Danger on an errand: the survivor does not settle down halfway.
+    scout=true
+    local find=N.find
+    local shelf=T.container(6,0)
+    N.find=function(_,kind) if kind=="water" then return {key="water:6",square=shelf.square,container=shelf} end end
+    for _,mode in ipairs({"recovery","meditation"}) do
+        local p=survivor(); p.values.THIRST,p.thirstMoodle=.6,3
+        local home,out=p:getSquare(),T.square(3,0)
+        T.loadSquare(p,out); T.loadSquare(p,T.square(6,0))
+        if mode=="recovery" then begin(p); C.setAway(p,true) else assert(C.start(p,mode,false)) end
+        for _=1,60 do step(p); local a=queue(p)[1]; if a and a.Type=="ISWalkToTimedAction" then break elseif a then a:perform() end end
+        p.square=out
+        for _=1,3 do p.moving=true; step(p) end
+        p.moving=false
+        p.zombies=1; step(p,20)
+        assert(not queue(p)[1],mode)
+        p.zombies,p.values.THIRST,p.thirstMoodle=0,0,0
+        local target
+        ISWalkToTimedAction={new=function(_,q,square) target=square; return T.action(q,"ISWalkToTimedAction") end}
+        for _=1,160 do step(p); if target then break end; local a=queue(p)[1]; if a and a.Type=="stand" then a:perform() end end
+        assert(target and target:getX()==home:getX(),mode..": "..C.status(p).message.." "..tostring(target and target:getX()))
+        C.stop(p)
+        ISWalkToTimedAction={new=function(_,q) return T.action(q,"ISWalkToTimedAction") end}
+    end
+    N.find=find; scout=false
+end
 passed("bleeding is treated, not waited out")
 
 -- Never quietly gives up ----------------------------------------------------
@@ -395,6 +434,22 @@ do
     C.setAway(p,true); seconds(p,2)
     assert(alerted(p,"Before you go"),"Leaving with nothing to eat is said at the door")
     C.stop(p)
+end
+do
+    -- A bottle in hand and a menu nobody is there to close.
+    local p=survivor(); local bottle=T.add(p.inventory,T.water({thirst=-.8}))
+    begin(p); C.setAway(p,true); step(p,4)
+    p.contextOpen=true; p.values.THIRST,p.thirstMoodle=.7,3
+    for _=1,60 do step(p); if queue(p)[1] then queue(p)[1]:perform(); p.thirstMoodle=0 end end
+    assert(bottle.fluid:getAmount()<1,C.status(p).message)
+    p.contextOpen=false; C.stop(p)
+    -- A queue that never ends, with nothing ready between: still not silent.
+    p=survivor(); local work=T.action(p,"Endless"); Q.add(work)
+    T.add(p.inventory,T.water({thirst=-.8}))
+    begin(p); p.values.THIRST,p.thirstMoodle=.7,3
+    seconds(p,150)
+    assert(queue(p)[1]==work and not work.stopped and alerted(p,"not getting to drink"))
+    C.stop(p); Q.clear(p)
 end
 passed("trouble is announced once, again while it lasts, and at the moment someone leaves")
 

@@ -12,4 +12,6 @@ Recovery can now be left in charge.
 - **Stuck spots.** Several failed walks from one tile are recognized; it tries to step off and asks for help.
 - **Last resort.** Plain unsafe water after a minute of Dying of Thirst with nothing clean left.
 
-Everything is a switch under **Settings > Recovery**.
+First aid, care between actions, bottles, beds, the last resort, the sound and carrying on after loading are switches under **Settings > Recovery**.
+
+- **Window:** resizing follows the mouse exactly. Double-click the corner to fit the contents, or the bottom edge to fit the height.

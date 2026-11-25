@@ -36,7 +36,7 @@ If you would rather always see the entry, turn on **Always in the right-click me
 
 ## The window
 
-Press **0** to open or close it, if that key is free, or choose **Show window**. Closing it never stops a job. The window fits its contents; drag a corner to choose your own size, and right-click it to go back.
+Press **0** to open or close it, if that key is free, or choose **Show window**. Closing it never stops a job. The window fits its contents; drag a corner or the bottom edge to choose your own size, and double-click it (or right-click the window) to fit the contents again.
 
 | Tab | What it shows |
 | --- | --- |
@@ -134,7 +134,7 @@ If no usable food is confirmed, eligible Meditation can build Strong Mindfulness
 
 **It does not give up.** A route that will not settle, an interrupted action or an internal error makes Recovery back off and try again. **Stop** ends it; Escape only makes it step back. If it was on when you left the game, it goes on when you load in. It cannot reconnect you to a server.
 
-**Last resort:** after a minute of Dying of Thirst with nothing clean left, it drinks plain unsafe water. It never eats rotten or poisonous food. Each of these is a switch under **Settings > Recovery**.
+**Last resort:** after a minute of Dying of Thirst with nothing clean left, it drinks plain unsafe water. It never eats rotten or poisonous food. First aid, care between actions, bottles, beds, the last resort, the sound and carrying on after loading are switches under **Settings > Recovery**.
 
 Recovery rests normally when endurance is low. Meditation does not directly refill endurance. Yoga and Meditation are used only when the current skill and benefit make them useful for a need; they are never training turns.
 

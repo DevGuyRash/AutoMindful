@@ -3,6 +3,13 @@ local Options = require "AutoMindful/Options"
 local Context = require "AutoMindful/ContextMenu"
 require "XpSystem/ISUI/ISCharacterInfo"
 require("AutoMindful/SkillsPane").install()
+local ZenMoodle = require "AutoMindful/ZenMoodle"
+ZenMoodle.install()
+
+local function onGameStart()
+    ZenMoodle.install()
+    Context.install()
+end
 
 local function keyPressed(key)
     if getCore():isDoingTextEntry() or (ISChat and ISChat.focused) then return end
@@ -22,7 +29,7 @@ if old then
     Events.OnKeyPressed.Remove(old.key)
     Events.OnGameStart.Remove(old.start)
 end
-AutoMindful.uiEvents = {context=Context.generalMenu, key=keyPressed, start=Context.install}
+AutoMindful.uiEvents = {context=Context.generalMenu, key=keyPressed, start=onGameStart}
 Events.OnFillWorldObjectContextMenu.Add(Context.generalMenu)
 Events.OnKeyPressed.Add(keyPressed)
-Events.OnGameStart.Add(Context.install)
+Events.OnGameStart.Add(onGameStart)

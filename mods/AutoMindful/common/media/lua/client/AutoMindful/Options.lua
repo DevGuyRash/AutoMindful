@@ -53,6 +53,7 @@ function Options.awayMs() return Options.awayMinutes[Options.awayIndex()] * 6000
 
 local recoveryTicks = {}
 for _, row in ipairs({
+    {"recoveryFirstAid", "Bandage wounds", "Uses the best dressing carried or within reach. Also during training."},
     {"recoveryBetween", "Recovery: eat and drink between your actions", "While you or another mod keep the action queue busy, a carried bite or sip goes between two actions."},
     {"recoveryRefill", "Recovery: keep carried bottles full", "Refills bottles you carry at clean water. The game drinks from them by itself."},
     {"recoveryBeds", "Recovery: sleep in a bed when one is near", "Walks to a bed within the search radius and back afterwards. Off: sleeps on the spot."},
@@ -63,6 +64,7 @@ for _, row in ipairs({
     recoveryTicks[row[1]] = settings:getOption(row[1]) or settings:addTickBox(row[1], row[2], true, row[3])
 end
 local function ticked(id) return function() return recoveryTicks[id]:getValue() == true end end
+Options.firstAid = ticked("recoveryFirstAid")
 Options.careBetween, Options.refill, Options.useBeds = ticked("recoveryBetween"), ticked("recoveryRefill"), ticked("recoveryBeds")
 Options.lastResort, Options.alertSound, Options.resumeRecovery = ticked("recoveryLastResort"), ticked("recoverySound"), ticked("recoveryResume")
 

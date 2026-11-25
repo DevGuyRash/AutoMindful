@@ -7,6 +7,7 @@ local Beds = require "AutoMindful/Beds"
 local Danger = require "AutoMindful/Danger"
 local FirstAid = require "AutoMindful/FirstAid"
 local Fluids = require "AutoMindful/Fluids"
+local IntakeGuard = require "AutoMindful/IntakeGuard"
 local Interject = require "AutoMindful/Interject"
 local Log = require "AutoMindful/Log"
 local Needs = require "AutoMindful/SurvivalNeeds"
@@ -20,9 +21,9 @@ local WaterSources = require "AutoMindful/WaterSources"
 
 local Recovery = {}
 local P -- the Controller's parts, bound once it has loaded
-local watchMs, sampleMs, outlookMs = 5000, 15000, 300000
+local watchMs, sampleMs, outlookMs, guardMs = 5000, 15000, 300000, 1500
 local setbackMs, setbackLimitMs, setbackForgetMs = 15000, 600000, 900000
-local aidRetryMs, bedRetryMs, refillRetryMs = 5000, 900000, 60000
+local aidRetryMs, aidConfirmMs, bedRetryMs, refillRetryMs = 5000, 4000, 900000, 60000
 local lastResortMs, boxedAfter = 60000, 4
 local bedtimeTopUp = 0.05
 
@@ -59,9 +60,9 @@ function Recovery.mayTravel(player, state, kind, now)
     local vital = kind == "food" or kind == "water"
     if state.guard then return vital and state.guard.level ~= "vehicle" and Needs.critical(player, kind) end
     if not state.recovery then return true end
-    if state.tripsAt and now < state.tripsAt and state.tripsAt - now <= setbackLimitMs then return false end
+    local level = vital and Needs.level(player, kind) or 0
+    if Recovery.backingOff(state, now, level >= 4) then return false end
     if vital then
-        local level = Needs.level(player, kind)
         if level >= 3 or state.lowHealth then return true end
         if level == 2 then return Recovery.permit(player, state, "pressing", now) end
         if level == 1 then return Recovery.permit(player, state, "due", now) end
@@ -71,6 +72,13 @@ function Recovery.mayTravel(player, state, kind, now)
     if kind == "restroom" then return Recovery.permit(player, state, "pressing", now) end
     if kind == "literature" then return Recovery.permit(player, state, "explore", now) end
     return Recovery.permit(player, state, "due", now)
+end
+
+-- After a setback nobody is walked anywhere for a while; a dying survivor waits
+-- a minute at most, whatever the setback was about.
+function Recovery.backingOff(state, now, dying)
+    if not state.tripsAt or now >= state.tripsAt or state.tripsAt - now > setbackLimitMs then return false end
+    return not (dying and state.setbacks and now - state.setbacks.at >= 60000)
 end
 
 function Recovery.mayExplore(player, state, kind, now)
@@ -97,6 +105,23 @@ function Recovery.optionalWork(player, state)
     return not essential[state.phase]
 end
 
+-- Saved with the survivor, so the job can go on after loading. In multiplayer
+-- the server keeps the survivor, so it has to be told.
+function Recovery.remember(player, on)
+    local data = player:getModData()
+    if (data.AutoMindfulRecovery == true) == on then return end
+    data.AutoMindfulRecovery = on or nil
+    if isClient() and player.transmitModData then pcall(player.transmitModData, player) end
+end
+
+function Recovery.remembered(player) return player:getModData().AutoMindfulRecovery == true end
+
+function Recovery.ended(player)
+    Fluids.allowTainted = false
+    Alerts.forget(player)
+    Presence.forget(player)
+end
+
 function Recovery.alerts(player) return Alerts.list(player) end
 
 function Recovery.collectNearby(player) return Preferences.collectNearby(player) end
@@ -121,25 +146,63 @@ local function reach(state)
     return not (state.guard and state.guard.level == "vehicle") and (state.collectNearby or Options.searchNearby())
 end
 
+-- What the last step was meant to change. A server may refuse it, or answer
+-- late; neither is a reason to use up another bandage or to skip dinner.
+local function aidSettled(player, state, now)
+    local try = state.aidTry
+    if not try then return true end
+    local part, done = try.part, false
+    if try.step == "fetch" then done = try.item:getContainer() == player:getInventory()
+    elseif try.step == "remove" then done = not part:bandaged()
+    else done = part:bandaged() end
+    if done then
+        state.aidTry = nil
+        if try.step == "apply" then state.aidHeld = nil end
+        return true
+    end
+    try.endedAt = try.endedAt or now
+    if now >= try.endedAt and now - try.endedAt < aidConfirmMs then return false end
+    state.aidTry = nil
+    local held = state.aidHeld or {}
+    state.aidHeld = held
+    local record = held[part] or {count=0}
+    held[part] = record
+    record.count = record.count + 1
+    record.at = now + math.min(setbackLimitMs, 30000 * 2 ^ (record.count - 1))
+    state.rejected[try.item:getID()] = now + 60000
+    Log.event(player, "firstaid.refused", "step", try.step, "part", FirstAid.partName(part), "count", record.count)
+    return true
+end
+
 function Recovery.firstAid(player, state, now)
-    if state.excursion or state.aidNext and now < state.aidNext and state.aidNext - now <= 60000 then return false end
+    if not Options.firstAid() or state.excursion and state.excursion.stage == "outbound" then return false end
+    if state.aidNext and now < state.aidNext and state.aidNext - now <= 60000 then return false end
     if not player:getBodyDamage().getBodyParts then return false end
-    local plan, missing = FirstAid.next(player, reach(state))
+    if not aidSettled(player, state, now) then return false end
+    state.aidNext = now + 1000
+    local part, rank = FirstAid.wound(player, function(part)
+        local held = state.aidHeld and state.aidHeld[part]
+        return held ~= nil and now < held.at and held.at - now <= setbackLimitMs
+    end)
+    if not part then state.aidNotice = nil; return false end
+    -- A dirty bandage or a scratch can wait until nobody needs the hands.
+    if rank < 4 and (state.lowHealth or Needs.critical(player, "water") or Needs.critical(player, "food")
+            or state.guard and state.guard.level ~= "bleeding" or not Recovery.permit(player, state, "topUp", now)) then return false end
+    local plan, missing = FirstAid.next(player, reach(state), part, rank)
     if not plan then
         state.aidNext = now + aidRetryMs
         state.aidNotice = missing == "bleeding" and "Bleeding, and there is no bandage within reach." or nil
         return false
     end
-    -- A dirty bandage or a scratch can wait until nobody needs the hands.
-    if not plan.bleeding and not Recovery.permit(player, state, "topUp", now) then return false end
     state.aidNotice = nil
     if not plan.remove and plan.item:getContainer() ~= player:getInventory() then
-        state.aidNext = nil
+        state.aidTry = {step="fetch", part=part, item=plan.item}
         local queued = P.ownBatch(player, state, "firstaid", "Getting a bandage.", function() Supplies.transfer(player, plan.item) end)
         if queued then return true end
-        state.pending, state.aidNext = nil, now + aidRetryMs
+        state.pending = nil
         return false
     end
+    state.aidTry = {step=plan.remove and "remove" or "apply", part=part, item=plan.item}
     local name = FirstAid.partName(plan.part)
     local queued = P.ownBatch(player, state, "firstaid",
         plan.remove and ("Taking a dirty bandage off: " .. name .. ".") or ("Bandaging: " .. name .. "."), function()
@@ -147,9 +210,8 @@ function Recovery.firstAid(player, state, now)
         if action then ISTimedActionQueue.add(action) end
     end)
     Log.event(player, "firstaid", "part", name, "item", Snap.item(plan.item), "remove", plan.remove, "bleeding", plan.bleeding, "queued", queued)
-    state.aidNext = now + 1000
     if queued then return true end
-    state.pending, state.aidNext = nil, now + aidRetryMs
+    state.pending = nil
     return false
 end
 
@@ -161,12 +223,35 @@ function Recovery.prepareCare(player, state, now)
     local critical = Needs.critical(player, "water")
     if not critical then state.parchedAt = nil
     elseif not state.parchedAt or now < state.parchedAt then state.parchedAt = now end
-    local allow = critical and now - state.parchedAt >= lastResortMs and Options.lastResort()
+    local allow = false
+    if critical and now - state.parchedAt >= lastResortMs and Options.lastResort() then
+        if state.lastResortAt and now >= state.lastResortAt and now - state.lastResortAt < 10000 then
+            allow = state.lastResort == true
+        else
+            -- Ask with clean water only: anything clean that is left comes first.
+            state.lastResortAt = now
+            Fluids.allowTainted, state.travelScan = false, nil
+            allow = not P.available(player, state, "water")
+        end
+    end
     if allow ~= (state.lastResort == true) then
         state.lastResort, state.travelScan, state.polls = allow or nil, nil, nil
         Log.headline(player, "last-resort", "taintedWater", allow)
     end
     Fluids.allowTainted = allow == true
+end
+
+-- The permission belongs to this survivor; the fluid checks are shared.
+function Recovery.allowTainted(state) Fluids.allowTainted = state.active == true and state.lastResort == true end
+
+-- Lifestyle is gone or still loading: nothing here works without it.
+function Recovery.unready(player, state, reason, now)
+    state.unreadyAt = state.unreadyAt or now
+    if now - state.unreadyAt >= 60000 then Alerts.raise(player, "unready", reason, now, Presence.away(player, now)) end
+end
+
+function Recovery.errorAlert(player, now, count)
+    if count >= 3 then Alerts.raise(player, "error", "AutoMindful hit an error and keeps retrying. Copy report in the Log tab helps fix it.", now, true) end
 end
 
 -- ------------------------------------------------------------------- sleep
@@ -186,24 +271,32 @@ end
 function Recovery.beforeSleep(player, state, now)
     if not state.recovery then return false end
     if topUpBeforeBed(player, state) then return true end
-    local try = state.bedTry
-    if try and not try.slept then
-        state.bedsRejected = state.bedsRejected or {}
-        state.bedsRejected[try.key] = now + bedRetryMs
-        Log.event(player, "bed.unusable", "bed", try.key)
-    end
     state.bedTry = nil
     if state.lowHealth or state.excursion or not Options.useBeds() or not Options.searchNearby() then return false end
+    if state.bedsAt and now < state.bedsAt and state.bedsAt - now <= bedRetryMs then return false end
     local bed = Beds.find(player, Options.searchRadius(), state.bedsRejected, now)
     if not bed then return false end
     state.bedTry = {key=Beds.key(bed)}
     Log.event(player, "bed", "bed", Snap.object(bed), "quality", ISWorldObjectContextMenu.getBedQuality(player, bed))
     state.excursion = {origin=P.rememberOrigin(player, player:getSquare()), stage="bed", kind="sleep"}
     local queued = P.ownBatch(player, state, "bed", "Going to bed.", function()
-        if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
-        if #P.queueFor(player) == 0 then
-            ISWorldObjectContextMenu.onConfirmSleep(nil, {internal="YES"}, player:getPlayerNum(), bed)
-        else state.bedTry = nil end -- stand first; the next look finds the bed again
+        P.prepareWalk(state)
+        if player:isSitOnGround() then
+            state.bedTry = nil -- stand first; the next look finds the bed again
+            ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player))
+            return
+        end
+        ISWorldObjectContextMenu.onConfirmSleep(nil, {internal="YES"}, player:getPlayerNum(), bed)
+        -- The game lies the survivor down by clearing the queue on arrival. Work
+        -- that joined it on the way is somebody's; then there is no lying down.
+        for _, action in ipairs(P.queueFor(player)) do
+            local arrive = action.onCompleteFunc
+            if arrive then
+                action.onCompleteFunc = function(...)
+                    if #P.queueFor(player) == 0 and state.active and state.excursion and state.excursion.stage == "bed" then return arrive(...) end
+                end
+            end
+        end
     end)
     if player:isAsleep() then
         state.bedTry.slept = true
@@ -215,7 +308,19 @@ function Recovery.beforeSleep(player, state, now)
         return true
     end
     state.excursion, state.pending = nil, nil
+    Recovery.bedFailed(player, state, now)
     return false
+end
+
+function Recovery.bedFailed(player, state, now)
+    local try = state.bedTry
+    state.bedTry = nil
+    if not try or try.slept then return end
+    state.bedsRejected = state.bedsRejected or {}
+    state.bedsRejected[try.key] = now + bedRetryMs
+    state.bedFails = (state.bedFails or 0) + 1
+    if state.bedFails % 2 == 0 then state.bedsAt = now + bedRetryMs end -- the floor, for a while
+    Log.event(player, "bed.unusable", "bed", try.key, "failed", state.bedFails)
 end
 
 -- ------------------------------------------------------------------- water
@@ -265,11 +370,17 @@ function Recovery.refill(player, state, now, object)
     local item, room = Recovery.bottle(player, state)
     if not item or not light(player, room) then state.refillNext = now + refillRetryMs; return false end
     local source = WaterSources.choose(player, state.rejected, object)
-    if not source then return false end
+    if not source then state.refillNext = now + 15000; return false end
     local queued = P.ownBatch(player, state, "refilling", "Filling " .. item:getDisplayName() .. ".", function()
-        if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
         local action = ISTakeWaterAction:new(player, item, source.object, false)
-        if action:isValid() then ISTimedActionQueue.add(action) end
+        if not action:isValid() then return end
+        -- A shared barrel may have changed by the time the bottle is under it.
+        IntakeGuard.bind(action, function(self)
+            local live = self.waterObject == source.object and WaterSources.inspect(player, source.object, source.part)
+            return live and live.directDrink and not Fluids.allowTainted and waterVessel(player, state, item) ~= nil
+        end, "transferFluid")
+        if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
+        ISTimedActionQueue.add(action)
     end)
     Log.event(player, "refill", "item", Snap.item(item), "liters", room, "from", Snap.object(source.object), "queued", queued)
     state.refillNext = now + (queued and 5000 or refillRetryMs)
@@ -337,6 +448,7 @@ function Recovery.watch(player, state, now)
         if away then state.farewell = true end
     end
     if player:isAsleep() then return end
+    Interject.settle(player, state, P.queueFor(player), now)
     local function report(id, problem, text)
         if problem then Alerts.raise(player, id, text, now, away or problem == "dying") else Alerts.clear(player, id) end
     end
@@ -350,7 +462,13 @@ function Recovery.watch(player, state, now)
             kind == "water" and "Very thirsty, and nothing safe to drink is within reach."
             or "Very hungry, and there is nothing to eat within reach.")
     end
-    report("boxed", state.boxedIn, "Every walk from this spot fails. Move the survivor to open floor.")
+    if state.pathFails and not player:isPlayerMoving() then
+        local square = player:getSquare()
+        if square and state.pathFails.here ~= square:getX() .. ":" .. square:getY() .. ":" .. square:getZ() then
+            Recovery.notePath(state, nil, false)
+        end
+    end
+    report("boxed", state.boxedIn, "Cannot walk to any supply from here: closed doors, or a stuck spot.")
     local setbacks = state.setbacks
     report("setback", setbacks and setbacks.count >= 3 and now - setbacks.at < setbackForgetMs, setbacks and setbacks.reason or "")
     if not away then state.farewell = nil end
@@ -362,10 +480,9 @@ function Recovery.watch(player, state, now)
         Log.event(player, "outlook", "foodH", outlook.foodHours, "waterH", outlook.waterHours, "endlessWater", outlook.endlessWater,
             "carriedFoodH", outlook.carriedFoodHours, "carriedWaterH", outlook.carriedWaterHours, "issues", table.concat(names, " "), "away", away)
         -- The moment someone leaves is the last one at which telling them helps.
-        if state.farewell then
-            local worst = outlook.issues[1]
-            if worst and worst.severity >= 3 then Alerts.raise(player, "farewell", "Before you go: " .. worst.text, now, true) end
-        end
+        local worst = outlook.issues[1]
+        if not (worst and worst.severity >= 3) then Alerts.clear(player, "farewell")
+        elseif state.farewell then Alerts.raise(player, "farewell", "Before you go: " .. worst.text, now, true) end
         state.farewell = nil
     end
     if not away then Alerts.clear(player, "farewell") end
@@ -394,7 +511,16 @@ end
 function Recovery.guarded(player, state, now)
     local guard = state.guard
     P.sampleIdle(state, now)
+    -- A trip cannot go on from here, and nothing may wait for its end. Training
+    -- keeps the way back to its spot for when it is safe again.
+    local trip = state.excursion
+    if trip then
+        state.parkedTrip = not state.recovery and trip.origin and {origin=trip.origin, stage="resume-home"} or nil
+        state.excursion = nil
+    end
     if Recovery.firstAid(player, state, now) then return end
+    if state.guardAt and now >= state.guardAt and now - state.guardAt < guardMs then return end
+    state.guardAt = now
     Recovery.prepareCare(player, state, now)
     local full = player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN) >= 3
     state.carriedOnly = guard.level == "vehicle" or nil
@@ -419,7 +545,6 @@ function Recovery.advance(player, state, now)
     local policy = P.policy
     local endurance = P.endurance(player)
     P.sampleIdle(state, now)
-    if Recovery.firstAid(player, state, now) then return end
     if P.care(player, state) or not state.active then return end
     local away = Presence.away(player, now)
     local calm = Recovery.permit(player, state, "posture", now)
@@ -460,7 +585,7 @@ end
 -- Away, nearly dry, and a known tap within range: go and fill up before it is
 -- needed rather than after.
 function Recovery.fetchWater(player, state, now)
-    if not Options.refill() or not Options.searchNearby() or state.excursion then return false end
+    if not Options.refill() or not Options.searchNearby() or state.excursion or Recovery.backingOff(state, now) then return false end
     if state.fetchNext and now < state.fetchNext and state.fetchNext - now <= bedRetryMs then return false end
     local item, room, carried = Recovery.bottle(player, state)
     if not item or carried >= 0.5 or not light(player, room) then return false end

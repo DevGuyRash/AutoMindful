@@ -42,6 +42,7 @@ function getTimestampMs() return now end
 local entry,rejected,eaten
 package.loaded["AutoMindful/Log"]={event=function() end,change=function() end,error=function(_,where,message) error(where..": "..tostring(message)) end}
 package.loaded["AutoMindful/Snapshot"]={item=tostring,action=tostring}
+ISInventoryPaneContextMenu={getEatingMask=function(p) return p.mask end}
 package.loaded["AutoMindful/Danger"]={read=function(p) return p.danger or "clear" end}
 package.loaded["AutoMindful/Supplies"]={choose=function(_,kind,nearby) assert(nearby==false,"Only what is carried"); return entry and entry.kind==kind and entry or nil end,
     rejectScoutIntake=function(_,item) rejected=item end}
@@ -63,6 +64,8 @@ local function survivor()
     function p:setIsFarming() end
     function p:isAsleep() return false end
     function p:isDraggingCorpse() return false end
+    function p:pressedMovement() return self.moving or false end
+    function p:pressedCancelAction() return false end
     function p:isAiming() return self.aim or false end
     function p:isAttacking() return false end
     return p
@@ -97,11 +100,11 @@ local function consider(p,state) return Interject.consider(p,state,ISTimedAction
 
 -- A row of trees.
 do
-    local p,state=survivor(),{rejected={}}
+    local p,state=survivor(),{rejected={},active=true,recovery=true}
     local trees={work(p,"chop1"),work(p,"chop2"),work(p,"chop3")}
     for _,tree in ipairs(trees) do ISTimedActionQueue.add(tree) end
     assert(not consider(p,state),"Nothing due, nothing placed")
-    entry={kind="food",owned=true,item={},description={}}
+    entry={kind="food",owned=true,item={getID=function() return 9 end},description={}}
     p.stats.HUNGER,p.moodles.hungry=.3,1
     local meal
     intake=function(who)
@@ -122,11 +125,11 @@ do
 end
 -- Gone by the time its turn comes: the rest of the row must not notice.
 do
-    local p,state=survivor(),{rejected={}}
+    local p,state=survivor(),{rejected={},active=true,recovery=true}
     local a,b=work(p,"chop1"),work(p,"chop2")
     ISTimedActionQueue.add(a); ISTimedActionQueue.add(b)
     p.moodles.hungry,p.stats.HUNGER=2,.5
-    entry={kind="food",owned=true,item={},description={}}
+    entry={kind="food",owned=true,item={getID=function() return 9 end},description={}}
     assert(consider(p,state)=="food")
     entry=nil
     finish(p); settle(p)
@@ -134,10 +137,10 @@ do
 end
 -- A mod that only ever queues one action still leaves room for a sip.
 do
-    local p,state=survivor(),{rejected={}}
+    local p,state=survivor(),{rejected={},active=true,recovery=true}
     ISTimedActionQueue.add(work(p,"loop1"))
     p.moodles.thirst,p.stats.THIRST=1,.2
-    entry={kind="water",owned=true,item={id=1},description={}}
+    entry={kind="water",owned=true,item={getID=function() return 1 end},description={}}
     intake=function(who) ISTimedActionQueue.add(work(who,"drink")) end
     assert(consider(p,state)=="water")
     ISTimedActionQueue.add(work(p,"loop2"))
@@ -147,14 +150,51 @@ do
     for _=1,60 do now=now+250; consider(p,state) end
     assert(rejected==entry.item,"A sip that changed nothing is not repeated at once")
 end
+-- A bite that cannot be finished is not the end of the row. Walking off is.
+for _,walking in ipairs({false,true}) do
+    local p,state=survivor(),{rejected={},active=true,recovery=true}
+    local a,b,c=work(p,"chop1"),work(p,"chop2"),work(p,"chop3")
+    for _,tree in ipairs({a,b,c}) do ISTimedActionQueue.add(tree) end
+    p.moodles.hungry,p.stats.HUNGER=2,.5
+    entry={kind="food",owned=true,item={getID=function() return 1 end},description={}}
+    intake=function(who) ISTimedActionQueue.add(work(who,"fetch")); ISTimedActionQueue.add(work(who,"eat")) end
+    assert(consider(p,state)=="food"); finish(p); settle(p)
+    assert(names(p)=="fetch eat chop2 chop3",names(p))
+    local timed=ISTimedActionQueue.getTimedActionQueue(p)
+    p.moving=walking
+    timed.queue[1]:stop(); p.native=nil; timed:tick(); timed:tick()
+    assert(names(p)==(walking and "" or "chop2 chop3"),names(p))
+    if not walking then assert(b.starts==1 and not b.cancelled and not c.cancelled) end
+end
+-- Stopped, or the need gone, before its turn came.
+for _,case in ipairs({"stopped","fed"}) do
+    local p,state=survivor(),{rejected={},active=true,recovery=true}
+    ISTimedActionQueue.add(work(p,"chop1")); ISTimedActionQueue.add(work(p,"chop2"))
+    p.moodles.hungry,p.stats.HUNGER=2,.5
+    local ate=false
+    entry={kind="food",owned=true,item={getID=function() return 1 end},description={}}
+    intake=function(who) ate=true; ISTimedActionQueue.add(work(who,"eat")) end
+    assert(consider(p,state)=="food")
+    if case=="stopped" then state.active=false else p.moodles.hungry=0 end
+    finish(p); settle(p)
+    assert(not ate and names(p)=="chop2",case)
+end
+-- No drink ready must not hide the meal that is.
+do
+    local p,state=survivor(),{rejected={},active=true,recovery=true}
+    ISTimedActionQueue.add(work(p,"chop1"))
+    p.moodles.hungry,p.moodles.thirst=2,4
+    entry={kind="food",owned=true,item={getID=function() return 1 end},description={}}
+    assert(consider(p,state)=="food")
+end
 -- When not to.
 do
-    for _,case in ipairs({"engaged","aim","unready"}) do
-        local p,state=survivor(),{rejected={}}
+    for _,case in ipairs({"engaged","aim","unready","mask"}) do
+        local p,state=survivor(),{rejected={},active=true,recovery=true}
         ISTimedActionQueue.add(work(p,"chop1"))
         p.moodles.hungry,p.stats.HUNGER=3,.6
-        entry={kind="food",owned=true,item={},description={needsOpening=case=="unready" or nil}}
-        if case=="engaged" then p.danger="engaged" elseif case=="aim" then p.aim=true end
+        entry={kind="food",owned=true,item={getID=function() return 9 end},description={needsOpening=case=="unready" or nil}}
+        if case=="engaged" then p.danger="engaged" elseif case=="aim" then p.aim=true elseif case=="mask" then p.mask={} end
         assert(not consider(p,state) and names(p)=="chop1",case)
     end
 end

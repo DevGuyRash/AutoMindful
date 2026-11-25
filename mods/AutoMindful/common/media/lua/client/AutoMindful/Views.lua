@@ -29,6 +29,10 @@ local waiting = {manual=true, between=true, resuming=true, recovering=true, ["re
 local function activity(status)
     local label = status.decisionLabel or status.message or "Working"
     local detail
+    if status.guard then
+        -- What is wrong, in one line, instead of a general word about safety.
+        return Theme.plain(status.message) or label, nil, colors.warn
+    end
     for _, text in ipairs({status.careWaiting and status.message or status.decisionDetail or "", status.message or ""}) do
         local plain = Theme.plain(text)
         if plain and plain ~= label and not detail then detail = plain end
@@ -63,19 +67,19 @@ local function skillBars(rows, status)
 end
 
 -- Things the player may want to act on. Empty most of the time.
-local function notices(player, status, report, startError)
+local function notices(player, status, report, startError, said)
     local list = {}
     local function add(text, color)
         text = Theme.plain(text)
-        if not text then return end
+        if not text or said and said[text] then return end
         for _, row in ipairs(list) do if row.text == text then return end end
         list[#list + 1] = {kind="text", bullet=true, text=text, color=color or colors.warn}
     end
     add(startError, colors.bad)
     if status.active then
-        for _, alert in ipairs(status.alerts or {}) do add(alert.text, colors.bad) end
+        for _, alert in ipairs(status.alerts or {}) do if not (said and said[alert.id]) then add(alert.text, colors.bad) end end
         add(status.aidNotice, colors.bad)
-        add(status.careNotice)
+        if not (said and (said.food or said.water)) then add(status.careNotice) end
         add(status.painNotice)
     end
     add(status.returnNotice)
@@ -104,22 +108,24 @@ end
 -- supplies last, and what would go wrong first.
 local function outlookRows(rows, player, status)
     local outlook = Controller.outlook(player)
-    if not outlook then return end
+    if not outlook then return nil end
     local function tone(hours) return hours < 12 and colors.bad or hours < 24 and colors.warn or colors.text end
-    rows[#rows + 1] = {kind="columns", label="Lasts (real time)", color=colors.muted, cells={{text="Carried"}, {text="Within reach"}}}
+    rows[#rows + 1] = {kind="columns", label="Lasts up to", color=colors.muted, cells={{text="Carried"}, {text="Known"}}}
     rows[#rows + 1] = {kind="columns", label="Food", cells={{text=outlook.carriedFood, color=tone(outlook.carriedFoodHours)},
         {text=outlook.food, color=tone(outlook.foodHours)}}}
     rows[#rows + 1] = {kind="columns", label="Drink", cells={{text=outlook.carriedWater, color=tone(outlook.carriedWaterHours)},
         outlook.endlessWater and {text="Running tap", color=colors.good} or {text=outlook.water, color=tone(outlook.waterHours)}}}
-    local shown = 0
+    local shown, said = 0, {farewell=true}
     for _, issue in ipairs(outlook.issues) do
         if shown < 4 then
             shown = shown + 1
+            said[issue.id], said[issue.text] = true, true
             rows[#rows + 1] = {kind="text", bullet=true, text=issue.text,
                 color=issue.severity >= 3 and colors.bad or issue.severity == 2 and colors.warn or colors.muted}
         end
     end
     if shown == 0 then rows[#rows + 1] = {kind="text", text="Nothing known would stop it looking after the survivor.", color=colors.good} end
+    return said
 end
 
 function Views.now(window)
@@ -147,9 +153,10 @@ function Views.now(window)
         gap(rows, 2)
         skillBars(rows, status)
         chips(rows, player)
+        local said
         if status.mode == "recovery" then
             gap(rows, 4)
-            outlookRows(rows, player, status)
+            said = outlookRows(rows, player, status)
             gap(rows, 4)
             rows[#rows + 1] = {kind="setting", label=status.away and "Looking after everything" or "Helping while you play",
                 value=status.away and "I am back" or "I am going AFK", valueColor=status.away and colors.warn or colors.recovery,
@@ -164,7 +171,7 @@ function Views.now(window)
             {text="Switch", menu=true, color=colors.muted, onClick=function() window:openSwitchMenu() end,
                 tip="Change to another job without stopping first."},
         }}
-        appendNotices(rows, notices(player, status, window.report, window.startError))
+        appendNotices(rows, notices(player, status, window.report, window.startError, said))
         return rows
     end
     local jobs, unavailable = Jobs.list(player, status)
@@ -312,6 +319,7 @@ function Views.settings(window)
     head(rows, "Recovery")
     rows[#rows + 1] = {kind="setting", label="Away after", value=Options.awayMinutes[Options.awayIndex()] .. " min", menu=true,
         tip="Without any input. While you are away, Recovery does everything it can.", onClick=function() window:openAwayMenu() end}
+    toggle("recoveryFirstAid", "Bandage wounds", "Uses the best dressing carried or within reach. Also during training.")
     toggle("recoveryBetween", "Eat and drink between actions", "While you or another mod keep the queue busy, a carried bite or sip goes between two actions.")
     toggle("recoveryRefill", "Keep carried bottles full", "The game drinks from carried bottles by itself, so a full one keeps the survivor going when nothing else works.")
     toggle("recoveryBeds", "Sleep in a nearby bed", "Walks there and back. Off: sleeps on the spot.")

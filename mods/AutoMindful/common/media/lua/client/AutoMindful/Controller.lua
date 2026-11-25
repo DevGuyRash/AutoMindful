@@ -375,7 +375,9 @@ function Controller.stop(player, reason, cause, nativeReason)
         Log.endJob(player)
     end
     MaskRestore.observe(player,state.maskRestore,queueFor(player))
-    if cause ~= "switch" then player:getModData().AutoMindfulRecovery = nil end
+    if cause ~= "switch" then Recovery.remember(player, false) end
+    Recovery.ended(player)
+    state.parkedTrip, state.aidTry, state.bedTry, state.lastResort = nil, nil, nil, nil
     state.guard, state.aidNotice, state.setbacks, state.interject = nil, nil, nil, nil
     state.active, state.trainingStopReason, state.trainingKind = false, nil, nil
     state.turnTier,state.recoveryTier,state.restroomDrain=nil,nil,nil
@@ -1201,6 +1203,8 @@ local function yieldToPlayer(player, state, unexplained, walking, settling, paus
         -- care target, item or portion. A failed walk is retained as read-only
         -- evidence of the draining Java handle, not an action to replay.
         local trip = state.excursion
+        state.bedTry = nil
+        if cause=="walking" then state.parkedTrip=nil end
         if trip and trip.egressPlan then
             state.excursion=nil
         elseif trip then
@@ -1537,6 +1541,8 @@ local function useSupply(player, state, kind, item, loan)
             resetSupply(state)
             return false
         end
+        state.rejected[item:getID()]=getTimestampMs()+60000
+        if kind=="food" or kind=="water" then Supplies.rejectScoutIntake(state.rejected,item,kind,true) end
         Controller.giveUp(player, "The game could not start using " .. item:getDisplayName() .. ". Check its tools and action requirements.")
     end
     return true
@@ -2556,7 +2562,8 @@ local function chooseCare(player, state)
             local confirmedOnly=emergency or fallback or state.lowHealth
             -- First moodle authorizes the normal bounded scout now. The quiet
             -- gap still protects preventive raw-stat Recovery trips below it.
-            local localOnly=state.recovery and not emergency and Needs.level(player,kind)<1 and not state.recoveryReadyToScout
+            local now=getTimestampMs()
+            local localOnly=state.recovery and not emergency and not Recovery.mayTravel(player,state,kind,now)
             local worldOnly=kind=="water" and full
             if (kind=="water" or not full) and supply(player,state,kind,worldOnly,nil,nil,confirmedOnly,localOnly) then
                 state.mindfulnessWatch=nil
@@ -2564,7 +2571,7 @@ local function chooseCare(player, state)
             end
             -- Not time to walk yet; is there something worth waiting for?
             state.travelPeek=true
-            local later=localOnly and (kind=="water" or not full) and nearbyTarget(player,state,kind,worldOnly)
+            local later=localOnly and not Recovery.backingOff(state,now) and (kind=="water" or not full) and nearbyTarget(player,state,kind,worldOnly)
             state.travelPeek=nil
             if later and not later.unknown then state.recoveryStockWaiting=true
             elseif kind=="food" and not full then state.noConfirmedFood=true end
@@ -3371,6 +3378,7 @@ local function advance(player, state)
         state.endPhase, state.endMessage = nil, nil
         state.mode, state.recovery, state.cycle, state.trainingKind = "recovery", true, nil, nil
         state.recoveryHandoffArmed = nil
+        Recovery.remember(player,true)
         setPhase(state, "recovering", "Selected skills reached level 10. Recovery stays on.")
         return
     end
@@ -3505,6 +3513,16 @@ local function advance(player, state)
 end
 
 local function finishPending(player, state, now)
+    if state.phase=="firstaid" or state.phase=="refilling" then
+        -- Judged by what changed on the survivor, not by how the action ended.
+        local trip=state.excursion
+        if state.phase=="refilling" and trip and trip.stage=="care" and trip.outing then
+            trip.stage="errands"
+            trip.outing.turns=trip.outing.turns+1
+        end
+        state.pending=nil
+        return false
+    end
     if state.phase=="restoring-mask" then
         -- A canceled cleanup doesn't invalidate a supply or count as a
         -- failed training action. Only the observed worn slot is its receipt.
@@ -4171,6 +4189,7 @@ function Controller.update(player)
     local queue = queueFor(player)
     Controller.observeMaskRestore(player,state,queue)
     sampleInspection(player, state, queue, now)
+    Recovery.allowTainted(state)
     if state.active and state.recovery then
         Recovery.observe(player,state,now)
         if Controller.recoveryYields(player,state,queue) then return end
@@ -4272,7 +4291,12 @@ function Controller.update(player)
         Controller.takeoverQuietMs(state,now))
     if state.active then
         local ready, reason = available(player, state.mode)
-        if not ready and state.recovery then setPhase(state,"recovering",reason); return end
+        if not ready and state.recovery then
+            setPhase(state,"recovering",reason)
+            Recovery.unready(player,state,reason,now)
+            return
+        end
+        state.unreadyAt=nil
         if not ready then Controller.stop(player, reason); return end
     end
     if state.releasePending then
@@ -4391,9 +4415,13 @@ function Controller.update(player)
                 return
             end
         end
-        if state.excursion and state.phase=="travelling"
+        if state.excursion and (state.phase=="travelling" or state.phase=="bed")
                 and Controller.stallTime(player,state,state.excursion,queue[1],now,true)>=30000 then
-            if state.excursion.egressPlan then
+            if state.phase=="bed" then
+                state.excursion.stage="resume-home"
+                Recovery.bedFailed(player,state,now)
+                clearOwned(player,state)
+            elseif state.excursion.egressPlan then
                 state.excursion=nil
                 clearOwned(player,state)
                 state.careNotice="The path off the blocked tile did not finish. Checking other care options."
@@ -4496,6 +4524,7 @@ function Controller.update(player)
         -- means it did not work, and the way back is an ordinary return.
         state.pending = nil
         state.excursion.stage = "resume-home"
+        Recovery.bedFailed(player,state,now)
     elseif state.excursion and state.pending and state.phase == "travelling" then
         local trip = state.excursion
         local failedPath = false
@@ -4641,6 +4670,7 @@ function Controller.update(player)
         Recovery.guarded(player,state,now)
         return
     end
+    if state.parkedTrip and not state.excursion and not state.guard then state.excursion,state.parkedTrip=state.parkedTrip,nil end
     local careFirst = state.active and state.lowHealth and not state.excursion
         and (Needs.due(player,"water") or Needs.due(player,"food"))
     if not careFirst and returnBorrowed(player, state) then return end
@@ -4711,7 +4741,7 @@ local function begin(player, mode, collectNearby, tier, switching)
     local state = {player = player, active = true, startedAt = getTimestampMs(), mode = mode, collectNearby = collectNearby == true, phase = "starting",
         message = "Checking supplies and training requirements.", rejected = {}, careNeeds = {}, failures = 0}
     if player:getSquare() then ActionYield.rememberPosition(state, player) end
-    player:getModData().AutoMindfulRecovery=recovery or nil
+    Recovery.remember(player,recovery)
     if recovery then
         state.recovery=true
         state.cooperativePending={}
@@ -4777,6 +4807,7 @@ function Controller.continueSwitch(player,state)
     if started then return true,message end
     if getTimestampMs()<want.expires then return nil,"Finishing the current action before switching." end
     state.switchTo=nil
+    Recovery.remember(player,false)
     Log.headline(player,"job.refused","mode",want.mode,"tier",want.tier,"reason",message,"during","switch")
     setPhase(state,"stopped",message)
     return false,message
@@ -4867,13 +4898,14 @@ function Controller.resumeAfterLoad(player)
     local now=getTimestampMs()
     local at=resumed[player]
     if at==true then return end
-    if not at then resumed[player]=now; return end
-    if now>=at and now-at<resumeAfterMs then return end
+    if not at then resumed[player]={at=now,tries=0}; return end
+    if now>=at.at and now-at.at<resumeAfterMs*2^at.tries then return end
     resumed[player]=true
-    if player:getModData().AutoMindfulRecovery~=true or not Options.resumeRecovery() or player:isDead() then return end
+    if not Recovery.remembered(player) or not Options.resumeRecovery() or player:isDead() then return end
     local started,message=Controller.start(player,"recovery",Recovery.collectNearby(player))
-    Log.headline(player,"recovery.resumed","started",started,"message",message)
-    if not started then resumed[player]=now end -- Lifestyle may still be loading
+    Log.headline(player,"recovery.resumed","started",started,"message",message,"try",at.tries+1)
+    -- Lifestyle may still be loading. It is not going to be after ten minutes.
+    if not started and at.tries<6 then resumed[player]={at=now,tries=at.tries+1} end
 end
 
 local function onPlayerUpdate(player)
@@ -4881,18 +4913,23 @@ local function onPlayerUpdate(player)
     if resumed[player]~=true and (not state or not state.active) and player:isLocalPlayer() then Controller.resumeAfterLoad(player) end
     if not state or (not state.active and #state.loans == 0 and not state.releasePending and not state.maskRestore
             and not state.switchTo) then return end
+    if state.errorUntil and state.active and state.recovery and getTimestampMs()<state.errorUntil then return end
     local ok, message, trace = pcall(Controller.update, player)
     if not ok then
         Log.error(player,"Controller.update",message,trace)
         local now=getTimestampMs()
-        local errors=state.errors
-        if not errors or now-errors.at>300000 then errors={count=0}; state.errors=errors end
-        errors.count,errors.at=errors.count+1,now
-        local text="AutoMindful stopped after an error. Use Copy report in the Log tab, or see console.txt."
-        -- One bad moment is not worth a survivor; the same one over and over is a bug.
-        if not (state.recovery and errors.count<5 and pcall(Controller.giveUp,player,"An internal error was logged.","error")) then
-            Controller.stop(player,text)
+        if not state.recovery or player:isDead() then
+            Controller.stop(player,"AutoMindful stopped after an error. Use Copy report in the Log tab, or see console.txt.")
+            return
         end
+        -- A survivor left in our hands is not dropped over a bug. Wait longer
+        -- each time, say so, and try again.
+        local errors=state.errors
+        if not errors or now-errors.at>900000 then errors={count=0}; state.errors=errors end
+        errors.count,errors.at=errors.count+1,now
+        state.errorUntil=now+math.min(60000,1000*2^math.min(errors.count-1,6))
+        pcall(Controller.giveUp,player,"An internal error was logged.","error")
+        pcall(Recovery.errorAlert,player,now,errors.count)
     end
 end
 
@@ -4929,6 +4966,7 @@ Recovery.bind({policy=recoveryPolicy, stat=stat, levels=levels, queueFor=queueFo
     restNaturally=restNaturally, sampleIdle=sampleRecoveryIdle, rememberOrigin=rememberOrigin, endurance=Endurance.read,
     resumeTier=Controller.resumeRecoveryTier, lookInside=Controller.lookInside, fetchWater=Controller.fetchWater,
     painReady=function(player,state,now) return wantsPainCare(player,state,now) end,
+    prepareWalk=prepareScoutWalk,
     available=function(player,state,kind) return comfortSupplyAvailable(player,state,kind,true) end,
     pause=function(player,state,reason,cause) Controller.pauseRecovery(player,state,reason,cause) end})
 

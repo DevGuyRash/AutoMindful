@@ -27,11 +27,13 @@ function Beds.find(player, radius, rejected, now)
     if not here then return nil end
     local best, score
     local x0, y0, z = here:getX(), here:getY(), here:getZ()
+    -- Nobody is sent across the street at night for a better mattress.
+    local building = here.getBuilding and here:getBuilding()
     for x = x0 - radius, x0 + radius do
         for y = y0 - radius, y0 + radius do
             local dx, dy = x - x0, y - y0
             local square = dx * dx + dy * dy <= radius * radius and getCell():getGridSquare(x, y, z)
-            if square and Storage.permitted(player, square) then
+            if square and (square.getBuilding and square:getBuilding()) == building and Storage.permitted(player, square) then
                 local objects = square:getObjects()
                 for index = 0, objects:size() - 1 do
                     local object = objects:get(index)

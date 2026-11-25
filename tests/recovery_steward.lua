@@ -138,7 +138,9 @@ local function part(fields)
     function b:isBandageDirty() return self.filthy==true end
     function b:scratched() return self.scratch==true end
     function b:isCut() return self.open==true end
-    function b:deepWounded() return false end
+    function b:deepWounded() return self.deep==true end
+    function b:getBurnTime() return self.burn or 0 end
+    function b:getBleedingTime() return self.blood and 1 or 0 end
     function b:bitten() return false end
     function b:HasInjury() return self.open or self.scratch or self.blood or false end
     function b:getType() return 1 end
@@ -153,19 +155,23 @@ local function bandage(p,name,alcohol)
     item.isInfected=function() return false end
     return item
 end
+local refuse=false
+local function drop(p,item)
+    for index,entry in ipairs(p.inventory.items) do if entry==item then table.remove(p.inventory.items,index); item.container=nil; return end end
+end
 ISApplyBandage={new=function(_,doctor,patient,item,wound,apply)
     assert(doctor==patient)
     local a
     a=T.action(doctor,apply and "bandage" or "unbandage",function()
-        if apply then wound.cover,wound.filthy,wound.blood=true,nil,nil; doctor.inventory.items=doctor.inventory.items
+        if refuse then return end
+        if apply then
+            wound.cover,wound.filthy,wound.blood=true,nil,nil
+            drop(doctor,item)
         else wound.cover=nil end
     end)
     a.item=item
     return a
 end}
-local function drop(p,item)
-    for index,entry in ipairs(p.inventory.items) do if entry==item then table.remove(p.inventory.items,index); item.container=nil; return end end
-end
 local function wounded(p,list)
     function p:getBodyDamage()
         return {getOverallBodyHealth=function() return p.health or 100 end,
@@ -182,11 +188,9 @@ do
     local a=queue(p)[1]
     assert(a and a.Type=="bandage" and a.item==best,"Bleeding first, with the best dressing carried")
     a:perform(); assert(leg.cover)
-    drop(p,best)
     step(p,8); assert(not queue(p)[1],"A scratch waits until nobody needs the hands")
     seconds(p,14)
     a=queue(p)[1]; assert(a and a.Type=="bandage" and a.item==clean); a:perform()
-    drop(p,clean)
     arm.filthy=true; seconds(p,20)
     assert(not queue(p)[1],"A dirty dressing is not swapped for a dirty rag")
     bandage(p,"Bandage"); seconds(p,20)
@@ -220,6 +224,55 @@ do
     queue(p)[1]:perform(); step(p,60)
     assert(queue(p)[1] and queue(p)[1].Type=="Meditation",C.status(p).message)
     C.stop(p)
+end
+do
+    -- Refused by the game or a server: one bottle, not one bandage after another.
+    local p=survivor(); local leg=part({blood=true}); wounded(p,{leg})
+    bandage(p,"Bandage"); bandage(p,"Bandage"); bandage(p,"Bandage")
+    local bottle=T.add(p.inventory,T.water({thirst=-.8}))
+    p.values.THIRST,p.thirstMoodle=.9,4
+    refuse=true
+    begin(p)
+    for _=1,480 do step(p); if queue(p)[1] then queue(p)[1]:perform() end end
+    assert(count(p,"bandage")<=4 and bottle.fluid:getAmount()<1,"tries "..count(p,"bandage"))
+    refuse=false; p.thirstMoodle=0
+    for _=1,1600 do step(p); if queue(p)[1] then queue(p)[1]:perform() end end
+    assert(leg.cover and count(p,"bandage")<=6)
+    C.stop(p)
+end
+do
+    -- Burns are dressed; an unstitched deep wound does not eat every bandage.
+    local p=survivor()
+    local burn,deep=part({burn=10}),part({deep=true,cover=true,filthy=true,open=true})
+    wounded(p,{burn,deep})
+    for _=1,4 do bandage(p,"Bandage") end
+    begin(p)
+    for _=1,400 do step(p); if queue(p)[1] then queue(p)[1]:perform() end end
+    assert(burn.cover and deep.cover and deep.filthy and count(p,"bandage")==1 and count(p,"unbandage")==0)
+    O.firstAid=function() return false end
+    burn.cover=nil; seconds(p,40); assert(count(p,"bandage")==1,"Off means off")
+    O.firstAid=function() return true end
+    C.stop(p)
+end
+for _,mode in ipairs({"recovery","meditation"}) do
+    -- Hurt on an errand: nothing may wait for the end of a trip that cannot go on.
+    scout=true
+    local find=N.find
+    local shelf=T.container(6,0)
+    N.find=function(_,kind) if kind=="water" then return {key="water:6",square=shelf.square,container=shelf} end end
+    local p=survivor(); p.values.THIRST,p.thirstMoodle=.6,3
+    local leg=part({}); wounded(p,{leg}); local dressing=bandage(p,"Bandage")
+    if mode=="recovery" then begin(p); C.setAway(p,true) else assert(C.start(p,mode,false)) end
+    for _=1,60 do
+        step(p)
+        local a=queue(p)[1]
+        if a and a.Type=="ISWalkToTimedAction" then break elseif a then a:perform() end
+    end
+    assert(queue(p)[1] and queue(p)[1].Type=="ISWalkToTimedAction",C.status(p).message)
+    leg.blood=true
+    for _=1,120 do step(p); local a=queue(p)[1]; if a and a.Type=="bandage" then a:perform() end end
+    assert(leg.cover and dressing,mode..": "..C.status(p).message)
+    C.stop(p); N.find=find; scout=false
 end
 passed("bleeding is treated, not waited out")
 
@@ -263,7 +316,47 @@ do
         if C.status(p).boxedIn then break end
     end
     assert(n>=4 and C.status(p).boxedIn and issue(p,"boxed"),"Walk after walk failing from one spot is noticed, walks="..n)
+    local far=T.square(3,0)
+    T.loadSquare(p,far); p.square=far
+    seconds(p,12)
+    assert(not C.status(p).boxedIn,"Moving off the spot ends it")
+    for _,a in ipairs(C.status(p).alerts) do assert(not a.text:find("Cannot walk to any",1,true)) end
     C.stop(p); N.find=find; scout=false
+end
+do
+    -- Something the game will not start must not be picked again forever.
+    local p=survivor(); p.values.HUNGER,p.hungerMoodle=.6,3
+    local refused=T.add(p.inventory,T.item("Food",{hunger=-.6,baseHunger=-.6}))
+    local other=T.add(p.inventory,T.item("Food",{hunger=-.3,baseHunger=-.3}))
+    local Consumables=require "AutoMindful/Consumables"
+    local consume=Consumables.consume
+    Consumables.consume=function(player,item,kind) if item==refused then return false end return consume(player,item,kind) end
+    begin(p)
+    for _=1,200 do step(p); if queue(p)[1] then queue(p)[1]:perform(); break end end
+    assert(count(p,"eat")==1 and other:getHungerChange()>-.3,"The next meal is eaten instead")
+    Consumables.consume=consume
+    C.stop(p)
+end
+do
+    -- A bug is logged, waited out and announced; the survivor is not dropped.
+    local p=survivor(); begin(p)
+    local vehicle=p.getVehicle
+    function p:getVehicle() error("test error") end
+    for _=1,200 do T.now=T.now+250; Events.OnPlayerUpdate.callback(p) end
+    assert(C.status(p).active and alerted(p,"keeps retrying") and p.data.AutoMindfulRecovery)
+    p.getVehicle=vehicle
+    T.add(p.inventory,T.water({thirst=-.8})); p.values.THIRST,p.thirstMoodle=.5,3
+    for _=1,300 do T.now=T.now+250; Events.OnPlayerUpdate.callback(p); if queue(p)[1] then break end end
+    assert(queue(p)[1] and queue(p)[1].Type=="drink")
+    C.stop(p)
+end
+do
+    -- The mode that follows level 10 is Recovery like any other.
+    local p=survivor(); p.meditation,p.xp=9,9000
+    assert(C.start(p,"meditation",false)); p.meditation,p.xp=10,10000
+    for _=1,40 do step(p); if queue(p)[1] then queue(p)[1]:perform() end end
+    assert(C.status(p).mode=="recovery" and p.data.AutoMindfulRecovery,C.status(p).mode)
+    C.stop(p)
 end
 do
     local p=survivor()
@@ -343,7 +436,13 @@ do
     p.thirstMoodle=3; step(p,8); assert(not Fluids.allowTainted,"Ends with the emergency")
     p.thirstMoodle=4; seconds(p,40); assert(not Fluids.allowTainted,"Not in the first minute")
     seconds(p,30); assert(Fluids.allowTainted)
-    C.stop(p); Fluids.allowTainted=false
+    C.stop(p); assert(not Fluids.allowTainted,"Stop takes the permission back")
+    p=survivor(); p.values.THIRST,p.thirstMoodle=.9,4
+    T.add(p.inventory,T.water({thirst=-.8}))
+    begin(p); p.zombies=1
+    for _=1,360 do step(p) end
+    assert(not Fluids.allowTainted,"Not while anything clean is left")
+    C.stop(p)
     O.lastResort=function() return false end
 end
 passed("unsafe water only after a minute of dying of thirst, and never otherwise")

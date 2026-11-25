@@ -605,8 +605,8 @@ Events.OnPlayerUpdate.Add(function(player)
                 end
             elseif command == "zombie" then
                 local dx = tonumber(line:match("^%S+%s+(%-?%d+)")) or 8
-                local made = addZombiesInOutfit(player:getX() + dx, player:getY(), player:getZ(), 1, nil, 50)
-                print("[AutoMindfulFixture] ZOMBIE " .. tostring(made and made:size()))
+                local made = createZombie(player:getX() + dx, player:getY(), player:getZ(), nil, 0, IsoDirections.S)
+                print("[AutoMindfulFixture] ZOMBIE " .. tostring(made ~= nil))
             elseif command == "unzombie" then
                 local list = getCell():getZombieList()
                 for index = list:size() - 1, 0, -1 do
@@ -617,6 +617,7 @@ Events.OnPlayerUpdate.Add(function(player)
             elseif command == "goto" then
                 local dx, dy = line:match("^%S+%s+(%-?%d+)%s+(%-?%d+)")
                 player:setX(player:getX() + tonumber(dx)); player:setY(player:getY() + tonumber(dy))
+            elseif command == "save" then save(true)
             elseif command == "rates" then
                 local s = player:getStats()
                 print("[AutoMindfulFixture] RATES h=" .. getGameTime():getWorldAgeHours() .. " hunger=" .. s:get(CharacterStat.HUNGER)

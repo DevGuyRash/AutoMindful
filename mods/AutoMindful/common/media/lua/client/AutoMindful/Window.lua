@@ -182,26 +182,65 @@ function Window:createChildren()
     self.pin = true
     self.collapseButton:setVisible(false)
     self.pinButton:setVisible(false)
-    for _, widget in ipairs({self.resizeWidget, self.resizeWidget2}) do
-        widget.resizeFunction = Window.onUserResize
-        for _, method in ipairs({"onMouseUp", "onMouseUpOutside"}) do
-            local original = widget[method]
-            widget[method] = function(control, ...)
-                local resizing = control.resizing
-                local result = original(control, ...)
-                if resizing then control.target:saveGeometry() end
-                return result
-            end
+    for _, part in ipairs({self.resizeWidget, self.resizeWidget2, self.tabs, self.body, self.strip, self.miniButton}) do
+        -- arrange() places every part. Letting the game move them as well puts
+        -- each one a step too far, which a drag then measures itself against.
+        part:setAnchorRight(false)
+        part:setAnchorBottom(false)
+    end
+    self:bindHandle(self.resizeWidget, true)
+    self:bindHandle(self.resizeWidget2, false)
+end
+
+-- A drag is measured on the screen from where the button went down. Nothing the
+-- window does to itself on the way can change that.
+function Window:bindHandle(widget, corner)
+    local window = self
+    local function release()
+        local drag = window.resize
+        window.resize, widget.resizing = nil, false
+        widget:setCapture(false)
+        if drag and drag.changed then
+            Log.detail(window.player, "ui.resize", "width", window.width, "height", window.height)
+            window:saveGeometry()
         end
+        return true
+    end
+    local function drag()
+        local held = window.resize
+        if not held or held.widget ~= widget then return end
+        local width = corner and held.width + getMouseX() - held.mouseX or nil
+        local height = held.height + getMouseY() - held.mouseY
+        if not held.changed and height == held.height and (width or held.width) == held.width then return end
+        held.changed = true
+        window:onUserResize(width, height)
+    end
+    widget.onMouseDown = function(control)
+        if not control:getIsVisible() then return end
+        window.resize = {widget=widget, mouseX=getMouseX(), mouseY=getMouseY(), width=window.width, height=window.height}
+        control.resizing = true
+        control:setCapture(true)
+        return true
+    end
+    widget.onMouseMove = function(control) control.mouseOver = true; drag() end
+    widget.onMouseMoveOutside = function(control) control.mouseOver = false; drag() end
+    widget.onMouseUp, widget.onMouseUpOutside = release, release
+    -- The game sends this instead of the second press.
+    widget.onMouseDoubleClick = function()
+        window:resetSize(corner)
+        return true
     end
 end
 
+-- The corner sets both sizes, the bottom edge only the height.
 function Window:onUserResize(width, height)
     local m, g = self:metrics(), self.geometry
-    g.width, g.height = clamp(math.floor(width), m.minWidth, m.screenW - 8), clamp(math.floor(height), m.minHeight, m.screenH - 8)
     g.x, g.y = self:getX(), self:getY()
+    if width then g.width = clamp(math.floor(width), m.minWidth, m.screenW - g.x) end
+    g.height = clamp(math.floor(height), m.minHeight, m.screenH - g.y)
     self:fit()
     self.body:measure()
+    self:fit()
 end
 
 function Window:saveGeometry()
@@ -247,8 +286,11 @@ end
 
 function Window:stopFromMenu() Jobs.stop(self.player, "window-menu") end
 
-function Window:resetSize()
-    self.geometry.width, self.geometry.height = nil, nil
+-- Back to fitting the contents: both sizes, or only the height.
+function Window:resetSize(both)
+    if both ~= false then self.geometry.width = nil end
+    self.geometry.height = nil
+    Log.detail(self.player, "ui.fit", "width", both ~= false)
     self:saveGeometry()
     self:invalidate(true)
 end

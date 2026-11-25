@@ -14,7 +14,7 @@ local roaming = {enabled=false, radius=10}
 -- Recovery's waiting times have their own test; here every mechanism is on and
 -- prompt so a journey shows what it does rather than when.
 local on = function() return true end
-package.loaded["AutoMindful/Options"] = {awayMs=function() return 180000 end,careBetween=function() return false end,refill=function() return false end,
+package.loaded["AutoMindful/Options"] = {awayMs=function() return 180000 end,careBetween=function() return false end,firstAid=on,refill=function() return false end,
     useBeds=function() return false end,lastResort=function() return false end,alertSound=on,resumeRecovery=on,cyclePolicy=function() return "alternate" end,searchNearby=function() return roaming.enabled end,
     searchRadius=function() return roaming.radius end}
 local nearbyTarget, nearbyArea

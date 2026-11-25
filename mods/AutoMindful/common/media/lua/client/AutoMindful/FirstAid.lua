@@ -3,7 +3,6 @@
 -- tools and skill, and are the player's decision.
 require "TimedActions/ISApplyBandage"
 local Supplies = require "AutoMindful/Supplies"
-local Danger = require "AutoMindful/Danger"
 
 local FirstAid = {}
 
@@ -18,13 +17,21 @@ local grades = {
     function(item) return bandage(item) and not dirty(item) end,
 }
 
+-- The game's own test for what may be dressed, without fractures: a dressing
+-- does nothing for those.
 local function open(part)
-    return part:scratched() or part:isCut() or part:deepWounded() or part:bitten()
+    return part:scratched() or part:isCut() or part:deepWounded() or part:bitten() or part:getBurnTime() > 0
+end
+
+-- A dressing on a wound that has not been stitched, or still bleeds, is dirty
+-- again in moments. Changing it would only use up every clean one.
+local function worthChanging(part)
+    return part:isBandageDirty() and open(part) and not part:deepWounded() and part:getBleedingTime() <= 0
 end
 
 -- The one wound to look after next: whatever bleeds, then open wounds, then
 -- bandages that have turned dirty.
-function FirstAid.wound(player)
+function FirstAid.wound(player, blocked)
     local parts = player:getBodyDamage():getBodyParts()
     local best, rank = nil, 0
     for index = 0, parts:size() - 1 do
@@ -34,8 +41,8 @@ function FirstAid.wound(player)
         if covered == nil then value = 0
         elseif part:bleeding() and not covered then value = 4 + (part:deepWounded() and 1 or 0)
         elseif open(part) and not covered then value = 2
-        elseif covered and part:isBandageDirty() and part:HasInjury() then value = 1 end
-        if value > rank then best, rank = part, value end
+        elseif covered and worthChanging(part) then value = 1 end
+        if value > rank and not (blocked and blocked(part)) then best, rank = part, value end
     end
     return best, rank
 end
@@ -49,9 +56,8 @@ local function find(player, includeNearby, bleeding)
     return bleeding and Supplies.findCareItem(player, bandage, includeNearby) or nil
 end
 
-function FirstAid.next(player, includeNearby)
-    local part, rank = FirstAid.wound(player)
-    if not part then return nil end
+-- blocked(part) holds back a wound whose last treatment did not take.
+function FirstAid.next(player, includeNearby, part, rank)
     local bleeding = rank >= 4
     local item = find(player, includeNearby, bleeding)
     if not item then return nil, bleeding and "bleeding" or rank >= 2 and "open" or nil end
@@ -74,12 +80,6 @@ function FirstAid.action(player, plan)
     if plan.remove then return ISApplyBandage:new(player, player, nil, part, false) end
     if plan.item:getContainer() ~= player:getInventory() or not bandage(plan.item) then return nil end
     return ISApplyBandage:new(player, player, plan.item, part, true)
-end
-
-function FirstAid.needed(player)
-    if Danger.bleeding(player) then return true end
-    local body = player:getBodyDamage()
-    return body.getBodyParts ~= nil and FirstAid.wound(player) ~= nil
 end
 
 return FirstAid

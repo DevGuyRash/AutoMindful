@@ -42,6 +42,9 @@ function Widget:getX() return self.x end
 function Widget:getY() return self.y end
 function Widget:getAbsoluteX() return self.x + (self.parent and self.parent:getAbsoluteX() or 0) end
 function Widget:getAbsoluteY() return self.y + (self.parent and self.parent:getAbsoluteY() or 0) end
+function Widget:setAnchorRight(v) self.anchorRight = v end
+function Widget:setAnchorBottom(v) self.anchorBottom = v end
+function Widget:setCapture(v) self.captured = v end
 function Widget:setX(v) self.x = v end
 function Widget:setY(v) self.y = v end
 function Widget:setWidth(v) self.width = v end
@@ -463,6 +466,39 @@ window:onMouseDown(); window:setX(420); window:invalidate(); assert(window:getX(
 window:setX(300); window:onMouseUp()
 assert(window.resizeWidget.x == window.width - 12 and window.resizeWidget.y == window.height - 12
     and window.resizeWidget2.y == window.height - 12 and window.resizeWidget2.width == window.width - 12, "The handles are where they are drawn")
+do
+    local corner, edge = window.resizeWidget, window.resizeWidget2
+    local startW, startH = window.width, window.height
+    assert(corner.anchorRight == false and corner.anchorBottom == false and edge.anchorBottom == false, "Nothing else moves the handles")
+    mouseX, mouseY = 600, 400
+    corner:onMouseDown(3, 3); assert(corner.captured)
+    for i = 1, 40 do
+        mouseX, mouseY = 600 + i * 2, 400 + i
+        corner:onMouseMoveOutside(1, 1)
+        assert(window.width == startW + i * 2 and window.height == startH + i, "The corner stays under the mouse")
+        corner:onMouseMove(0, 0); window:invalidate()
+        assert(window.width == startW + i * 2 and window.height == startH + i, "And a refresh during the drag changes nothing")
+    end
+    mouseX, mouseY = -4000, -4000; corner:onMouseMoveOutside(0, 0)
+    local least = window.width
+    mouseX, mouseY = 600, 400; corner:onMouseMoveOutside(0, 0)
+    assert(least < startW and window.width == startW and window.height == startH, "Past the smallest size and back loses nothing")
+    mouseX = 660; corner:onMouseMoveOutside(0, 0); corner:onMouseUpOutside(0, 0)
+    assert(not corner.captured and files["AutoMindful/window-0.txt"]:find(" " .. (startW + 60) .. " ", 1, true), files["AutoMindful/window-0.txt"])
+    mouseX = 900; corner:onMouseMove(0, 0); assert(window.width == startW + 60, "Let go is let go")
+    mouseX, mouseY = 100, 100
+    edge:onMouseDown(3, 3); mouseX, mouseY = 300, 150; edge:onMouseMoveOutside(0, 0); edge:onMouseUp(0, 0)
+    assert(window.width == startW + 60 and window.height == startH + 50, "The bottom edge is height only")
+    edge:onMouseDown(3, 3); edge:onMouseUp(0, 0)
+    assert(window.geometry.height, "One click changes nothing")
+    edge:onMouseDoubleClick(3, 3); edge:onMouseUp(0, 0)
+    assert(window.width == startW + 60 and window.geometry.height == nil and window.geometry.width, "Double click the edge: height fits")
+    corner:onMouseDown(3, 3); corner:onMouseUp(0, 0)
+    corner:onMouseDoubleClick(3, 3); corner:onMouseUp(0, 0); corner:onMouseMove(0, 0)
+    assert(window.geometry.width == nil and window.geometry.height == nil and window.width == startW, "Double click the corner: both fit")
+    assert(files["AutoMindful/window-0.txt"]:find("- - 0", 1, true), files["AutoMindful/window-0.txt"])
+    passed("resizing follows the mouse exactly, and a double click fits the contents")
+end
 window:onUserResize(500, 250); window:saveGeometry()
 assert(window.width == 500 and window.height == 250)
 window:show("settings"); assert(window.height == 250 and window.body.contentHeight > window.body.height and window.body.vscroll.visible

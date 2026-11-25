@@ -62,7 +62,7 @@ local function add(total, entry, field)
     return total + math.max(0, d[field] or 0)
 end
 
-local function stock(player, range)
+local function stock(player, range, boxedIn)
     local near = range ~= "carried"
     local scan = Supplies.scan(player, near, near)
     local result = {food=0, water=0, carriedWater=0, carriedFood=0, endless=false}
@@ -94,7 +94,7 @@ local function stock(player, range)
         end
     end
     fixtures(scan.waterSources)
-    if range == "walk" and player:getSquare() then
+    if range == "walk" and player:getSquare() and not boxedIn then
         local area = Nearby.scan(player, player:getSquare(), Options.searchRadius())
         if area then
             collect(area.food, "food", "hungerRelief")
@@ -118,7 +118,7 @@ end
 -- severity 3: would likely kill an unattended survivor. 2: would cost a lot.
 -- 1: worth knowing. Only what is true right now is listed.
 function Outlook.read(player, range, state)
-    local held = stock(player, range)
+    local held = stock(player, range, state and (state.boxedIn or state.guard) and true)
     local food, water = hoursLeft(player, "food", held.food), hoursLeft(player, "water", held.water)
     local result = {foodHours=food, waterHours=not held.endless and water or nil, endlessWater=held.endless,
         carriedFoodHours=hoursLeft(player, "food", held.carriedFood), carriedWaterHours=hoursLeft(player, "water", held.carriedWater),
@@ -131,12 +131,12 @@ function Outlook.read(player, range, state)
             or "Bleeding, and there is no bandage within reach.")
     end
     if held.food <= 0 then issue("food", 3, "No food it could use.")
-    elseif food < 12 then issue("food", 2, "Food runs out soon.") end
+    elseif food < 24 then issue("food", 2, "Food runs out soon.") end
     if not held.endless then
         if held.water <= 0 then issue("water", 3, "No drink it could use.")
-        elseif water < 12 then issue("water", 2, "Drink runs out soon.") end
+        elseif water < 24 then issue("water", 2, "Drink runs out soon.") end
     end
-    if state and state.boxedIn then issue("boxed", 3, "Every walk from this spot fails. Move the survivor to open floor.") end
+    if state and state.boxedIn then issue("boxed", 3, "Cannot walk to any supply from here: closed doors, or a stuck spot.") end
     local square = player:getSquare()
     if square and not (square.isInARoom and square:isInARoom()) and not player:getVehicle() then
         issue("outside", 2, "Outdoors: weather and zombies can reach the survivor.")

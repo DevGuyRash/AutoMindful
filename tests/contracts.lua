@@ -1479,6 +1479,11 @@ test("fast-forward during inspection cannot silently invalidate the native retur
     local p=T.playerNew(); p.values.BOREDOM=25
     local origin=p:getSquare(); local shelf=T.container(6,0); p.available={shelf}
     nearbyTarget={square=shelf.square,key="unknown:6:0:0",unknown=true,container=shelf}
+    local originalPrint, trace=print, {}
+    print=function(line,...)
+        if type(line)=="string" and line:find("[AutoMindful] scout:",1,true) then trace[#trace+1]=line end
+        originalPrint(line,...)
+    end
     walkSpeed=4
     assert(C.start(p,"meditation",false))
     T.tick(p,false)
@@ -1491,6 +1496,14 @@ test("fast-forward during inspection cannot silently invalidate the native retur
     end
     assert(inspected and p:getSquare()==origin and walkSpeed==1 and hasHistory(p,"Meditation"),
         "After a fruitless search the survivor gets home and resumes eligible training")
+    print=originalPrint
+    local events={"outbound","inspect","inspect-ended","return","home"}
+    assert(#trace==#events,"A failed probe logs exactly once per transition")
+    for i,event in ipairs(events) do
+        assert(trace[i]:find("leg=1 event="..event.." ",1,true)
+            and trace[i]:find("need=literature source=container stock=unconfirmed key=unknown:6:0:0",1,true))
+    end
+    assert(trace[3]:find("reason=no-usable-stock-confirmed-before-timeout retry=cooldown-60000ms",1,true))
     C.stop(p); roaming.enabled=false; nearbyTarget=nil; walkSpeed=1
 end)
 

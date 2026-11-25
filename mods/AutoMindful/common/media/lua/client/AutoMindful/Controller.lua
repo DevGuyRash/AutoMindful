@@ -1085,9 +1085,12 @@ local function yieldToPlayer(player, state, unexplained, walking, settling, paus
                     Controller.rejectScoutPath(state,trip,getTimestampMs(),"native-failed-before-yield")
                 else state.travelRejected[trip.target.key]=(trip.careTarget or trip.waterObject) and getTimestampMs()+15000 or true end
             end
+            Controller.scoutTrace(player,state,trip,"yield",cause or "other-action")
             state.excursion = {origin=trip.origin, stage="resume-home", homeFailures=trip.homeFailures,
                 homeRetrySince=trip.homeRetrySince, homeFailedWalk=trip.homeFailedWalk,
-                homeStopRecorded=trip.homeStopRecorded}
+                homeStopRecorded=trip.homeStopRecorded, traceId=trip.traceId,
+                traceSource=trip.traceSource, traceStock=trip.traceStock, traceKey=trip.traceKey,
+                traceKind=trip.kind or trip.traceKind}
         end
         Nearby.invalidate(player)
         if state.active then
@@ -1388,6 +1391,30 @@ local function resolveOrigin(origin)
     return atOrigin(square, origin) and square or nil
 end
 
+-- Log once per route transition, not on the update tick. All values are
+-- observations; an unreplicated list still does not prove a container empty.
+function Controller.scoutTrace(player,state,trip,event,reason)
+    local target,origin=trip.target,trip.origin
+    local here=player:getSquare()
+    local mode=state.mode or "unknown"
+    if not trip.traceId then
+        state.scoutTraceSerial=(state.scoutTraceSerial or 0)+1
+        trip.traceId=state.scoutTraceSerial
+    end
+    local stock=target and (target.unknown and "unconfirmed" or target.remembered and "remembered"
+        or target.container and "observed" or "fixture") or trip.traceStock or "none"
+    local source=target and (target.part and "vehicle" or target.container and "container"
+        or target.item and "ground" or "world") or trip.traceSource or "none"
+    local key=target and target.key or trip.traceKey
+    trip.traceSource,trip.traceStock,trip.traceKey=source,stock,key
+    print("[AutoMindful] scout: leg="..trip.traceId.." event="..event.." stage="..tostring(trip.stage)
+        .." mode="..mode.." need="..tostring(trip.kind or trip.traceKind).." source="..source
+        .." stock="..stock.." key="..tostring(key)
+        .." here="..(here and here:getX()..":"..here:getY()..":"..here:getZ() or "unloaded")
+        .." home="..(origin and origin.x..":"..origin.y..":"..origin.z or "unknown")
+        .." reason="..reason)
+end
+
 local function vehicleTargetAvailable(player, target)
     if not target.part then return true end
     local vehicle, area = Storage.vehiclePart(target.part)
@@ -1478,7 +1505,8 @@ function Controller.scoutRelief(state,kind,partial)
     end
 end
 
-local function arrivedHome(state,trip,now)
+local function arrivedHome(player,state,trip,now)
+    Controller.scoutTrace(player,state,trip,"home","original-training-tile-reached")
     if trip.outing then
         local t,origin=trip.walkTiming,trip.origin
         local sample
@@ -1567,6 +1595,7 @@ function Controller.scoutEgress(player,state,kind,target,here)
     if not walk then return false end
     local trip={origin=rememberOrigin(player,here),target=target,kind=kind,stage="outbound",egressPlan=plan,egressWalk=walk}
     state.excursion,state.travelScan=trip,nil
+    Controller.scoutTrace(player,state,trip,"egress","trying-clear-adjacent-floor")
     if ownBatch(player,state,"travelling","Trying a clear adjacent floor tile before scouting.",function()
         prepareScoutWalk()
         ISTimedActionQueue.add(walk)
@@ -1580,9 +1609,11 @@ function Controller.settleScoutEgress(player,state,trip,failedPath)
     state.excursion,state.travelScan=nil,nil
     Nearby.invalidate(player)
     if not failedPath and trip.egressWalk.autoMindfulFinished and ScoutEgress.arrived(player,resolveOrigin(trip.origin),trip.egressPlan) then
+        Controller.scoutTrace(player,state,trip,"egress-ended","clear-floor-reached")
         state.scoutEgressSignature=nil
         state.careNotice="Moved off the blocked training tile. Checking supplies from clear ground."
     else
+        Controller.scoutTrace(player,state,trip,"egress-ended","clear-floor-not-reached")
         state.careNotice="No clear path off the blocked training tile. Checking other care options."
     end
 end
@@ -1616,10 +1647,12 @@ local function tryExcursion(player,state,kind,onlyWorldWater,selectedCare,target
     if target.unknown and ((target.part and Storage.vehicleAccessible(player, target.part))
             or (not target.part and here and here:canReachTo(target.square))) then
         state.excursion.stage, state.excursion.inspectUntil = "inspect", getTimestampMs() + 3000
+        Controller.scoutTrace(player,state,state.excursion,"inspect","already-within-reach")
         setPhase(state, "scouting", "Inspecting a nearby container through the normal loot interface.")
         return true
     end
     local route
+    Controller.scoutTrace(player,state,state.excursion,"outbound","selected-supply")
     local message = waterObject and (target.remembered and "Walking to a known clean-water source; returning here after care."
             or "Walking to a clean-water source; returning here after care.")
         or (selectedCare and (kind == "restroom" and (target.remembered and "Walking to a known toilet; returning here after care."
@@ -1658,6 +1691,7 @@ local function tryExcursion(player,state,kind,onlyWorldWater,selectedCare,target
         queued=false
     end
     if not queued then
+        Controller.scoutTrace(player,state,state.excursion,"outbound-failed",route and "no-native-action-queued" or "no-legal-approach")
         if not route then Controller.rejectScoutPath(state,{target=target,kind=kind},getTimestampMs(),"no-legal-approach")
         else state.travelRejected[target.key]=getTimestampMs()+15000 end
         state.pending,state.excursion,state.travelScan=nil,prior,nil
@@ -1731,7 +1765,7 @@ local function returnToOrigin(player, state, now)
     if not trip then return false end
     local here = player:getSquare()
     if atOrigin(here, trip.origin) then
-        arrivedHome(state,trip,now)
+        arrivedHome(player,state,trip,now)
         return false
     end
     if trip.homeRetrySince then
@@ -1749,6 +1783,7 @@ local function returnToOrigin(player, state, now)
         return true
     end
     if ScoutEgress.obstructed(origin) then
+        Controller.scoutTrace(player,state,trip,"return-blocked","original-tile-obstructed")
         if here.canStand and here:canStand() and Storage.permitted(player,here) then
             state.excursion,state.travelScan=nil,nil
             state.careNotice="The original training tile is blocked. Resuming at the current clear tile."
@@ -1759,6 +1794,7 @@ local function returnToOrigin(player, state, now)
         return true
     end
     trip.stage, trip.homeRetrySince, trip.homeFailedWalk, trip.homeStopRecorded = "homebound", nil, nil, nil
+    Controller.scoutTrace(player,state,trip,"return","walk-attempt-"..((trip.homeFailures or 0)+1))
     local queued = ownBatch(player, state, "travelling", "Returning to the original training spot.", function()
         prepareScoutWalk()
         if player:isSitOnGround() then ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player)) end
@@ -4130,7 +4166,7 @@ function Controller.update(player)
             Controller.settleScoutEgress(player,state,trip,failedPath)
         elseif trip.stage == "homebound" then
             if atOrigin(player:getSquare(), trip.origin) then
-                arrivedHome(state,trip,now)
+                arrivedHome(player,state,trip,now)
             elseif failedPath and trip.homeRetrySince then
                 trip.stage = "resume-home"
                 -- Wait below after loan settlement, even if stock has already
@@ -4155,7 +4191,10 @@ function Controller.update(player)
             end
             if arrived and Options.searchNearby() then
                 trip.stage, trip.inspectUntil = "inspect", now + 3000
+                Controller.scoutTrace(player,state,trip,"inspect","within-reach-after-walk")
             else
+                Controller.scoutTrace(player,state,trip,"outbound-failed",failedPath and "native-path-failed"
+                    or not Options.searchNearby() and "scouting-disabled" or "not-within-native-reach")
                 trip.stage = "care"
                 Controller.forgetScoutStop(state,trip.target)
                 if failedPath then Controller.rejectScoutPath(state,trip,now)
@@ -4178,10 +4217,16 @@ function Controller.update(player)
         trip.stage="care"
     elseif trip and trip.stage == "inspect" then
         local exact=trip.exactStorage
-        if Options.searchNearby() and (not exact or Controller.scoutedStorageAllowed(player,exact))
-                and (not trip.target.part or (vehicleTargetAvailable(player, trip.target) and Storage.vehicleAccessible(player, trip.target.part))) then
+        local inspectReason
+        if not Options.searchNearby() then inspectReason="scouting-disabled"
+        elseif exact and not Controller.scoutedStorageAllowed(player,exact) then inspectReason="storage-no-longer-accessible"
+        elseif trip.target.part and not (vehicleTargetAvailable(player,trip.target) and Storage.vehicleAccessible(player,trip.target.part)) then
+            inspectReason="vehicle-storage-no-longer-accessible"
+        end
+        if not inspectReason then
             Supplies.refreshNearby(player)
             if supply(player, state, trip.kind, trip.onlyWorldWater, trip.waterObject, exact and exact.container) then
+                Controller.scoutTrace(player,state,trip,"care-queued","usable-supply-selected")
                 trip.stage = "care"
                 Nearby.invalidate(player)
                 return
@@ -4193,7 +4238,12 @@ function Controller.update(player)
             end
         end
         Controller.forgetScoutStop(state,trip.target)
-        if not exact or not trip.target.remembered or trip.target.storageScoped then state.travelRejected[trip.target.key] = now+(trip.target.unknown and 60000 or 15000) end
+        local cooldown=trip.target.unknown and 60000 or 15000
+        local reject=not exact or not trip.target.remembered or trip.target.storageScoped
+        if reject then state.travelRejected[trip.target.key] = now+cooldown end
+        Controller.scoutTrace(player,state,trip,"inspect-ended",(inspectReason or (trip.target.unknown
+            and "no-usable-stock-confirmed-before-timeout" or "selected-supply-unusable"))
+            .." retry="..(reject and "cooldown-"..cooldown.."ms" or "forget-remembered-source"))
         state.travelScan = nil
         state.careNotice = trip.waterObject and "The selected water source was not usable. Returning before trying another source."
             or "This container did not confirm a usable supply. Returning before trying another source."
@@ -4289,7 +4339,7 @@ function Controller.start(player, mode, collectNearby, tier)
     state.loans, state.returnNotice = old.loans or {}, old.returnNotice
     state.maskRestore, state.maskNotice = old.maskRestore, old.maskNotice
     state.scoutMemory = old.scoutMemory or {}
-    state.decisionLog=old.decisionLog
+    state.decisionLog,state.scoutTraceSerial=old.decisionLog,old.scoutTraceSerial
     Decisions.transition(state,"starting")
     states[player] = state
     if #queueFor(player) > 0 or ActionYield.nativeBusy(player) then yieldToPlayer(player, state) end

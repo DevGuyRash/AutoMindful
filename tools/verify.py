@@ -55,6 +55,10 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     if reference_root:
         command.append(str(reference_root))
     checks = [check(evidence, "portable-contracts", command)]
+    if lifestyle:
+        checks.append(check(evidence, "lifestyle-wellness-source", [sys.executable, "tools/extract_wellness_facts.py",
+            str(lifestyle.expanduser().resolve()), "--check",
+            "mods/AutoMindful/common/media/lua/client/AutoMindful/WellnessFacts.lua"]))
     for name, script in (("scout-memory", "scout_memory.lua"),
                          ("lifestyle-care-journey", "lifestyle_care_journey.lua"),
                          ("lifestyle-restroom", "restroom_care.lua"), ("lifestyle-hygiene", "hygiene_care.lua"),

@@ -16,6 +16,7 @@ PINS = {
     "shared/TimedActions/LSYogaAction.lua": "00430eadeba1d79ee592697de1a6ccec3de1e9f5b6f5a3de423d3fe410102e32",
     "shared/LSUtil.lua": "4e6b73720eefcafd828773067327664aa854228a6080705cf948c9cecc149ddb",
     "client/LSEffects/LSPerTenMinutes.lua": "d4555e319a83042f8e1179a5f0aa593c1c33cdee942b0632b57fafa92ded1dbd",
+    "client/LSEffects/LSPerMinute.lua": "fb4a5ea5f617554bfd88e8340ee35ae4a42eb299f4f39eb64d61bf53c23d9afd",
     "client/LSMoodleManager.lua": "7fd07315ac820143f47db01ac8f3c4fc8f5f7b80241ddb4da47c69a362ac8eee",
 }
 
@@ -37,7 +38,7 @@ def derive(root):
         if hashlib.sha256(contents).hexdigest() != digest:
             raise ValueError(f"Unverified upstream source: {name}")
         source.append(contents.decode("utf-8-sig").replace("\r\n", "\n"))
-    mind, meditation, menu, yoga, util, ten_minutes, moodles = source
+    mind, meditation, menu, yoga, util, ten_minutes, one_minute, moodles = source
 
     block = exact(r"local function getMeditationLevelTable\(\)\s+return \{\s*(.*?)\n\s*\}\s*end",
                   mind, "Mindfulness duration table", re.S)
@@ -78,6 +79,31 @@ def derive(root):
     mind_panic = exact(r'moodList\["Panic"\] = \{-([\d.]+)\*MeditationStrengthFactor', mind, "Mindfulness panic")
     if float(mind_stress) * 100 != float(mind_panic):
         raise ValueError("Mindfulness stress and panic no longer share a normalized rate")
+    mind_nicotine = exact(r'moodList\["Nicotine_Withdrawal"\] = \{-([\d.]+)\*MeditationStrengthFactor',
+                          mind, "Mindfulness nicotine withdrawal")
+    exact(r'if mood == "Nicotine_Withdrawal" and not character:hasTrait\(CharacterTrait\.SMOKER\) then return;',
+          util, "nicotine applicability")
+    exact(r'if SandboxVars\.Text\.DividerMeditationNew and \(playerData\.LSMoodles\["MindfulState"\]\.Value > 0'
+          r' or \(playerData\.MindfulnessMinutes and playerData\.MindfulnessMinutes > 0\)\) then[^\n]*'
+          r'\n\s*AdjustPlayerMindfulness\(character\)', one_minute, "Mindfulness enabled tick")
+    pose_caps = exact(
+        r'function LSYogaAction:grantXP\(\)[^\n]*\n\s*if self\.skillLevel >= (\d+) and '
+        r'self\.character:getPerkLevel\(Perks\.Fitness\) >= (\d+) and '
+        r'self\.character:getPerkLevel\(Perks\.Nimble\) >= (\d+) then return;',
+        yoga, "Zen Yoga XP caps")
+    mind_floor = exact(r"if thisPlayer:getPerkLevel\(Perks\.Meditation\) < (\d+) then", mind,
+                       "Mindfulness minimum rank")
+    mind_thresholds = [exact(r'LSMoodles\["MindfulState"\]\.Value >= ([\d.]+) then (?:moodList = )?' + function,
+                             mind, "Mindfulness " + function) for function in (
+        "doMindfulnessStressPanicReduction", "doMindfulnessPainHungerReduction", "doMindfulnessHealing")]
+    if sorted(set(map(float, mind_thresholds))) != list(map(float, mind_thresholds)):
+        raise ValueError("Unexpected Mindfulness tiers")
+    zen_med_cap, zen_med = exact(
+        r"if PlayerMeditationLevel < (\d+) then\s*local zen = 1.*?zen = ([\d.]+)\*character:getModData\(\).LSMoodles"
+        r'\["Zen"\]\.Level\s*end\s*xpChange = \(varResult\+Buffer\)\*WasTaught\*zen',
+        meditation, "Zen Meditation XP factor", re.S)
+    zen_pose = exact(r'totalXP = totalXP\+math\.ceil\(self\.playerData\.LSMoodles\["Zen"\]\.Level/([\d.]+)\)',
+                     yoga, "Zen Yoga XP addend")
     mind_pain = exact(r'moodList\["Pain"\] = \{-([\d.]+)\*MeditationStrengthFactor', mind, "Strong pain relief")
     mind_hunger, hunger_decimals = exact(
         r'moodList\["Hunger"\] = \{LSUtil\.round\(-([\d.]+)\*MeditationStrengthFactor,(\d+)\)',
@@ -243,6 +269,9 @@ def derive(root):
     for rank in range(3, 11):
         output.append(f'        [{rank}]={{{effects[rank,"none"]},{effects[rank,"disciplined"]}}},')
     output += ["    },", f"    mindfulnessRelief={{{mind_panic},{mind_pain},{mind_hunger},{hunger_decimals}}},",
+               f"    mindfulnessActivation={{{mind_floor},{','.join(mind_thresholds)}}},",
+               f"    mindfulnessNicotine={mind_nicotine},",
+               f"    zenExperience={{{zen_med},{zen_pose},{zen_med_cap},{','.join(pose_caps)}}},",
                f"    mindfulnessHealing={{{default_heal},{usual_heal},{disc_heal}}},",
                f"    meditationStrengthScale={{{med_strength[0]},1,{med_strength[1]},{med_strength[2]}}},",
                f"    meditationEarlyStress={{{disc},{couch},{divisor},{calm_boredom},{calm_buffer},{calm_stress}}},",

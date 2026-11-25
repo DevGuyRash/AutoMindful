@@ -20,6 +20,13 @@ local function supported()
     end) == true
 end
 
+-- Lifestyle's display tier, unrelated to the player's current Yoga skill level.
+-- The XP mechanisms are distinct; the pose factor is not a global multiplier.
+function Info.zenEffects(tier)
+    if not supported() or type(tier) ~= "number" or tier % 1 ~= 0 or tier < 1 or tier > 4 then return end
+    return tier * 1.1, math.ceil(tier / 2)
+end
+
 local function rawText(key)
     local translate = getTextOrNull or getText
     local value = safe(translate, key)
@@ -495,9 +502,11 @@ function Info.guide(player, progress)
     local currentZen = moodle(data, "Zen")
     local zenTier = currentZen and currentZen.Level
     if real(zenTier) and zenTier % 1 == 0 and zenTier >= 1 and zenTier <= 4 then
-        local meditationXP = ({"1.1", "2.2", "3.3", "4.4"})[zenTier]
-        local poseBonus = zenTier <= 2 and 1 or 2
-        zen[#zen + 1] = "Active now: Zen tier " .. zenTier .. " | Meditation XP x" .. meditationXP .. " | Yoga pose XP factor +" .. poseBonus .. "."
+        local meditationXP, poseBonus = Info.zenEffects(zenTier)
+        if meditationXP then
+            zen[#zen + 1] = "Active now: Zen tier " .. zenTier .. " | Meditation XP x" .. string.format("%.1f", meditationXP)
+                .. " | Yoga pose XP factor +" .. poseBonus .. "."
+        end
     end
     local lesson = data and data.WasTaughtLast
     local lessonLines = {

@@ -49,7 +49,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
         reference_root = lifestyle.expanduser().resolve() / "common/media"
         for name in ("perks.txt", "lua/client/Helper/HSMng.lua", "lua/client/ISMeditation/ZenWellnessContextMenu.lua",
                      "lua/shared/TimedActions/LSMeditateAction.lua", "lua/shared/TimedActions/LSYogaAction.lua",
-                     "lua/client/ISMeditation/Mindfulness.lua", "lua/client/ZLSUpdate.lua"):
+                     "lua/client/ISMeditation/Mindfulness.lua", "lua/client/LSMoodleManager.lua", "lua/client/ZLSUpdate.lua"):
             references[name] = hashlib.sha256((reference_root / name).read_bytes()).hexdigest()
     command = [lua, "tests/contracts.lua"]
     if reference_root:
@@ -67,7 +67,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                          ("recovery-mode", "recovery_mode.lua"), ("smarter-recovery", "smarter_recovery.lua"), ("strict-recovery-tier", "strict_recovery_tier.lua"), ("sleep-healing", "sleep_healing.lua"), ("walking-handoff", "walking_handoff.lua"),
                          ("progress-contracts", "progress.lua"),
                          ("skills-pane-contracts", "skills_pane.lua"), ("yoga-bar-contracts", "yoga_bar.lua"),
-                         ("wellness-guide-contracts", "wellness.lua"),
+                         ("wellness-guide-contracts", "wellness.lua"), ("zen-moodle", "zen_moodle.lua"),
                          ("completion-hud-contracts", "completion_hud.lua"),
                          ("endurance-journey-contracts", "endurance_journey.lua"),
                          ("consumable-contracts", "consumables.lua"), ("supply-policy-contracts", "supply_policy.lua"),
@@ -79,7 +79,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
             suite.append(str(game.expanduser().resolve() / "media"))
         elif game and reference_root and script == "hygiene_care.lua":
             suite.extend((str(game.expanduser().resolve() / "media"), str(reference_root)))
-        elif reference_root and script in ("progress.lua", "restroom_care.lua", "training_scheduler_integration.lua", "tier_targets.lua"):
+        elif reference_root and script in ("progress.lua", "restroom_care.lua", "training_scheduler_integration.lua", "tier_targets.lua", "zen_moodle.lua"):
             suite.append(str(reference_root))
         checks.append(check(evidence, name, suite))
     if reference_root:
@@ -132,7 +132,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-recovery-mode", "recovery_mode.lua"), ("native-smarter-recovery", "smarter_recovery.lua"), ("native-strict-recovery-tier", "strict_recovery_tier.lua"), ("native-sleep-healing", "sleep_healing.lua"), ("native-walking-handoff", "walking_handoff.lua"),
                                      ("native-lifestyle-mindfulness-effects", "mindfulness_native.lua"),
                                      ("native-skills-pane", "skills_pane.lua"), ("native-yoga-bar", "yoga_bar.lua"),
-                                     ("native-wellness-guide", "wellness.lua"),
+                                     ("native-wellness-guide", "wellness.lua"), ("native-zen-moodle", "zen_moodle.lua"),
                                      ("native-stock-skills-pane", "stock_skills_pane.lua"),
                                      ("native-stock-context-icons", "stock_context_icons.lua"),
                                      ("native-completion-hud-contracts", "completion_hud.lua"),

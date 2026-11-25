@@ -82,7 +82,7 @@ function Jobs.addRecovery(list, player, status)
     local present, words = Jobs.needs(player), {}
     for index, need in ipairs(present) do if index <= 3 then words[#words + 1] = need.label end end
     add(list, player, status, {id="recovery", mode="recovery", title=names.recovery,
-        sub=#words > 0 and ("Looks after: " .. table.concat(words, ", "):lower()) or "Nothing needs attention. Watches in the background"})
+        sub=#words > 0 and ("Looks after: " .. table.concat(words, ", "):lower()) or "Looks after the survivor while you play or are away"})
 end
 
 function Jobs.list(player, status)

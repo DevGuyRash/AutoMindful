@@ -4,7 +4,7 @@ require "Fluids/ISFluidTransferAction"
 local IntakeGuard = require "AutoMindful/IntakeGuard"
 
 AutoMindful = AutoMindful or {}
-local Fluids = {}
+local Fluids = {allowTainted = false}
 AutoMindful.Fluids = Fluids
 
 local unsafeReason = "This fluid mixture contains a tainted, poisonous, alcoholic, or otherwise unsafe component."
@@ -49,8 +49,25 @@ local function safeSample(sample)
     return true
 end
 
+-- Plain water that would make the survivor ill, and nothing else. Only a last
+-- resort (see Recovery) ever turns allowTainted on.
+local function plainTainted(container)
+    if not (Fluid and Fluid.TaintedWater) or not container:isTainted() then return false end
+    local sample = container:createFluidSample()
+    local ok, plain = pcall(function()
+        for index = 0, sample:size() - 1 do
+            local fluid = sample:getPercentage(index) > 0 and sample:getFluid(index)
+            if fluid and fluid ~= Fluid.Water and fluid ~= Fluid.TaintedWater then return false end
+        end
+        return sample:size() > 0
+    end)
+    sample:release()
+    return ok and plain
+end
+
 function Fluids.safe(container)
     if not container or not safeOwner(container) then return false, "The fluid's container is unsafe, frozen, or needs cooking." end
+    if Fluids.allowTainted and plainTainted(container) then return true end
     local properties = container:getProperties()
     if container:isPoisonous() or container:isTainted() or properties:getPoison() > 0
             or properties:getAlcohol() > 0 or properties:getFoodSicknessChange() > 0 then return false, unsafeReason end
@@ -59,6 +76,10 @@ function Fluids.safe(container)
     sample:release()
     if not succeeded then error(safe) end
     return safe, not safe and unsafeReason or nil
+end
+
+function Fluids.isWater(container)
+    return container:isPureFluid(Fluid.Water) or Fluids.allowTainted and plainTainted(container)
 end
 
 function Fluids.inspect(container)

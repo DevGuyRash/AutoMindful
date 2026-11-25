@@ -2,6 +2,7 @@ local Window = require "AutoMindful/Window"
 local Options = require "AutoMindful/Options"
 local Theme = require "AutoMindful/Theme"
 local Log = require "AutoMindful/Log"
+local Presence = require "AutoMindful/Presence"
 local WorldMenu = require "AutoMindful/WorldMenu"
 require "XpSystem/ISUI/ISCharacterInfo"
 require("AutoMindful/SkillsPane").install()
@@ -22,6 +23,7 @@ local function onGameStart()
 end
 
 local function keyPressed(key)
+    Presence.key(getTimestampMs())
     if getCore():isDoingTextEntry() or (ISChat and ISChat.focused) then return end
     if key == 0 or key ~= Options.windowKey() then return end
     local player = getSpecificPlayer(0)

@@ -578,6 +578,53 @@ Events.OnPlayerUpdate.Add(function(player)
             elseif command == "fluidcase" then setupFluidCase(player, line:match("^%S+%s+(%S+)") or "owned")
             elseif command == "fluidstate" then fixtureFluidState(player, "requested")
             elseif command == "xpstate" then progressSnapshot(player)
+            elseif command == "give" then
+                local kind, count = line:match("^%S+%s+(%S+)%s*(%d*)")
+                for _ = 1, tonumber(count) or 1 do player:getInventory():AddItem(kind) end
+            elseif command == "clear" then clearProvisions(player); clearLiterature(player)
+            elseif command == "wound" then
+                player:getBodyDamage():getBodyPart(BodyPartType.ForeArm_L):setCut(true)
+                player:getBodyDamage():getBodyPart(BodyPartType.ForeArm_L):setBleedingTime(20)
+            elseif command == "work" then
+                -- A row of ordinary actions nobody in AutoMindful owns, like chopping a row of trees.
+                local Work = ISBaseTimedAction:derive("FixtureWork")
+                function Work:isValid() return true end
+                function Work:perform()
+                    print("[AutoMindfulFixture] WORK done " .. self.number)
+                    ISBaseTimedAction.perform(self)
+                end
+                function Work:stop()
+                    print("[AutoMindfulFixture] WORK stopped " .. self.number)
+                    ISBaseTimedAction.stop(self)
+                end
+                local ticks, count = line:match("^%S+%s+(%d+)%s+(%d+)")
+                for index = 1, tonumber(count) do
+                    local action = ISBaseTimedAction.new(Work, player)
+                    action.number, action.maxTime = index, tonumber(ticks)
+                    ISTimedActionQueue.add(action)
+                end
+            elseif command == "zombie" then
+                local dx = tonumber(line:match("^%S+%s+(%-?%d+)")) or 8
+                local made = createZombie(player:getX() + dx, player:getY(), player:getZ(), nil, 0, IsoDirections.S)
+                print("[AutoMindfulFixture] ZOMBIE " .. tostring(made ~= nil))
+            elseif command == "unzombie" then
+                local list = getCell():getZombieList()
+                for index = list:size() - 1, 0, -1 do
+                    local zombie = list:get(index)
+                    zombie:removeFromWorld(); zombie:removeFromSquare()
+                end
+            elseif command == "health" then player:getBodyDamage():AddGeneralHealth(tonumber(line:match("^%S+%s+(%-?%d+)")))
+            elseif command == "goto" then
+                local dx, dy = line:match("^%S+%s+(%-?%d+)%s+(%-?%d+)")
+                player:setX(player:getX() + tonumber(dx)); player:setY(player:getY() + tonumber(dy))
+            elseif command == "save" then save(true)
+            elseif command == "rates" then
+                local s = player:getStats()
+                print("[AutoMindfulFixture] RATES h=" .. getGameTime():getWorldAgeHours() .. " hunger=" .. s:get(CharacterStat.HUNGER)
+                    .. " thirst=" .. s:get(CharacterStat.THIRST) .. " day=" .. getGameTime():getMinutesPerDay())
+            elseif command == "pos" then
+                print("[AutoMindfulFixture] POS " .. player:getX() .. "," .. player:getY() .. " asleep=" .. tostring(player:isAsleep())
+                    .. " bed=" .. tostring(player:getBedType()) .. " queue=" .. #ISTimedActionQueue.getTimedActionQueue(player).queue)
             elseif command == "staminastate" then
                 local actions = {}
                 for _, action in ipairs(ISTimedActionQueue.getTimedActionQueue(player).queue) do

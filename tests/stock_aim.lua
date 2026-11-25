@@ -330,15 +330,11 @@ for _,input in ipairs({"aim","run","cancel"}) do
             and not first.starts and not second.starts,"A stock stop erased or started someone else's work")
         p.nativeHead=nil; q:tick(); step(p)
         assert(first.starts==1 and not second.starts and not first.autoMindfulOwner and not first.cancels)
-        assert(C.status(p).active==(input~="cancel") and #p.cards==0)
+        assert(C.status(p).active and #p.cards==0,"Only Stop ends Recovery; Escape steps back")
         finish(p,first); assert(q.queue[1]==second and second.starts==1 and not second.cancels)
         finish(p,second); step(p,5)
-        if input=="cancel" then
-            assert(not C.status(p).active and not q.queue[1] and #p.cards==0)
-        else
-            assert(C.status(p).active and #p.cards==0 and q.queue[1]~=own and q.queue[1].Type=="drink")
-            C.stop(p,"test cleanup")
-        end
+        assert(C.status(p).active and #p.cards==0 and q.queue[1]~=own and q.queue[1].Type=="drink")
+        C.stop(p,"test cleanup")
     end)
 end
 test("Recovery waits out an unrelated Java-only action with no Lua queue entry",function()

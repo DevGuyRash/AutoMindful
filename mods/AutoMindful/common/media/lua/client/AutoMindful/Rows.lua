@@ -254,6 +254,8 @@ function Rows:measure()
         self:setYScroll(-math.max(0, self.contentHeight - self.height))
     end
     if self.vscroll then
+        self.vscroll:setAnchorRight(false)
+        self.vscroll:setAnchorBottom(false)
         self.vscroll:setX(self.width - self.vscroll.width)
         self.vscroll:setHeight(self.height)
         self.vscroll:setVisible(self.contentHeight > self.height)

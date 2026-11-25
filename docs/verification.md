@@ -51,6 +51,9 @@ Fixture commands belong in the disposable cache's `Lua/automindful-fixture-comma
 Cover these user journeys before a release:
 
 - Right-click the ground while idle: only Lifestyle's Wellness entry, with AutoMindful beside its own action. Start each job from there and from the window, switch without stopping, stop from the menu, the window and the one-line strip. While a job runs, right-click your survivor and then something else: only the first shows AutoMindful. Right-click a yoga mat for **Train Yoga here**.
+- Recovery while you work: queue several ordinary actions with a first hunger moodle and ready food carried. One meal goes between two of them and every action still runs. Recovery while you stand: the survivor is not sat down or walked off while the mouse moves. Recovery away: **I am going AFK**, then a small need, a bed, a bottle beside a tap, a cut with a bandage in a bag.
+- Danger: a zombie in view while thirsty with a bottle carried, one chasing, a cut without a bandage, sitting in a parked car. Check the window text and the log's `guard`, `firstaid`, `alert` and `outlook` lines.
+- Leave the game with Recovery on and load in again. It starts by itself.
 - Check every tab at your own font size, the fitted height, a chosen size, and that the window position survives a restart. Confirm the shortcut opens and closes it and that Escape leaves it alone.
 - Open the newest `Lua/AutoMindful/log-N.txt` and follow one care trip from the decision to the measured relief.
 - Move into and out of stock range, transfer items manually, toggle collection during training, and confirm live counts and read-only check feedback. Start with no food or drink and ordinary needs; confirm that genuine critical or native action blockers still stop appropriately.

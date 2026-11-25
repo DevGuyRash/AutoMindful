@@ -275,8 +275,19 @@ end)
 
 
 
-test("Stop All and world cancel disarm without clearing unrelated native work", function()
-    for _, stop in ipairs({"button","world"}) do
+test("Escape steps back without giving the survivor up", function()
+    local p = survivor(10)
+    started(p,"recovery")
+    p.cancelInput=true; steps(p,4); p.cancelInput=false
+    assert(C.status(p).active and C.status(p).phase=="manual")
+    local bottle=water(p); p.values.THIRST,p.thirstMoodle=0.46,4
+    awaitHead(p,"drink"):perform()
+    assert(bottle.fluid:getAmount()<1)
+    C.stop(p)
+end)
+
+test("Stop All disarms without clearing unrelated native work", function()
+    for _, stop in ipairs({"button"}) do
         local p = survivor(10)
         started(p,"recovery")
         local job=T.action(p,"OtherModsTimedWork")
@@ -356,7 +367,17 @@ test("temporary danger pauses Recovery, but a dead survivor stays disarmed", fun
     started(p,"recovery")
     local bottle=water(p)
     p.values.THIRST,p.thirstMoodle=.46,4
-    for _,danger in ipairs({{"zombies",1},{"bleeding",1},{"fire",true},{"vehicle",{}},{"unloaded",true}}) do
+    -- Seen from a window, bleeding, or in a parked car: the bottle in hand stays in hand.
+    for _,danger in ipairs({{"zombies",1},{"bleeding",1},{"vehicle",{}}}) do
+        local care=awaitHead(p,"drink")
+        p[danger[1]]=danger[2]
+        steps(p,4)
+        assert(head(p)==care and not care.stopped and C.status(p).guard,danger[1])
+        p[danger[1]]=nil
+        p.movementInput=true; step(p); p.movementInput=false
+        steps(p,2)
+    end
+    for _,danger in ipairs({{"chasing",1},{"fire",true},{"unloaded",true}}) do
         local care=awaitHead(p,"drink")
         p[danger[1]]=danger[2]
         step(p)

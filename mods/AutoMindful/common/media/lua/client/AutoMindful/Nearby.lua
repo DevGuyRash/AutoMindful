@@ -27,12 +27,13 @@ local function normalizedRadius(radius)
 end
 
 local function usableWater(object)
-    if not object:hasWater() or object:getFluidAmount() <= 0 or object:isTaintedWater() then return false end
+    if not object:hasWater() or object:getFluidAmount() <= 0 or object:isTaintedWater() and not Fluids.allowTainted then return false end
     local fluid = object:getFluidContainer()
     if fluid and not fluid:isEmpty() then
-        return fluid:isPureFluid(Fluid.Water) and Fluids.inspect(fluid) ~= nil
+        return Fluids.isWater(fluid) and Fluids.inspect(fluid) ~= nil
     end
-    return object:getPrimaryFluid() == Fluid.Water
+    local primary = object:getPrimaryFluid()
+    return primary == Fluid.Water or Fluids.allowTainted and Fluid.TaintedWater ~= nil and primary == Fluid.TaintedWater
 end
 
 -- Revalidate a radius-cache entry before handing its current object to stock pathfinding.

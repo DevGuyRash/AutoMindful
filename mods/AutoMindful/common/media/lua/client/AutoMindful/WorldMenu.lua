@@ -69,6 +69,10 @@ local function stop(player) Jobs.stop(player, "menu") end
 local function fillRunning(menu, player, status)
     local option = menu:addOption("Stop", player, stop)
     if option then tip(menu, option, "Stop AutoMindful", "Your own actions and other mods' actions keep going.") end
+    if status.mode == "recovery" then
+        local away = menu:addOption(status.away and "I am back" or "I am going AFK", player, Controller.setAway, not status.away)
+        if away then tip(menu, away, "Recovery", status.away and "Back to small help only." or "Full care from now on, and a warning if something would go wrong.") end
+    end
     local switch = menu:addOption("Switch to", nil, nil)
     local offered = switch and fillJobs(submenu(menu, switch), player, status) or ""
     menu:addOption("Show window", player, Window.open)

@@ -8,8 +8,14 @@ for _, name in ipairs({"TimedActions/ISTimedActionQueue", "TimedActions/ISReadAB
 end
 package.preload["Vehicles/TimedActions/ISPathFindAction"] = function() return true end
 package.preload["TimedActions/WalkToTimedAction"] = function() return true end
+package.preload["TimedActions/ISApplyBandage"] = function() return true end
+package.preload["TimedActions/ISQueueActionsAction"] = function() return true end
 local roaming = {enabled=false, radius=10}
-package.loaded["AutoMindful/Options"] = {cyclePolicy=function() return "alternate" end,searchNearby=function() return roaming.enabled end,
+-- Recovery's waiting times have their own test; here every mechanism is on and
+-- prompt so a journey shows what it does rather than when.
+local on = function() return true end
+package.loaded["AutoMindful/Options"] = {awayMs=function() return 180000 end,careBetween=function() return false end,firstAid=on,refill=function() return false end,
+    useBeds=function() return false end,lastResort=function() return false end,alertSound=on,resumeRecovery=on,cyclePolicy=function() return "alternate" end,searchNearby=function() return roaming.enabled end,
     searchRadius=function() return roaming.radius end}
 local nearbyTarget, nearbyArea
 package.loaded["AutoMindful/Nearby"] = {find=function(_, _, _, _, rejected)
@@ -43,7 +49,9 @@ package.preload["AutoMindful/CompletionHUD"] = function()
     PZActionCompletionHUD = {
         show=function(slot, card)
             assert(slot == T.player:getPlayerNum(), "Completion card must use the survivor's local slot")
-            T.player.cards[#T.player.cards+1] = card
+            -- A request for help is not the end of a session.
+            local list = card.title == "Recovery needs you" and "alerts" or "cards"
+            T.player[list][#T.player[list]+1] = card
         end,
         duration=function(seconds) return string.format("%ds", math.floor(seconds)) end,
     }
@@ -196,7 +204,7 @@ function T.playerNew()
     local p = {inventory=T.container(), values={HUNGER=0.05, THIRST=0, BOREDOM=0, ENDURANCE=1, FATIGUE=0, PAIN=0, PANIC=0}, meditation=0, xp=0, yoga={0,0,100}, hours=10, calories=2000, read={}, printRead={}, history={}, traits={}}
     p.loadedSquares = {}
     T.loadSquare(p,p.inventory:getSourceGrid())
-    p.halos, p.cards = {}, {}
+    p.halos, p.cards, p.alerts = {}, {}, {}
     p.inventoryPage={}
     p.lootPage={refreshBackpacks=function()
         p.refreshCount=(p.refreshCount or 0)+1
@@ -212,7 +220,7 @@ function T.playerNew()
     function p:getInventory() return self.inventory end
     function p:isLocalPlayer() return true end
     function p:getPlayerNum() return self.slot or 0 end
-    function p:getStats() return {get=function(_, name) return p.values[name] or 0 end, getNumVisibleZombies=function() return p.zombies or 0 end, getNumChasingZombies=function() return 0 end, getNumVeryCloseZombies=function() return 0 end} end
+    function p:getStats() return {get=function(_, name) return p.values[name] or 0 end, getNumVisibleZombies=function() return p.zombies or 0 end, getNumChasingZombies=function() return p.chasing or 0 end, getNumVeryCloseZombies=function() return 0 end} end
     function p:getBodyDamage() return {getOverallBodyHealth=function() return 100 end, getNumPartsBleeding=function() return 0 end} end
     function p:getNutrition() return {getCalories=function() return p.calories end} end
     function p:getMoodles() return {getMoodleLevel=function(_, kind) return kind == "pain" and p.painMoodle or kind == "food" and p.foodMoodle or kind == "hungry" and p.hungerMoodle or kind == "thirst" and p.thirstMoodle or kind == "panic" and p.panicMoodle or kind == "smell" and p.smellMoodle or 0 end} end
@@ -442,6 +450,11 @@ for _, kind in ipairs({"Yoga", "Meditation"}) do
 end
 local C = require "AutoMindful/Controller"
 T.controller = C
+do
+    local policy = require("AutoMindful/Presence").policy
+    T.presencePolicy = {}
+    for key, value in pairs(policy) do T.presencePolicy[key], policy[key] = value, key == "early" and 2000 or 0 end
+end
 function T.tick(p, finish, gameHours)
     T.now = T.now+1000
     p.hours = p.hours+(gameHours or 0.01)

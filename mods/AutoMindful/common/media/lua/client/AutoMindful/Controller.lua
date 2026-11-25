@@ -1945,6 +1945,8 @@ local function train(player, state, kind, bridge, course)
     local queued=ownBatch(player, state, course and "practice-care" or kind,
         strict and ((kind=="yoga" and "Practicing Yoga" or "Meditating").." toward "
             ..(Tiers.label(kind,strict.target) or "the selected tier").."; other actions still take priority.")
+            or course and course.target=="hunger" and ("Meditating toward "
+                ..(Tiers.label(kind,course.targetTier) or "Strong Mindfulness").." for hunger relief.")
             or course and ((kind=="yoga" and "Practicing Yoga" or "Meditating").." for "..course.need..(state.recovery and "; other actions can take over." or "; training resumes afterward."))
             or target and ((kind=="yoga" and "Practicing Yoga" or "Meditating").." toward "
                 ..(Tiers.label(kind,target.target) or "the selected tier")..".")
@@ -2951,10 +2953,14 @@ local function advance(player, state)
         state.turnTier=nil
         setCycleDebt(cycle,nil)
         noteCycle(state,"complete",nil,nil)
-        state.active = false
-        state.endPhase, state.endMessage = "complete", "Training complete. Selected skills have reached level 10."
-        setPhase(state, state.endPhase, state.endMessage)
+        -- XP is complete, not the shared care session. Preserve the native
+        -- hunger watch, route failures, loans and all other care observations.
+        state.endPhase = "complete"
         showSessionEnd(player, state)
+        state.endPhase, state.endMessage = nil, nil
+        state.mode, state.recovery, state.cycle, state.trainingKind = "recovery", true, nil, nil
+        state.recoveryHandoffArmed = nil
+        setPhase(state, "recovering", "Selected skills reached level 10. Recovery stays on.")
         return
     end
     local policy=state.backgroundPractice and "alternate" or currentCyclePolicy(player)
@@ -3967,6 +3973,7 @@ function Controller.update(player)
             local pain = not state.contextVisible and painAvailable(player, state, now)
             local lifestyle = not state.contextVisible and lifestyleReady(player,state,now)
             local reason=urgent and "critical-food-or-water" or drinking and "water" or eating and "food"
+                or Controller.firstHungerCourse(player,state) and "hunger-care"
                 or pain and "painkillers-available" or reading and "boredom-reading" or lifestyle and "lifestyle-care"
                 or sleepAdmitted(bedtime) and "sleep" or (meditation >= 10 and not state.backgroundPractice
                     and not state.tierGoal and not enduranceOnly) and "meditation-rank-cap"

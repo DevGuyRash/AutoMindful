@@ -172,16 +172,17 @@ for tick=1,200000 do
             end
         else a:perform() end
     end
-    if not C.status(p).active then break end
+    if not C.status(p).active or C.status(p).mode=="recovery" then break end
 end
 local status=C.status(p)
-assert(status.phase == "complete",status.message)
+assert(status.active and status.mode == "recovery",status.message)
 assert(status.meditation == 10 and status.yoga == 10,"Both real upstream action paths must reach their maximum")
 assert(poses > 10 and medTicks > 10 and sessions > 2,"Real upstream repeated actions must run")
 assert(failedPoses > 0,"Pose failures must be exercised by the deterministic random sequence")
 assert(T.hasHistory(p,"read"),"Boredom recovery must use a provision and resume")
 print("UPSTREAM PASS real Lifestyle action logic and hidden-skill thresholds reach 10/10; poses="..poses.." failed="..failedPoses.." meditationUpdates="..medTicks)
 print("UPSTREAM SCOPE accelerated action clock; modeled player, queues, mood application and raw-metadata XP receiver; not native engine or multiplayer progression")
+C.stop(p) -- End the continuing Recovery before the separate Yoga interruption fixture.
 
 -- Read the installed hidden-skill tuple on each side of real grantXP/stop.
 -- Only the clock, player and waiting foreign queue owner are modeled.

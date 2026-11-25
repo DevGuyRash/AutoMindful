@@ -454,7 +454,8 @@ end
 function T.run(p, limit)
     for i=1,limit or 400 do
         T.tick(p)
-        if not C.status(p).active then return C.status(p) end
+        local status=C.status(p)
+        if not status.active or status.mode=="recovery" then return status end
     end
     error("Automation did not terminate")
 end
@@ -470,7 +471,7 @@ test("one terminal meditation card uses observed XP, elapsed time, and the local
     assert(C.start(p,"meditation",false)); T.tick(p)
     assert(#p.cards==0 and C.status(p).active, "A finished native action is not a finished AutoMindful session")
     T.tick(p)
-    assert(C.status(p).phase=="complete" and #p.cards==1 and #p.halos==0)
+    assert(C.status(p).mode=="recovery" and C.status(p).active and #p.cards==1 and #p.halos==0)
     local card=p.cards[1]
     assert(card.brand=="AUTOMINDFUL" and card.theme=="mindful")
     assert(card.title=="Meditation session complete" and card.detail=="2s | +1 Meditation XP")
@@ -489,7 +490,7 @@ end)
 
 test("yoga level caps use level changes when XP is not recoverable",function()
     local p=T.playerNew(); p.yoga={9,97,100}
-    assert(C.start(p,"yoga",false)); assert(T.run(p,5).phase=="complete")
+    assert(C.start(p,"yoga",false)); assert(T.run(p,5).mode=="recovery")
     assert(#p.cards==1 and p.cards[1].title=="Yoga session complete")
     assert(p.cards[1].detail:find("Yoga level 9 → 10",1,true) and not p.cards[1].detail:find("XP",1,true))
 end)
@@ -513,15 +514,15 @@ test("both targets reach 10 with model provisions and native boundary actions",f
     T.add(p.inventory,T.item("Food")); T.add(p.inventory,T.water())
     for i=1,20 do T.add(p.inventory,T.item("Literature")) end
     assert(C.start(p,"both",false)); local s=T.run(p)
-    assert(s.phase == "complete" and s.meditation == 10 and s.yoga == 10)
+    assert(s.mode == "recovery" and s.active and s.meditation == 10 and s.yoga == 10)
     assert(#p.cards==1 and p.cards[1].title=="Training session complete")
     assert(hasHistory(p,"read") and hasHistory(p,"eat") and hasHistory(p,"drink"))
 end)
-test("single targets stop at 10 and leave the other skill unchanged",function()
+test("single targets switch to Recovery at 10 and leave the other skill unchanged",function()
     for _, mode in ipairs({"yoga","meditation"}) do
         local p=T.playerNew(); for i=1,20 do T.add(p.inventory,T.item("Literature")) end
         assert(C.start(p,mode,false)); local s=T.run(p)
-        assert(s.phase == "complete")
+        assert(s.mode == "recovery" and s.active)
         assert(mode == "yoga" and s.yoga == 10 and s.meditation == 0 or mode == "meditation" and s.meditation == 10 and s.yoga == 0)
     end
 end)
@@ -967,7 +968,7 @@ test("borrowed literature returns to its original container and meditation resum
     local book=T.add(shelf,T.item("Literature"))
     p.nearby={shelf}
     assert(C.start(p,"meditation",true)); local status=T.run(p)
-    assert(status.phase=="complete" and status.meditation==10)
+    assert(status.mode=="recovery" and status.meditation==10)
     assert(shelf:contains(book) and not p.inventory:contains(book))
     assert(status.pendingReturns==0 and hasHistory(p,"read") and hasHistory(p,"Meditation"))
 end)
@@ -978,7 +979,7 @@ test("borrowed resources keep their origin when native synchronization replaces 
     T.remove(p.inventory,original)
     local synchronized=T.item("Literature"); synchronized.id=original.id; T.add(p.inventory,synchronized)
     local status=T.run(p)
-    assert(status.phase=="complete" and shelf:contains(synchronized) and not p.inventory:contains(synchronized))
+    assert(status.mode=="recovery" and shelf:contains(synchronized) and not p.inventory:contains(synchronized))
 end)
 test("borrowed drinks return the same partly filled bottle and preserve owned items",function()
     local p=T.playerNew(); p.values.THIRST=.25
@@ -1090,7 +1091,7 @@ test("borrowed books return to their original floor square and carried bag",func
         end
         local book=T.add(source,T.item("Literature"))
         assert(C.start(p,"meditation",floorSource)); local status=T.run(p)
-        assert(status.phase=="complete" and source:contains(book) and not p.inventory:contains(book))
+        assert(status.mode=="recovery" and source:contains(book) and not p.inventory:contains(book))
         if floorSource then assert(book:getWorldItem():getSquare()==source.square) end
     end
 end)

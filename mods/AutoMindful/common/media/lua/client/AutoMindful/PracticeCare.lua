@@ -167,7 +167,7 @@ local function mindfulness(input, m, y, yogaPain, boredom, pain, canStart)
         passivePanic=passive -- Basic is already easing panic; building Strong need not displace it.
     end
     if input.confirmedFood==false then
-        attempt,passive=PracticeCare.hungerPlan(hunger,level,tier,m and input.acquireHunger~=false and input.preferTraining~="meditation"
+        attempt,passive=PracticeCare.hungerPlan(hunger,level,tier,m and input.acquireHunger~=false
             and (canStart or input.renewHunger==true or input.hungerOnly==true),input.hungerLevel)
         if attempt or passive then return attempt,passive end
     end
@@ -206,7 +206,7 @@ function PracticeCare.choose(input)
         elseif PracticeCare.needsRelief("stiffness","yoga",y,stiffness,input.recovery) then yogaNeed="stiffness" end
     end
     -- Only a real, actionable hunger fallback may outrank optional comfort Yoga.
-    -- A native Meditation blocker, confirmed treatment or helpful scheduled leg still wins.
+    -- Hunger acquisition is care even when the scheduled XP leg is Meditation.
     local attempt,passive=mindfulness(input,m,y,yogaPain,boredom,pain,canStart)
     if input.hungerOnly or input.healthOnly or (attempt and attempt.target=="hunger") then return attempt,passive end
     if yogaNeed and canStart then

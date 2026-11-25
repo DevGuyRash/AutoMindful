@@ -634,6 +634,78 @@ do
     C.stop(p)
 end
 
+-- Live multiplayer can reassert the floor sit immediately after stock stand
+-- completion, even without an observed isGettingUp phase.
+do
+    local p=T.playerNew()
+    p.noXP,p.sitting,p.yoga=true,true,{10,0,0}
+    assert(C.start(p,"yoga",false))
+    local prep=await(p,"stand")
+    T.now=T.now+300
+    prep:perform()
+    T.now=T.now+50; C.update(p)
+    assert(count(p,"Yoga")==0,"Do not admit Yoga on the first transient standing sample")
+    p.sitting=true; step(p)
+    assert(count(p,"stand")==1 and count(p,"Yoga")==0,"Give the native posture time to settle before another stand")
+    p.sitting=false
+    await(p,"Yoga")
+    assert(count(p,"stand")==1)
+    C.stop(p)
+end
+
+-- Persistent re-sitting before Yoga dispatch also has a bounded retry.
+do
+    local p=T.playerNew()
+    p.noXP,p.sitting,p.yoga=true,true,{10,0,0}
+    assert(C.start(p,"yoga",false))
+    for _=1,2 do
+        await(p,"stand"):perform()
+        p.sitting=true
+        step(p)
+    end
+    for _=1,20 do step(p); assert(C.status(p).active and not queue(p)[1]) end
+    assert(count(p,"stand")==2 and count(p,"Yoga")==0)
+    p.sitting=false
+    await(p,"Yoga")
+    assert(count(p,"stand")==2 and count(p,"Yoga")==1)
+    C.stop(p)
+end
+
+-- If floor pose wins twice at the native startup edge, don't stand the
+-- survivor in a loop or count these known stops as unexplained failures.
+do
+    local p=T.playerNew()
+    p.noXP,p.yoga=true,{10,0,0}
+    local option=ZenWellnessContextMenu.Options.Yoga
+    local original=option.onAction
+    option.onAction=function(_,_,p)
+        local action=T.action(p,"Yoga")
+        function action:start() end -- the real Lifestyle action has a start hook
+        ISTimedActionQueue.add(action)
+    end
+    assert(C.start(p,"yoga",false))
+    for _=1,2 do
+        local yoga=await(p,"Yoga")
+        p.sitting=true
+        yoga:stop()
+        step(p)
+    end
+    local standCount=count(p,"stand")
+    for _=1,30 do step(p); assert(C.status(p).active and not queue(p)[1]) end
+    assert(standCount==1 and count(p,"stand")==1 and count(p,"Yoga")==2)
+    assert(C.status(p).message:find("standing posture",1,true))
+    local workout=T.action(p,"UnrelatedWorkout")
+    ISTimedActionQueue.add(workout)
+    step(p)
+    assert(queue(p)[1]==workout and not workout.stopped)
+    workout:perform()
+    p.sitting=false
+    await(p,"Yoga")
+    assert(count(p,"stand")==1 and count(p,"Yoga")==3)
+    C.stop(p)
+    option.onAction=original
+end
+
 -- A recovery opening is a real interrupted opportunity, not a Meditation
 -- completion. Even when every such opening is claimed by another mod and
 -- drains below the Yoga gate, the second interrupted leg leaves Yoga due.

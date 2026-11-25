@@ -529,7 +529,9 @@ local function ownAction(player, state, action)
     if state.excursion and state.excursion.stage == "outbound" then RouteOutcome.observe(action) end
     local finishTiming=timeScoutLeg(player,state,action)
     local work=state.practiceWork
-    local yoga=work and not state.backgroundPractice and work.kind=="yoga" and isPractice(action,"yoga")
+    local yogaAction=isPractice(action,"yoga")
+    if yogaAction and action:isStarted() then action.autoMindfulYogaStartedAt=getTimestampMs() end
+    local yoga=work and not state.backgroundPractice and work.kind=="yoga" and yogaAction
     if yoga then
         -- These instance-local hooks only observe Lifestyle's mutation. Stock
         -- base:perform can start another producer before perform() returns.
@@ -549,12 +551,25 @@ local function ownAction(player, state, action)
         if original then
             if yoga and method~="start" then original=yogaReceipt(player,state,work,method,original) end
             action[method] = function(self, ...)
-                if yoga and method=="start" then work.entry=Progress.yoga(player) end
+                if method=="start" and yogaAction then
+                    self.autoMindfulYogaStartedAt=getTimestampMs()
+                    if yoga then work.entry=Progress.yoga(player) end
+                end
                 if finishTiming then finishTiming(method,self) end
                 if method == "perform" then self.autoMindfulFinished = true end
                 local pending, queue = state.pending, queueFor(player)
                 if method == "stop" then
                     self.autoMindfulStopped = true
+                    local yogaStarted=self.autoMindfulYogaStartedAt
+                    if pending and state.active and queue[1]==self and yogaStarted
+                            and getTimestampMs()-yogaStarted<1000 and self:isStarted()
+                            and player:isSitOnGround() and not player:getVehicle()
+                            and not player:pressedMovement(false) and not player:pressedCancelAction() then
+                        self.autoMindfulPostureBounced=true
+                        state.yogaPostureBounces=1+(state.yogaPostureBounces or 0)
+                        state.standStableSince=nil
+                        print("[AutoMindful] Yoga startup returned to floor sitting; bounce="..state.yogaPostureBounces)
+                    end
                     if pending and state.active and state.recovery and queue[1]==self then
                         return Controller.recoveryNativeStop(player,state,queue,self,original,...)
                     end
@@ -615,6 +630,12 @@ local function ownAction(player, state, action)
                 local before = {}
                 for _, queued in ipairs(queue) do before[queued] = true end
                 local result = original(self, ...)
+                if state.pending == pending and method=="perform" and self.autoMindfulYogaStand then
+                    local now=getTimestampMs()
+                    state.yogaStandCompletedAt=now
+                    state.standStableSince=not player:isSitting() and not player:isSitOnGround()
+                        and not (player.isGettingUp and player:isGettingUp()) and now or nil
+                end
                 if state.pending == pending then
                     for _, queued in ipairs(queueFor(player)) do
                         if not before[queued] then ownAction(player, state, queued) end
@@ -972,11 +993,39 @@ local function stand(player, state, message)
         end
         state.standTransitionSince, state.standStableSince = nil, nil
     end
+    if not message then
+        local seated=player:isSitting() or player:isSitOnGround() or player:isSittingOnFurniture()
+        local recent=state.yogaStandCompletedAt
+        if recent and seated and now-recent>=750 then
+            state.yogaStandCompletedAt=nil
+            recent=nil
+            state.yogaPostureBounces=1+(state.yogaPostureBounces or 0)
+        end
+        local repeated=(state.yogaPostureBounces or 0)>=2
+        if recent or repeated then
+            if seated then state.standStableSince=nil
+            else state.standStableSince=state.standStableSince or now end
+            local settled=state.standStableSince and now-state.standStableSince>=(repeated and 500 or 180)
+            if not settled and (not seated or repeated or now-recent<750) then
+                setPhase(state,repeated and "recovering" or "standing",
+                    repeated and "Yoga is waiting for a stable standing posture. Stand normally when ready."
+                    or "Waiting for the standing posture to settle before Yoga.")
+                return false
+            end
+            state.yogaStandCompletedAt,state.standStableSince=nil,nil
+        end
+        if player:isSitOnGround() and not player:isSitting() then
+            setPhase(state,"recovering","Waiting for the game's floor-sitting and standing states to agree before Yoga.")
+            return false
+        end
+    end
     if not leaveFurniture(player, state) then return false end
     state.furnitureAttempted = nil
-    if not player:isSitting() then return true end
+    if not player:isSitting() and (message or not player:isSitOnGround()) then return true end
     ownBatch(player, state, "standing", message or "Standing up for yoga.", function()
-        ISTimedActionQueue.add(ISWaitWhileGettingUp:new(player))
+        local action=ISWaitWhileGettingUp:new(player)
+        if not message then action.autoMindfulYogaStand=true end
+        ISTimedActionQueue.add(action)
     end)
     return false
 end
@@ -3431,11 +3480,17 @@ local function observeTrainingBatch(player, state, queue, now)
     -- to enqueue practice. Its bag action alone is not a training receipt.
     local practiced = false
     for _, action in ipairs(batch) do
+        if action.autoMindfulPostureBounced and not queue[1] then
+            state.pending=nil
+            closePractice(state)
+            return false -- Keep the selected leg; this is not an unexplained interruption.
+        end
         if action.autoMindfulStopped or not action.autoMindfulFinished then return not queue[1] end
         if isPractice(action,state.trainingKind) then practiced = true end
     end
     if not practiced then return not queue[1] end
     local cycle,kind=state.cycle,state.trainingKind
+    if kind=="yoga" then state.yogaPostureBounces,state.yogaStandCompletedAt=nil,nil end
     local bridge=state.practiceWork and state.practiceWork.bridge
     local goal=state.tierGoal
     if not goal and state.turnTier then goal=recheckTurnTier(state,levels(player)) end

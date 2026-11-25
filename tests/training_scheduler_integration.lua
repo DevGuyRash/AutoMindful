@@ -653,6 +653,24 @@ do
     C.stop(p)
 end
 
+-- Persistent re-sitting before Yoga dispatch also has a bounded retry.
+do
+    local p=T.playerNew()
+    p.noXP,p.sitting,p.yoga=true,true,{10,0,0}
+    assert(C.start(p,"yoga",false))
+    for _=1,2 do
+        await(p,"stand"):perform()
+        p.sitting=true
+        step(p)
+    end
+    for _=1,20 do step(p); assert(C.status(p).active and not queue(p)[1]) end
+    assert(count(p,"stand")==2 and count(p,"Yoga")==0)
+    p.sitting=false
+    await(p,"Yoga")
+    assert(count(p,"stand")==2 and count(p,"Yoga")==1)
+    C.stop(p)
+end
+
 -- If floor pose wins twice at the native startup edge, don't stand the
 -- survivor in a loop or count these known stops as unexplained failures.
 do

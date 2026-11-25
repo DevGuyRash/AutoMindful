@@ -996,6 +996,11 @@ local function stand(player, state, message)
     if not message then
         local seated=player:isSitting() or player:isSitOnGround() or player:isSittingOnFurniture()
         local recent=state.yogaStandCompletedAt
+        if recent and seated and now-recent>=750 then
+            state.yogaStandCompletedAt=nil
+            recent=nil
+            state.yogaPostureBounces=1+(state.yogaPostureBounces or 0)
+        end
         local repeated=(state.yogaPostureBounces or 0)>=2
         if recent or repeated then
             if seated then state.standStableSince=nil

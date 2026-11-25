@@ -1081,7 +1081,7 @@ local function yieldToPlayer(player, state, unexplained, walking, settling, paus
         elseif trip then
             if trip.outboundFailed then
                 Controller.forgetScoutStop(state,trip.target)
-                if SurvivalRoute.known(trip.target,trip.kind) then
+                if trip.target.unknown or SurvivalRoute.known(trip.target,trip.kind) then
                     Controller.rejectScoutPath(state,trip,getTimestampMs(),"native-failed-before-yield")
                 else state.travelRejected[trip.target.key]=(trip.careTarget or trip.waterObject) and getTimestampMs()+15000 or true end
             end
@@ -1311,12 +1311,28 @@ local function usePainkiller(player, state, item, loan)
     return false
 end
 
+-- The scouted original gets a state-sensitive veto when the leg settles.
+-- Do not leave a separate unconditional item-ID rejection that defeats refill.
+function Controller.scoutIntakeTrace(player,state,event,reason,detail)
+    local trip=state.excursion
+    if not trip then return end
+    local intake=trip.intake
+    if not detail and intake then detail=Supplies.scoutIntakeDetails(intake.item) end
+    Controller.scoutTrace(player,state,trip,event,reason..(detail and " "..detail or ""))
+end
+
+function Controller.scoutOwnsIntake(state,item)
+    local intake=state.excursion and state.excursion.intake
+    return intake and item and intake.item:getID()==item:getID()
+end
+
 local function useSupply(player, state, kind, item, loan)
     if kind == "pain" then return usePainkiller(player, state, item, loan) end
     local descriptor = Consumables.inspect(player, item, state.collectNearby or Options.searchNearby() or state.excursion ~= nil)
     if kind ~= "literature" and not descriptor[kind] then
-        state.rejected[item:getID()] = getTimestampMs() + 60000
+        if not Controller.scoutOwnsIntake(state,item) then state.rejected[item:getID()] = getTimestampMs() + 60000 end
         state.supplyMissingReason = descriptor.reason or "This supply is no longer usable."
+        Controller.scoutIntakeTrace(player,state,"stock-invalid","ineligible-after-pickup",Supplies.scoutIntakeDetails(item))
         if loan then loan.defer = nil end
         resetSupply(state)
         return false
@@ -1329,7 +1345,8 @@ local function useSupply(player, state, kind, item, loan)
             state.collectNearby or Options.searchNearby() or state.excursion ~= nil, state.rejected)
         if candidate then return beginFluidSupply(player, state, candidate.transfer) end
         state.fluidNotice = reason or "Bring a clean empty drinking vessel for the bulk liquid."
-        state.rejected[item:getID()] = getTimestampMs() + 60000
+        if not Controller.scoutOwnsIntake(state,item) then state.rejected[item:getID()] = getTimestampMs() + 60000 end
+        Controller.scoutIntakeTrace(player,state,"stock-invalid","no-compatible-drinking-vessel")
         if loan then loan.defer = nil end
         resetSupply(state)
         return false
@@ -1352,13 +1369,25 @@ local function useSupply(player, state, kind, item, loan)
                 ISTimedActionQueue.add(ISReadABook:new(player, item))
             end)
         else
+            Controller.scoutIntakeTrace(player,state,"intake-requested","native-action",
+                Supplies.scoutIntakeDetails(item).." thirstBefore="..state.supplyBaseline.thirst.." hungerBefore="..state.supplyBaseline.hunger)
             queued = ownBatch(player, state, kind == "food" and "eating" or "drinking", "Using " .. item:getDisplayName() .. ".", function()
                 local _, goal = Consumables.consume(player, item, kind)
                 if type(goal) == "table" then state.supplyGoal = goal end
             end)
         end
     end
-    if not queued then Controller.stop(player, "The game could not start using " .. item:getDisplayName() .. ". Check its tools and action requirements.") end
+    if not queued then
+        Controller.scoutIntakeTrace(player,state,"intake-not-started","no-native-action-queued")
+        if state.excursion and state.excursion.intake then
+            if loan then loan.defer=nil end
+            for _, tool in ipairs(state.preparation and state.preparation.tools or {}) do tool.defer=nil end
+            state.pending=nil
+            resetSupply(state)
+            return false
+        end
+        Controller.stop(player, "The game could not start using " .. item:getDisplayName() .. ". Check its tools and action requirements.")
+    end
     return true
 end
 
@@ -1407,12 +1436,17 @@ function Controller.scoutTrace(player,state,trip,event,reason)
         or target.item and "ground" or "world") or trip.traceSource or "none"
     local key=target and target.key or trip.traceKey
     trip.traceSource,trip.traceStock,trip.traceKey=source,stock,key
+    local container=target and target.container
+    local containerDetails=container and (" holder="..tostring(container:getType())
+        .." visibleItems="..container:getItems():size().." explored="..tostring(container.isExplored and container:isExplored()))
+        or target and target.object and target.object.getFluidAmount
+            and (" fixtureLiters="..tostring(target.object:getFluidAmount())) or ""
     print("[AutoMindful] scout: leg="..trip.traceId.." event="..event.." stage="..tostring(trip.stage)
         .." mode="..mode.." need="..tostring(trip.kind or trip.traceKind).." source="..source
         .." stock="..stock.." key="..tostring(key)
         .." here="..(here and here:getX()..":"..here:getY()..":"..here:getZ() or "unloaded")
         .." home="..(origin and origin.x..":"..origin.y..":"..origin.z or "unknown")
-        .." reason="..reason)
+        ..containerDetails.." reason="..reason)
 end
 
 local function vehicleTargetAvailable(player, target)
@@ -1441,13 +1475,18 @@ function Controller.rejectScoutPath(state,trip,now,reason)
         .. " reason=" .. (reason or "native-path-failed") .. " retry=" .. policy)
 end
 
+function Controller.rejectScoutInspection(state,trip,now)
+    return SurvivalRoute.reject(state.travelRejected,trip.target,trip.kind,now)
+end
+
 function Controller.forgetScoutStop(state,target)
     ScoutMemory.forget(state.scoutMemory,target)
 end
 
 function Controller.abandonStalledSupply(player,state,now)
     local trip=state.excursion
-    if not trip or trip.stage~="outbound" or trip.egressPlan or not SurvivalRoute.known(trip.target,trip.kind) then return false end
+    if not trip or trip.stage~="outbound" or trip.egressPlan
+            or not (trip.target.unknown or SurvivalRoute.known(trip.target,trip.kind)) then return false end
     Controller.forgetScoutStop(state,trip.target)
     Controller.rejectScoutPath(state,trip,now,"no-movement-progress")
     trip.stage="care" -- settle this owned walk; use the ordinary safe home/idle boundary
@@ -1499,6 +1538,7 @@ end
 function Controller.scoutRelief(state,kind,partial)
     local trip=state.excursion
     if trip and trip.stage=="care" then
+        if trip.intake and trip.intake.kind==kind then trip.intake=nil end
         if partial then state.careNeeds[kind]=true else trip.outing.served[kind]=true end
         trip.outing.turns=trip.outing.turns+1
         trip.stage,trip.openedWindow="errands",nil
@@ -1692,8 +1732,8 @@ local function tryExcursion(player,state,kind,onlyWorldWater,selectedCare,target
     end
     if not queued then
         Controller.scoutTrace(player,state,state.excursion,"outbound-failed",route and "no-native-action-queued" or "no-legal-approach")
-        if not route then Controller.rejectScoutPath(state,{target=target,kind=kind},getTimestampMs(),"no-legal-approach")
-        else state.travelRejected[target.key]=getTimestampMs()+15000 end
+        Controller.rejectScoutPath(state,state.excursion,getTimestampMs(),
+            route and "no-native-action-queued" or "no-legal-approach")
         state.pending,state.excursion,state.travelScan=nil,prior,nil
         if target.remembered then ScoutMemory.forget(state.scoutMemory,target) end
         if state.releasePending or #queueFor(player)>0 or ActionYield.nativeBusy(player) then return true end
@@ -1763,6 +1803,14 @@ end
 local function returnToOrigin(player, state, now)
     local trip = state.excursion
     if not trip then return false end
+    if trip.stage=="care" and trip.intake then
+        local intake=trip.intake
+        Supplies.rejectScoutIntake(state.rejected,intake.item,intake.kind)
+        trip.intake=nil
+        state.travelScan=nil
+        Controller.scoutTrace(player,state,trip,"care-unconfirmed",
+            "no-relief-receipt "..Supplies.scoutIntakeDetails(intake.item).." retry=when-stock-changes")
+    end
     local here = player:getSquare()
     if atOrigin(here, trip.origin) then
         arrivedHome(player,state,trip,now)
@@ -1879,6 +1927,13 @@ local function supply(player, state, kind, onlyWorldWater, waterObject, exactCon
         if queued then return true end
         if waterObject then return false end
         entry = Supplies.choose(player, kind, collect, state.rejected, onlyWorldWater)
+    end
+    local excursion=state.excursion
+    local source=entry and (entry.transfer and entry.transfer.source or entry)
+    if excursion and (kind=="water" or kind=="food") and source and source.item then
+        excursion.intake={kind=kind,item=source.item}
+        Controller.scoutTrace(player,state,excursion,"stock-selected",Supplies.scoutIntakeDetails(source.item)
+            .." thirst="..stat(player,"THIRST").." hunger="..stat(player,"HUNGER"))
     end
     if entry and entry.transfer then
         if entry.transfer.source.description.needsOpening then entry = entry.transfer.source
@@ -3294,11 +3349,16 @@ local function finishPending(player, state, now)
     elseif state.collectingItem then
         local collected = Supplies.inventoryItem(player, state.collectingItem)
         if not collected then
-            state.rejected[state.collectingItem:getID()] = true
+            Controller.scoutIntakeTrace(player,state,"pickup-result","original-item-missing-after-native-transfer")
+            if not Controller.scoutOwnsIntake(state,state.collectingItem) then
+                state.rejected[state.collectingItem:getID()] = true
+            end
             failed = true
             if state.supplyLoan then state.supplyLoan.defer = nil end
         else
             local item, kind, loan = collected, state.supplyKind, state.supplyLoan
+            Controller.scoutIntakeTrace(player,state,"pickup-result","original-item-present",
+                Supplies.scoutIntakeDetails(item))
             state.pending, state.collectingItem = nil, nil
             return useSupply(player, state, kind, item, loan)
         end
@@ -3352,6 +3412,7 @@ local function finishPending(player, state, now)
         state.returnNotice = #candidates > 1 and "Opening created several matching items; they stay in your inventory for you to choose." or nil
     elseif state.supplyBaseline then
         local before = state.supplyBaseline
+        local nativeCompleted=not failed
         local improved = (state.supplyKind == "food" and (stat(player, "HUNGER") < before.hunger
                 or player:getNutrition():getCalories() > before.calories))
             or (state.supplyKind == "water" and stat(player, "THIRST") < before.thirst)
@@ -3389,6 +3450,14 @@ local function finishPending(player, state, now)
             if now < state.awaitSupplyUntil then return true end
             failed = true
         end
+        if not before.traceSettled and (state.supplyKind=="water" or state.supplyKind=="food") then
+            before.traceSettled=true
+            Controller.scoutIntakeTrace(player,state,"intake-result",improved and "stat-improved" or "no-stat-relief",
+                "nativeCompleted="..tostring(nativeCompleted)
+                .." thirstBefore="..tostring(before.thirst).." thirstAfter="..stat(player,"THIRST")
+                .." hungerBefore="..tostring(before.hunger).." hungerAfter="..stat(player,"HUNGER")
+                ..(state.supplyItem and " "..Supplies.scoutIntakeDetails(state.supplyItem) or ""))
+        end
         if not Supplies.finishLoan(player, state.supplyLoan, now) then return true end
         if state.supplyLoan then state.supplyLoan.defer = nil end
     end
@@ -3400,7 +3469,7 @@ local function finishPending(player, state, now)
         -- refused meals/sips do not make the next distinct option unsafe.
         local intake=(state.supplyKind=="food" or state.supplyKind=="water") and (state.supplyItem or state.supplySource)
         if not intake then state.failures=state.failures+1 end
-        if state.supplyItem then
+        if state.supplyItem and not Controller.scoutOwnsIntake(state,state.supplyItem) then
             state.rejected[state.supplyItem:getID()] = state.supplyKind == "literature" and now + 60000 or true
         end
         if state.supplySource then Needs.rejectDryReceipt(state.rejected,state.supplySource.object,now) end
@@ -4240,10 +4309,15 @@ function Controller.update(player)
         Controller.forgetScoutStop(state,trip.target)
         local cooldown=trip.target.unknown and 60000 or 15000
         local reject=not exact or not trip.target.remembered or trip.target.storageScoped
-        if reject then state.travelRejected[trip.target.key] = now+cooldown end
+        local retry=reject and "cooldown-"..cooldown.."ms" or "forget-remembered-source"
+        if reject then
+            if trip.target.unknown and trip.target.routeLayout and not inspectReason then
+                retry=Controller.rejectScoutInspection(state,trip,now)
+            else state.travelRejected[trip.target.key] = now+cooldown end
+        end
         Controller.scoutTrace(player,state,trip,"inspect-ended",(inspectReason or (trip.target.unknown
             and "no-usable-stock-confirmed-before-timeout" or "selected-supply-unusable"))
-            .." retry="..(reject and "cooldown-"..cooldown.."ms" or "forget-remembered-source"))
+            .." retry="..retry)
         state.travelScan = nil
         state.careNotice = trip.waterObject and "The selected water source was not usable. Returning before trying another source."
             or "This container did not confirm a usable supply. Returning before trying another source."

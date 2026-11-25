@@ -242,6 +242,57 @@ end
 
 local rejectedItem=Needs.supplyRejected
 
+local intakeKey={}
+local function stockStamp(item)
+    local fluid=Fluids.container(item)
+    local effects=fluid and fluid:getProperties()
+    return table.concat({item:getFullType(), tostring(item:isSealed()),
+        tostring(fluid and fluid:getAmount()), tostring(fluid and fluid.getPrimaryFluid and fluid:getPrimaryFluid()),
+        tostring(fluid and fluid:isTainted()), tostring(fluid and fluid:canPlayerEmpty()),
+        tostring(effects and effects:getThirstChange()), tostring(effects and effects:getHungerChange()),
+        tostring(instanceof(item,"Food") and item:getHungerChange()),
+        tostring(instanceof(item,"Food") and item:getThirstChange())}, "|")
+end
+
+function Supplies.scoutIntakeDetails(item)
+    local fluid=Fluids.container(item)
+    local primary=fluid and fluid.getPrimaryFluid and fluid:getPrimaryFluid()
+    local holder=item:getContainer()
+    return "item="..tostring(item:getID()).." type="..tostring(item:getFullType())
+        .." itemHolder="..tostring(holder and holder:getType() or "ground-or-unassigned")
+        .." sealed="..tostring(item:isSealed()).." fluid="..tostring(primary or "n/a")
+        .." liters="..tostring(fluid and fluid:getAmount() or "n/a")
+        .." capacity="..tostring(fluid and fluid:getCapacity() or "n/a")
+        .." tainted="..tostring(fluid and fluid:isTainted() or false)
+end
+
+-- This is evidence about an item on one need, not a blacklist of its crate.
+-- Refilled, opened or replaced stock must go through normal eligibility again.
+function Supplies.rejectScoutIntake(rejected,item,kind)
+    rejected[intakeKey]=rejected[intakeKey] or {}
+    local id=item:getID()
+    local byItem=rejected[intakeKey]
+    local entry=byItem[id]
+    if not entry or entry.stamp~=stockStamp(item) then
+        entry={stamp=stockStamp(item)}
+        byItem[id]=entry
+    end
+    entry[kind]=true
+end
+
+local function rejectedIntake(rejected,item,kind)
+    if not item then return false end
+    local evidence=rejected[intakeKey]
+    local id=item:getID()
+    local entry=evidence and evidence[id]
+    if not entry then return false end
+    if entry.stamp~=stockStamp(item) then
+        evidence[id]=nil
+        return false
+    end
+    return entry[kind]==true
+end
+
 local function preparationCost(player, entry)
     if entry.source then return 1 + (player:isSitOnGround() and 1 or 0) end
     local source = entry.transfer and entry.transfer.source or entry
@@ -370,7 +421,7 @@ function Supplies.scoutProbe(player,kind,rejected)
     end
     return function(entry)
         local item,holder=entry.item,entry.container
-        if not item or rejectedItem(rejected,item:getID()) then return false end
+        if not item or rejectedItem(rejected,item:getID()) or rejectedIntake(rejected,item,kind) then return false end
         if holder then
             if item:getContainer()~=holder or not holder:contains(item) then return false end
         else
@@ -447,7 +498,8 @@ function Supplies.choose(player, kind, includeNearby, rejected, worldOnly, exact
     local critical = player:getMoodles():getMoodleLevel(kind == "water" and MoodleType.THIRST or MoodleType.HUNGRY) >= 4
     if not worldOnly then
         for _, entry in ipairs(scan[kind]) do
-            if selected(entry) and not rejectedSource(rejected, entry) and canCollect(player, entry) then
+            if selected(entry) and not rejectedSource(rejected, entry) and not rejectedIntake(rejected,entry.item,kind)
+                    and canCollect(player, entry) then
                 if entry.description.needsVessel then
                     entry.useNearbyTools = includeNearby == true
                     for _, vessel in ipairs(scan.vessels) do

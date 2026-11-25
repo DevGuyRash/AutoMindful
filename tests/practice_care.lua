@@ -222,7 +222,7 @@ test("Strong has a lower hunger trigger but no upper hunger veto; confirmed supp
     assertNone(unknown)
     assertCourse(strongInput({boredom=5.001}),"meditation","mindfulness","HUNGER")
     assertCourse(strongInput({pain=20,yogaReady=false}),"meditation","mindfulness","HUNGER")
-    assertNone(strongInput({preferTraining="meditation"}))
+    assertCourse(strongInput({preferTraining="meditation"}),"meditation","mindfulness","HUNGER")
     assertNone(strongInput({meditationReady=false}))
     local pain = assertCourse(strongInput({hunger=0.05, pain=12, yogaReady=false, mindTier=1}),
         "meditation", "mindfulness", "PAIN")

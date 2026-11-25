@@ -57,26 +57,26 @@ local function waitEmpty(p)
     assert(C.status(p).active and not head(p),C.status(p).message)
 end
 
--- All ordinary modes: the useful scheduled Meditation remains its own turn.
--- Yoga/Both get a distinct course and still owe the exact original Yoga turn.
+-- All modes use the same distinct course, even when the next XP leg
+-- happens to be Meditation. Care never settles that XP turn.
 for _,mode in ipairs({"recovery","both","yoga","meditation"}) do
     local p=new(6,.31)
     begin(p,mode)
     local a=untilHead(p,"Meditation")
-    if mode=="meditation" then assert(C.status(p).phase=="meditation" and C.status(p).cycle.skills.meditation.started==1)
+    assert(C.status(p).phase=="practice-care" and a.autoMindfulOwner)
+    step(p); assert(head(p)==a,"The default tier minimum cannot terminate hunger care above 30%")
+    badge(p,.4); step(p)
+    assert(a.stopped and not a.autoMindfulFinished and not head(p) and p.values.HUNGER==.31)
+    noCredit(p)
+    if mode=="recovery" then waitEmpty(p)
+    elseif mode=="meditation" then
+        local practice=untilHead(p,"Meditation")
+        assert(practice~=a and C.status(p).phase=="meditation")
     else
-        assert(C.status(p).phase=="practice-care" and a.autoMindfulOwner)
-        step(p); assert(head(p)==a,"The default tier minimum cannot terminate hunger care above 30%")
-        badge(p,.4); step(p)
-        assert(a.stopped and not a.autoMindfulFinished and not head(p) and p.values.HUNGER==.31)
-        noCredit(p)
-        if mode=="recovery" then waitEmpty(p)
-        else
-            local yoga=untilHead(p,"Yoga")
-            assert(C.status(p).phase=="yoga" and count(p,"Meditation")==1); noCredit(p)
-            yoga:perform(); step(p)
-            assert(C.status(p).cycle.skills.yoga.completed==1 and p.data.AutoMindfulLastCompleted=="yoga")
-        end
+        local yoga=untilHead(p,"Yoga")
+        assert(C.status(p).phase=="yoga" and count(p,"Meditation")==1); noCredit(p)
+        yoga:perform(); step(p)
+        assert(C.status(p).cycle.skills.yoga.completed==1 and p.data.AutoMindfulLastCompleted=="yoga")
     end
     C.stop(p)
 end
@@ -306,3 +306,59 @@ for _,mode in ipairs({"recovery","yoga"}) do
     C.stop(p)
 end
 print("PASS first hunger moodle reuses the native bounded Strong fallback, even inside an ordinary Yoga turn")
+
+-- Reproduce the live report: a hunger course opens while endurance is low,
+-- skill rank changes arrive before the badge, and a real foreign action may
+-- take a turn without converting unfinished care into an XP completion.
+for _,which in ipairs({"med-only","yoga-only","both-one-med","both-one-yoga","both-same-tick"}) do
+    local mode=which=="med-only" and "meditation" or which=="yoga-only" and "yoga" or "both"
+    local p=new(9,.75)
+    p.yoga={9,90,100}
+    p.values.ENDURANCE,p.nativeYogaLimit,p.hungerMoodle=.25,.60,3
+    begin(p,mode)
+    local med=untilHead(p,"Meditation")
+    assert(C.status(p).phase=="practice-care")
+    steps(p,5) -- A real training leg would arm the endurance handoff here.
+    if which~="yoga-only" and which~="both-one-yoga" then p.meditation=10 end
+    if which~="med-only" and which~="both-one-med" then p.yoga={10,0,0} end
+    p.values.ENDURANCE=1
+    steps(p,20)
+    assert(head(p)==med and not med.stopped and #p.cards==0,
+        which..": neither XP cap nor recovered endurance interrupts a hunger course")
+    if which=="both-same-tick" then
+        local dose=T.action(p,"ForeignPainkiller")
+        Q.add(dose); step(p)
+        assert(head(p)==dose and dose.begins==1 and not dose.stopped and not dose.autoMindfulOwner)
+        dose:perform()
+        med=untilHead(p,"Meditation")
+        assert(C.status(p).mode=="recovery" and C.status(p).phase=="practice-care" and #p.cards==1)
+    end
+    badge(p,.4); step(p)
+    assert(med.stopped and p.values.HUNGER==.75 and p.calories==2000,"Badge is not a food receipt")
+    p.values.HUNGER,p.hungerMoodle=.06,0
+    if which=="both-one-med" or which=="both-one-yoga" then
+        untilHead(p,which=="both-one-med" and "Yoga" or "Meditation")
+        assert(C.status(p).mode=="both" and #p.cards==0,which..": train the remaining skill")
+        if which=="both-one-med" then p.yoga={10,0,0} else p.meditation=10 end
+        local a=head(p); a:perform()
+    end
+    steps(p,20)
+    assert(C.status(p).mode=="recovery" and C.status(p).active and #p.cards==1,
+        which..": switch to ongoing Recovery once the selected skills cap")
+    C.stop(p); assert(#p.cards==1)
+end
+print("PASS one or both mid-training caps, endurance recovery, foreign dose, and rank-complete Recovery")
+
+do
+    local p=new(5,.75); p.sitting=true
+    begin(p,"meditation")
+    local xp=untilHead(p,"Meditation")
+    assert(C.status(p).phase=="meditation")
+    p.meditation,p.hungerMoodle=6,3
+    step(p)
+    assert(xp.stopped,"Newly unlocked hunger care owns the next meditation, not the XP leg")
+    untilHead(p,"Meditation")
+    assert(C.status(p).phase=="practice-care")
+    C.stop(p)
+end
+print("PASS a mid-course level 6 unlock rechecks the native hunger utility immediately")

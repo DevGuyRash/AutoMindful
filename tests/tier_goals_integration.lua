@@ -204,7 +204,10 @@ test("below-cap Train Both clamps the rotation option per rank and keeps XP comp
     local final=await(ender,"Meditation")
     ender.meditation=10
     final:perform()
-    assert(settles(ender).phase=="complete" and count(ender,"Meditation")==1)
+    for _=1,20 do step(ender) end
+    local status=C.status(ender)
+    assert(status.active and status.mode=="recovery" and count(ender,"Meditation")==1)
+    C.stop(ender)
 end)
 
 test("a pre-existing capped minimum keeps one native leg, not an empty rotation",function()

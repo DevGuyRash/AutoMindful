@@ -136,7 +136,8 @@ return function(T, C, test)
             p.zombies=nil; p.dead=nil
             for _=1,8 do step(p,3000) end
             local s=C.status(p)
-            assert(not s.active and s.phase==(control=="goal" and "complete" or "stopped"),control)
+            if control=="goal" then assert(s.active and s.mode=="recovery",control)
+            else assert(not s.active and s.phase=="stopped",control) end
             assert(not queue(p)[1] and #p.cards==1,control)
         end
     end)
@@ -170,7 +171,7 @@ return function(T, C, test)
         for _=1,3 do head:stop(); head=await(p,"Meditation") end
         p.meditation=10; p.yoga[1]=10; head:stop()
         for _=1,8 do step(p,1000) end
-        assert(not C.status(p).active and C.status(p).phase=="complete" and #p.cards==1 and not queue(p)[1])
+        assert(C.status(p).active and C.status(p).mode=="recovery" and #p.cards==1 and not queue(p)[1])
     end)
     test("a retry re-admits current Lifestyle requirements and does not repeat an ineligible or capped leg",function()
         local p=start("both","Meditation"); await(p,"Meditation"):stop()

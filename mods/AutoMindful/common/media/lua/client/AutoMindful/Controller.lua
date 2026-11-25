@@ -3476,9 +3476,9 @@ local function observeTrainingBatch(player, state, queue, now)
     local practiced = false
     for _, action in ipairs(batch) do
         if action.autoMindfulPostureBounced and not queue[1] then
-            state.pending,state.trainingKind=nil,nil
+            state.pending=nil
             closePractice(state)
-            return false -- Known native posture conflict; no lost turn or retry-budget strike.
+            return false -- Keep the selected leg; this is not an unexplained interruption.
         end
         if action.autoMindfulStopped or not action.autoMindfulFinished then return not queue[1] end
         if isPractice(action,state.trainingKind) then practiced = true end

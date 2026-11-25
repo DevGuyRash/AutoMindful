@@ -1,4 +1,4 @@
--- Admission and negative evidence for a known care supply. The engine
+-- Admission and negative evidence for care supply routes. The engine
 -- still owns every movement, collision, stop and actual interaction.
 local Route = {}
 local scopeKey={}
@@ -29,8 +29,10 @@ function Route.scope(rejections,scope)
     end
 end
 
+-- An unconfirmed target can become observed stock without changing the map.
+-- Only suppress the same speculative route; a confirmed candidate has its own key.
 function Route.reject(rejections,target,kind,now)
-    if not Route.known(target,kind) or not target.routeLayout then
+    if not (target.unknown or Route.known(target,kind)) or not target.routeLayout then
         rejections[target.key]=now+15000
         return "cooldown-15s"
     end

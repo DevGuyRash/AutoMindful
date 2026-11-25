@@ -1474,6 +1474,75 @@ test("blocked meditation uses owned literature before scouting unknown container
     C.stop(p); roaming.enabled=false; nearbyTarget=nil
 end)
 
+test("a scout checks stock again after pickup, skips failed intake and retries on refill",function()
+    roaming.enabled=true
+    local p=T.playerNew()
+    local origin=p:getSquare()
+    local shelf=T.container(6,0)
+    local candidate=T.add(shelf,T.water())
+    local backup=T.add(shelf,T.water())
+    candidate.fluid.amount,backup.fluid.amount=.5,0
+    p.available={shelf}
+    p.values.THIRST=.30
+    local N=require "AutoMindful/Nearby"
+    local S=require "AutoMindful/Supplies"
+    local initialFind=N.find
+    local initialInspect=require("AutoMindful/Consumables").inspect
+    local originalPrint,trace=print,{}
+    local probes=0
+    print=function(line,...)
+        if type(line)=="string" and line:find("[AutoMindful] scout:",1,true) then trace[#trace+1]=line end
+        originalPrint(line,...)
+    end
+    N.find=function(player,kind,_,_,_,_,rejected)
+        if kind~="water" then return end
+        local probe=S.scoutProbe(player,kind,rejected)
+        for _, item in ipairs({candidate,backup}) do
+            local t={item=item,container=shelf,square=shelf.square,key="water:6:0:0"}
+            if probe(t) then probes=probes+1; return t end
+        end
+    end
+    local O=require "AutoMindful/Consumables"
+    local refuse=true
+    O.inspect=function(player,item,tools)
+        if item==candidate and item:getContainer()==p.inventory and refuse then
+            return {water=false,reason="Fixture: fresh pickup view has no drink"}
+        end
+        return initialInspect(player,item,tools)
+    end
+    assert(C.start(p,"yoga",false))
+    local blocked
+    for _=1,60 do
+        T.tick(p)
+        for _,line in ipairs(trace) do
+            if line:find("event=care-unconfirmed",1,true) then blocked=true end
+        end
+        if blocked and p:getSquare()==origin then break end
+    end
+    assert(blocked and p:getSquare()==origin and shelf:contains(candidate))
+    assert(p.values.THIRST==.30 and not hasHistory(p,"drink"),"A failed pickup recheck must not count as drinking")
+    local before=probes
+    T.now=T.now+75000
+    for _=1,8 do T.tick(p) end
+    assert(probes==before,"An unchanged failed item cannot trigger another outbound scout")
+    -- Newly observed stock in the same holder remains eligible.
+    backup.fluid.amount=1
+    for _=1,60 do T.tick(p); if p.values.THIRST<.01 and p:getSquare()==origin then break end end
+    assert(p.values.THIRST<.01 and p:getSquare()==origin and shelf:contains(backup))
+    -- New contents on the very same original item ID are eligible again.
+    refuse=false; candidate.fluid.amount=1; backup.fluid.amount=0; p.values.THIRST=.25
+    for _=1,60 do T.tick(p); if p.values.THIRST<.01 and p:getSquare()==origin then break end end
+    assert(p.values.THIRST<.01 and p:getSquare()==origin and shelf:contains(candidate))
+    local function seen(event,value)
+        for _,line in ipairs(trace) do if line:find("event="..event.." ",1,true) and line:find(value,1,true) then return true end end
+        return false
+    end
+    assert(seen("stock-selected","liters=0.5") and seen("pickup-result","original-item-present")
+        and seen("stock-invalid","ineligible-after-pickup") and seen("intake-requested","thirstBefore=")
+        and seen("intake-result","thirstAfter=0"),"Log holder, selected item, pickup, and measured intake")
+    C.stop(p); N.find=initialFind; O.inspect=initialInspect; print=originalPrint; roaming.enabled=false
+end)
+
 test("fast-forward during inspection cannot silently invalidate the native return walk", function()
     roaming.enabled=true
     local p=T.playerNew(); p.values.BOREDOM=25

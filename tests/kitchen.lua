@@ -901,3 +901,27 @@ do
     assert(p.inventory:contains(raw) and deer:contains(carcass),"Taken from the pockets, not the carcass")
     passed("food a body carries is fetched like the floor's, but not a carcass, a body getting up, or anything but food")
 end
+do
+    -- The Kitchen tab's summary: each heat and what it needs, food, cold.
+    squares={}
+    local p=survivor(0,0)
+    local dead=stove(1,0); dead.container.off=true
+    local busy=stove(3,0); T.add(busy.container,food({name="Someone's pie"}))
+    local place=fireplace(-2,0,false,0)
+    local shelf=T.container(-1,0); shelf.square=square(-1,0)
+    shelf.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return shelf end}}
+    T.add(shelf,food({name="Chicken",rotsAt=1}))
+    T.add(shelf,material("Log"))
+    local summary=Kitchen.summary(p,1000)
+    local states={}
+    for _,heat in ipairs(summary.heats) do states[heat.tiles]=heat.state end
+    assert(states[1]=="No power" and states[3]=="Something is already inside","Stove states: "..tostring(states[1]).." / "..tostring(states[3]))
+    assert(states[2]=="Not lit: needs paper or twigs, a lighter or matches","A fire says all it is missing: "..tostring(states[2]))
+    -- Ours, while the food is still being fetched, is not yet cooking.
+    dead.container.off=false
+    p:getModData().AutoMindfulKitchen={stage="fetching",name="Chicken",x=1,y=0,z=0}
+    local mine=Kitchen.summary(p,1000).heats[1]
+    assert(mine.state=="Getting food for Chicken","Not cooking yet: "..mine.state)
+    assert(summary.heats[1].tiles==1 and summary.raw==1 and summary.soon==1 and summary.wood>=1 and summary.starters==0, string.format("raw=%d soon=%d wood=%d starters=%d",summary.raw,summary.soon,summary.wood,summary.starters))
+    passed("the kitchen summary says what each heat source needs and what there is to cook")
+end

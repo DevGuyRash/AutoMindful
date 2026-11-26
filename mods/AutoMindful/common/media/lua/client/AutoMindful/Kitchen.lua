@@ -211,7 +211,7 @@ end
 function Kitchen.scan(player, rejected, now, fridgesOnly)
     -- heats: every stove or grill seen, on or off, busy or not.
     local result = {stoves = {}, food = {}, fridges = {}, pots = {}, taps = {}, ready = 0, heats = 0,
-        fuel = {}, tinder = {}, starters = {}, frozen = {}, freezers = {}}
+        fuel = {}, tinder = {}, starters = {}, frozen = {}, freezers = {}, heatList = {}}
     if not player:getSquare() then return result end
     local seen, take = {}, nil
     -- One item, wherever it is: in a container, a bag, or on the floor.
@@ -272,7 +272,10 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             if not outside and not fridgesOnly and Soup.isTap(object) then
                 result.taps[#result.taps + 1] = {object = object, square = square, distance = distance}
             end
-            if heatOf(object) then result.heats = result.heats + 1 end
+            if heatOf(object) then
+                result.heats = result.heats + 1
+                result.heatList[#result.heatList + 1] = {object = object, square = square, distance = distance}
+            end
             if outside then
                 -- nothing but heat out there
             elseif Kitchen.isStove(object) then
@@ -1054,6 +1057,78 @@ if Events and Events.EveryOneMinute then
             if player then pcall(Kitchen.watchdog, player, now) end
         end
     end)
+end
+
+-- What the Kitchen tab shows: each heat source nearby and what it needs, the
+-- food the kitchen could cook, and where leftovers would keep. Plain data.
+local function duration(minutes)
+    if minutes >= 90 then return math.floor(minutes / 60 + 0.5) .. " h" end
+    return math.floor(minutes) .. " min"
+end
+
+-- Everything a fire is missing, or more wood when all of it is there but not enough.
+local function fireNeeds(found)
+    local missing = {}
+    if #found.fuel == 0 then missing[#missing + 1] = "wood" end
+    if #found.tinder == 0 then missing[#missing + 1] = "paper or twigs" end
+    if #found.starters == 0 then missing[#missing + 1] = "a lighter or matches" end
+    if #missing == 0 then return "more wood" end
+    return table.concat(missing, ", ")
+end
+
+-- Why a heat source cannot cook: the microwave has three reasons.
+local function notReady(object, heat)
+    if heat.kind == "grill" then return "No propane" end
+    if not object:getContainer():isPowered() then return "No power" end
+    if heat.kind ~= "microwave" then return "No power" end
+    local items = object:getContainer():getItems()
+    for index = 0, items:size() - 1 do if Kitchen.metal(items:get(index)) then return "Metal inside" end end
+    return "Shares its spot with another appliance"
+end
+
+local doing = {fetching = "Getting food for ", ready = "Getting food for ", starting = "Starting ", cooking = "Cooking ",
+    finishing = "Taking out "}
+
+function Kitchen.summary(player, now)
+    local found = Kitchen.scan(player, nil, now)
+    local usable = {}
+    for _, stove in ipairs(found.stoves) do usable[stove.object] = true end
+    local entry = Kitchen.ledger(player)
+    local ours = entry and stoveAt(entry)
+    local result = {radius = Kitchen.policy.radius, soonDays = Kitchen.policy.soonHours / 24, heats = {}, raw = #found.food, ready = found.ready, frozen = 0, soon = 0,
+        fridges = #found.fridges, freezers = #found.freezers, wood = #found.fuel, tinder = #found.tinder,
+        starters = #found.starters}
+    for _, seen in ipairs(found.heatList) do
+        local object, heat = seen.object, heatOf(seen.object)
+        local state, tone
+        if ours and object == ours then
+            state, tone = (doing[entry.stage] or "Making soup with ") .. (entry.name or "food"), "warn"
+        elseif heat.fueled and Fire.lit(object) then
+            state, tone = "Burning, " .. duration(Fire.fuel(object)) .. " of fuel left", "good"
+        elseif not heat.ready(object) then
+            state, tone = notReady(object, heat), "bad"
+        elseif heat.on(object) then
+            state, tone = "On (not Second Nature's)", "muted"
+        elseif not free(object:getContainer()) then
+            state, tone = "Something is already inside", "muted"
+        elseif heat.fueled and not usable[object] then
+            state, tone = "Not lit: needs " .. fireNeeds(found), "warn"
+        elseif heat.fueled then
+            state, tone = "Not lit: wood and a light at hand", "good"
+        else
+            state, tone = "Ready", "good"
+        end
+        result.heats[#result.heats + 1] = {name = Kitchen.heatName(object), state = state, tone = tone,
+            fueled = heat.fueled == true, tiles = math.floor(math.sqrt(seen.distance) + 0.5)}
+    end
+    table.sort(result.heats, function(a, b) return a.tiles < b.tiles end)
+    for _, item in ipairs(found.food) do
+        if rotHours(item.item) <= Kitchen.policy.soonHours then result.soon = result.soon + 1 end
+    end
+    for _, item in ipairs(found.frozen) do
+        if not item.carried then result.frozen = result.frozen + 1 end
+    end
+    return result
 end
 
 function Kitchen.status(player, state)

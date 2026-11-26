@@ -517,7 +517,9 @@ do
     ArrayList={new=function() local l={items={}}; function l:add(x) self.items[#self.items+1]=x end; return l end}
     ISTakeWaterAction={new=function(_,player,item) return {Type="fill",isValid=function() return true end,perform=function() item.fluid.amount=1.5 end} end}
     ISAddItemInRecipe={new=function(_,player,r,base,item) return {Type="add",isValid=function() return true end,perform=function()
-        T.remove(p.inventory,item)
+        -- Meat goes in a part at a time: the first add takes half of it.
+        if item.name=="Potato" and not item.halved then item.halved=true; item.hunger=(item.hunger or -.5)/2
+        else T.remove(p.inventory,item) end
         if base==pot then
             T.remove(p.inventory,pot)
             soupItem=T.add(p.inventory,food({name="Pot of Soup",fullType="Base.PotOfSoupRecipe",minutes=50,hunger=-.2}))
@@ -546,7 +548,7 @@ do
     assert(not oven.on and p.inventory:contains(soupItem),"Cooked, out, stove off")
     assert(not s.rejected[soupItem:getID()],"Once cooked, the soup may be eaten")
     Options.makeSoup=function() return false end
-    passed("a soup is made from a pot, the sink and the fridge, then cooked")
+    passed("a soup is made from a pot, the sink and the fridge, then cooked, even when an ingredient goes in by parts")
 end
 do
     -- Mildly hungry: cook rather than eat raw, but leftovers come first.

@@ -216,6 +216,8 @@ function Soup.step(player, state, now, entry, stove)
             local item = inventory:getItemById(id)
             if item and usable and usable:contains(item) then next = item; break end
         end
+        -- The recipe holds six additions at most.
+        if (entry.adds or 0) >= 6 then next = nil end
         if not next then
             -- Nothing more goes in. With at least one ingredient it is a soup to cook.
             if entry.base == entry.pot then return fail(player, state, now, entry, "nothing-added") end
@@ -227,7 +229,7 @@ function Soup.step(player, state, now, entry, stove)
             Log.event(player, "soup.ready", "dish", Snap.item(base))
             return K.place(player, state, now, entry, stove)
         end
-        entry.adding = next:getID()
+        entry.adding, entry.addingHunger = next:getID(), next:getHungerChange()
         -- The soup that appears is the one that was not there before.
         entry.before = {}
         for _, item in ipairs(soupItems(inventory)) do entry.before[#entry.before + 1] = item:getID() end
@@ -254,29 +256,35 @@ function Soup.settle(player, state, now, cut)
         local pot = inventory:getItemById(entry.pot)
         if (not pot or water(pot) < Soup.policy.water) and not cut then return fail(player, state, now, entry, "not-filled") end
     elseif entry.stage == "soup-add" and entry.adding then
-        if not inventory:getItemById(entry.adding) then
-            -- It went in. The base is the newest item of the result's kind, if the pot changed.
-            local base = inventory:getItemById(entry.base)
-            if not base then
-                local before, newest = {}, nil
-                for _, id in ipairs(entry.before or {}) do before[id] = true end
-                for _, item in ipairs(soupItems(inventory)) do
-                    if not before[item:getID()] then newest = item end
-                end
-                if not newest then return fail(player, state, now, entry, "pot-vanished") end
-                entry.base = newest:getID()
-                -- Half a soup is not a meal yet.
-                state.rejected[entry.base] = now + 600000
+        -- The pot is a new item once something is in it: the soup that was not there before.
+        local changedBase = false
+        if not inventory:getItemById(entry.base) then
+            local before, newest = {}, nil
+            for _, id in ipairs(entry.before or {}) do before[id] = true end
+            for _, item in ipairs(soupItems(inventory)) do
+                if not before[item:getID()] then newest = item end
             end
-            local left = {}
-            for _, id in ipairs(entry.ingredients) do if id ~= entry.adding then left[#left + 1] = id end end
-            entry.ingredients = left
+            if not newest then return fail(player, state, now, entry, "pot-vanished") end
+            entry.base, changedBase = newest:getID(), true
+            -- Half a soup is not a meal yet.
+            state.rejected[entry.base] = now + 600000
+        end
+        -- Meat goes in a part at a time: what is left of it may go in again.
+        local item = inventory:getItemById(entry.adding)
+        local shrank = item ~= nil and entry.addingHunger ~= nil and math.abs(item:getHungerChange() - entry.addingHunger) > 0.000001
+        if changedBase or not item or shrank then
+            entry.adds = (entry.adds or 0) + 1
+            if not item then
+                local left = {}
+                for _, id in ipairs(entry.ingredients) do if id ~= entry.adding then left[#left + 1] = id end end
+                entry.ingredients = left
+            end
         elseif not cut then
             -- Refused: leave that one out, free to be eaten, and carry on with the rest.
             drop(entry, entry.adding)
             state.rejected[entry.adding] = nil
         end
-        entry.adding, entry.before = nil, nil
+        entry.adding, entry.before, entry.addingHunger = nil, nil, nil
         K.write(player, entry)
     end
 end

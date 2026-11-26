@@ -215,8 +215,14 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
     if not player:getSquare() then return result end
     local seen, take = {}, nil
     -- One item, wherever it is: in a container, a bag, or on the floor.
-    local function classify(item, container, world, carried, floor, holder, woodOnly)
-        if woodOnly then
+    local function classify(item, container, world, carried, floor, holder, woodOnly, body)
+        if body then
+            -- From the dead only food to cook, and only indoors: eating already reaches the rest.
+            if not woodOnly and Kitchen.cookable(item) and not (rejected and rejected[item:getID()] and now < rejected[item:getID()]) then
+                result.food[#result.food + 1] = Fetch.entry(item, container, world, carried, holder, body)
+            end
+            return
+        elseif woodOnly then
             -- From the yard only wood: a woodpile is often outside.
             if Fire.isFuel(item) then result.fuel[#result.fuel + 1] = Fetch.entry(item, container, world, carried, holder) end
             return
@@ -255,8 +261,8 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
         -- from the yard, only firewood and the like. Floor food is fetched for
         -- cooking, but is not "ready" food: eating never reaches it.
         if not fridgesOnly then
-            Fetch.floor(square, function(item, container, world, holder)
-                classify(item, container, world, false, true, holder, yard)
+            Fetch.floor(square, function(item, container, world, holder, body)
+                classify(item, container, world, false, true, holder, yard, body)
             end)
         end
         local objects = square:getObjects()

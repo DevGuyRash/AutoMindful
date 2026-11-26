@@ -5,6 +5,7 @@ if loadTest then loadTest("contracts.lua") else assert(loadfile("tests/contracts
 AutoMindfulContractHarnessOnly=nil
 local T=AutoMindfulTest
 local Kitchen=require "AutoMindful/Kitchen"
+local Fetch=require "AutoMindful/Fetch"
 local Options=require "AutoMindful/Options"
 local function passed(text) print("PASS "..text) end
 
@@ -856,4 +857,47 @@ do
     assert(Kitchen.store(p,s,3000)); run()
     assert(fz:contains(one) and fz:contains(two),"Kept together in the freezer")
     passed("frozen food comes out to thaw only when nothing else is left, one meal at a time, and leftovers can go in the freezer")
+end
+do
+    -- What a body lying in the house carries is fetched like the floor; an
+    -- animal carcass is not, and a body taken away is not walked to.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    stove(1,0)
+    local function body(x,animal)
+        local sq=square(x,0)
+        local pockets=T.container(x,0)
+        local b={kind="IsoDeadBody",sq=sq}
+        function b:isAnimal() return animal end
+        function b:isFakeDead() return false end
+        function b:getReanimateTime() return self.rising or -1 end
+        function b:getStaticMovingObjectIndex()
+            for i,o in ipairs(self.sq.bodies) do if o==self then return i-1 end end
+            return -1
+        end
+        function b:getContainer() return pockets end
+        function b:getSquare() return self.sq end
+        sq.bodies={b}
+        function sq:getStaticMovingObjects() return T.list(self.bodies) end
+        return b,pockets
+    end
+    local _,deer=body(-2,true)
+    local carcass=T.add(deer,food({name="Venison"}))
+    local dead,pockets=body(-1,false)
+    local raw=T.add(pockets,food({name="Chicken"}))
+    local found=Kitchen.scan(p,{},1000)
+    assert(#found.food==1 and found.food[1].item==raw,"Only the dead survivor's pockets: "..#found.food)
+    assert(Fetch.present(found.food[1]))
+    dead.sq.bodies={}
+    assert(not Fetch.present(found.food[1]),"The body is gone")
+    dead.sq.bodies={dead}
+    dead.rising=5
+    assert(#Kitchen.scan(p,{},1000).food==0,"Not from a body about to get up")
+    dead.rising=nil
+    T.add(pockets,material("Matches"))
+    assert(#Kitchen.scan(p,{},1000).starters==0,"Only food from the dead")
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).stage=="fetching","Fetched from the body")
+    run(); Kitchen.settle(p,s,1100,false)
+    assert(p.inventory:contains(raw) and deer:contains(carcass),"Taken from the pockets, not the carcass")
+    passed("food a body carries is fetched like the floor's, but not a carcass, a body getting up, or anything but food")
 end

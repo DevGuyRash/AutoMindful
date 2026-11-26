@@ -6,7 +6,7 @@
 - **Propane grills:** when there is no powered stove (a power cut), Autopilot cooks on a propane barbecue in the yard and turns it off; a stove indoors is still preferred. 
 - **Enough food for AFK:** the outlook counts raw food the kitchen can cook (with a stove or grill nearby) and says how much of the known food needs cooking.
 - **Time to the next level:** under each trained skill's bar, the window estimates the time to the next level at this session's pace.
-- **Food from anywhere:** the kitchen finds food in any container, in bags, and lying on the floor, and fetches it with the game's own pick-up.
+- **Food from anywhere:** the kitchen finds food in any container, in bags, lying on the floor, and in the pockets of a dead body indoors (not animal carcasses or a body about to get up), and fetches it with the game's own pick-up.
 - **Microwaves:** cook on a timer and switch themselves off; nothing metal ever goes in (so never a soup pot).
 - **Fires:** fireplaces, antique stoves, charcoal grills and campfires cook too. Autopilot gathers wood, tinder (newspaper, paper scraps) and a lighter or matches from any container, the floor or a woodpile in the yard, adds enough fuel for the cooking, lights it and puts it out afterwards. A fire someone else lit is borrowed and left burning. Books worth reading, favourites and worn items are never burned.
 - **Freezers:** when nothing ready or raw is left but the freezer holds food, Autopilot takes one meal out to thaw (raw food only when there is something to cook it on) and waits until it has thawed before taking more; cooked leftovers go to a freezer when no fridge has room; frozen food counts toward how long food lasts when there is something to cook it on.

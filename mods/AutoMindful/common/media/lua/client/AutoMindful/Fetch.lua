@@ -2,13 +2,15 @@
 -- the floor. Where each is, whether it is still there, and the game's own
 -- action that brings it into the survivor's inventory.
 local Grid = require "AutoMindful/Grid"
+local Storage = require "AutoMindful/Storage"
 
 local Fetch = {}
 
 -- A found thing: {item, container} or {item, world} (lying on the floor).
 -- holder: the bag lying on the floor that the container belongs to.
-function Fetch.entry(item, container, world, carried, holder)
-    local entry = {item = item, container = container, world = world, carried = carried, holder = holder}
+-- body: the dead body whose pockets the container is.
+function Fetch.entry(item, container, world, carried, holder, body)
+    local entry = {item = item, container = container, world = world, carried = carried, holder = holder, body = body}
     local square = Fetch.square(entry)
     entry.from = carried and "carried" or (square and Grid.key(square)) or tostring(container)
     return entry
@@ -24,6 +26,7 @@ end
 function Fetch.square(entry)
     if entry.world then return onSquare(entry.world) end
     if entry.holder then return onSquare(entry.holder) end
+    if entry.body then return entry.body:getSquare() end
     return entry.container and Grid.containerSquare(entry.container) or nil
 end
 
@@ -31,6 +34,8 @@ end
 function Fetch.present(entry)
     if entry.world then return onSquare(entry.world) ~= nil and entry.world:getItem() == entry.item end
     if entry.holder and not onSquare(entry.holder) then return false end
+    -- Burned, carried off or getting up: the game's own test for a body still lying there.
+    if entry.body and (entry.body:getStaticMovingObjectIndex() == -1 or not Storage.safeCorpse(entry.body)) then return false end
     return entry.container ~= nil and entry.container:contains(entry.item)
 end
 
@@ -46,8 +51,17 @@ function Fetch.queue(player, entry)
     return ISTimedActionQueue.add(ISInventoryTransferUtil.newInventoryTransferAction(player, entry.item, from, inventory))
 end
 
--- Every item lying on a square, and the items inside bags lying there.
+-- Every item lying on a square, the items inside bags lying there, and what
+-- the dead lying there carry: visit(item, container, world, holder, body).
+-- Not animals (those are for butchering), nor a body about to get up.
 function Fetch.floor(square, visit)
+    local bodies = square.getStaticMovingObjects and square:getStaticMovingObjects()
+    for index = 0, bodies and bodies:size() - 1 or -1 do
+        local body = bodies:get(index)
+        local inside = Storage.safeCorpse(body) and body:getContainer()
+        local items = inside and inside:getItems()
+        for k = 0, items and items:size() - 1 or -1 do visit(items:get(k), inside, nil, nil, body) end
+    end
     local worlds = square.getWorldObjects and square:getWorldObjects()
     for index = 0, worlds and worlds:size() - 1 or -1 do
         local world = worlds:get(index)

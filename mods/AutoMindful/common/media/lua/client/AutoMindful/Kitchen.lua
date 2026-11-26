@@ -11,6 +11,7 @@ local Needs = require "AutoMindful/SurvivalNeeds"
 local Fluids = require "AutoMindful/Fluids"
 local Diet = require "AutoMindful/Diet"
 local Progress = require "AutoMindful/Progress"
+local Soup = require "AutoMindful/Soup"
 local Alerts = require "AutoMindful/Alerts"
 
 local Kitchen = {policy = {radius = 10, lookMs = 30000, retryMs = 600000, attempts = 3, burnShare = 0.8, againMs = 120000,
@@ -19,7 +20,18 @@ local Kitchen = {policy = {radius = 10, lookMs = 30000, retryMs = 600000, attemp
 local watched, warned = {}, {}
 local P
 
-function Kitchen.bind(parts) P = parts end
+-- What the kitchen will not try again for a while. Its own: the controller's
+-- rejected list also keeps food from being eaten, which a failed cook must not do.
+local function skip(state)
+    state.kitchenSkip = state.kitchenSkip or {}
+    return state.kitchenSkip
+end
+
+function Kitchen.bind(parts)
+    P = parts
+    Soup.bind({write = function(player, entry) Kitchen.write(player, entry) end, ledger = Kitchen.ledger,
+        place = function(...) return Kitchen.place(...) end}, parts)
+end
 
 -- ------------------------------------------------------------------ the food
 
@@ -67,7 +79,7 @@ end
 -- One pass over the squares nearby: stoves that could cook now, raw food in the
 -- containers around them, and powered fridges. fridgesOnly skips the food.
 function Kitchen.scan(player, rejected, now, fridgesOnly)
-    local result = {stoves = {}, food = {}, fridges = {}}
+    local result = {stoves = {}, food = {}, fridges = {}, pots = {}, taps = {}, ready = 0}
     if not player:getSquare() then return result end
     local seen = {}
     local function take(container, carried)
@@ -78,6 +90,12 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             local item = items:get(index)
             if Kitchen.cookable(item) and not (rejected and rejected[item:getID()] and now < rejected[item:getID()]) then
                 result.food[#result.food + 1] = {item = item, container = container, carried = carried}
+            elseif instanceof(item, "Food") and Fluids.safeFood(item) and item:getHungerChange() <= -0.05
+                    and not item:getOpeningRecipe() and not Grid.favorite(item) then
+                -- Ready to eat as it is: cooked food, leftovers, tins.
+                result.ready = result.ready + 1
+            elseif Soup.isPot(item) then
+                result.pots[#result.pots + 1] = {item = item, container = container, carried = carried}
             elseif carried and instanceof(item, "InventoryContainer") then
                 take(item:getInventory(), true)
             end
@@ -89,6 +107,9 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
         local objects = square:getObjects()
         for index = 0, objects:size() - 1 do
             local object = objects:get(index)
+            if not fridgesOnly and Soup.isTap(object) then
+                result.taps[#result.taps + 1] = {object = object, square = square, distance = distance}
+            end
             if Kitchen.isStove(object) then
                 local container = object:getContainer()
                 local waiting = rejected and rejected["stove:" .. stoveKey(object)]
@@ -111,6 +132,9 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
     end, true)
     table.sort(result.stoves, function(a, b) return a.distance < b.distance end)
     table.sort(result.fridges, function(a, b) return a.distance < b.distance end)
+    table.sort(result.taps, function(a, b) return a.distance < b.distance end)
+    -- A pot already carried first.
+    table.sort(result.pots, function(a, b) return (a.carried and 1 or 0) > (b.carried and 1 or 0) end)
     return result
 end
 
@@ -155,6 +179,7 @@ end
 function Kitchen.ledger(player) return player:getModData().AutoMindfulKitchen end
 
 local function write(player, entry) Saved.set(player, "AutoMindfulKitchen", entry) end
+Kitchen.write = write
 
 local function stoveAt(entry)
     local square = entry and getCell():getGridSquare(entry.x, entry.y, entry.z)
@@ -229,7 +254,7 @@ local function nearBurning(dish)
 end
 
 local function giveUp(player, state, entry, now, why)
-    state.rejected["stove:" .. entry.x .. ":" .. entry.y .. ":" .. entry.z] = now + Kitchen.policy.retryMs
+    skip(state)["stove:" .. entry.x .. ":" .. entry.y .. ":" .. entry.z] = now + Kitchen.policy.retryMs
     Log.event(player, "kitchen.giveup", "why", why, "stove", entry.x .. ":" .. entry.y)
 end
 
@@ -261,6 +286,12 @@ function Kitchen.duty(player, state, now, walk)
     if not entry then return false end
     local stove = stoveAt(entry)
     if not stove then
+        -- Nothing lit yet and no stove any more: the plan is over.
+        if not entry.lit and state and (entry.stage ~= "cooking" and entry.stage ~= "finishing") then
+            if Soup.handles(entry.stage) then return Soup.abandon(player, state, now, entry, "stove-gone") end
+            write(player, nil)
+            return false
+        end
         -- Too far to see. The stove is only ever left on beside the survivor.
         if state then state.kitchenNotice = "The stove that was cooking is out of sight." end
         return false
@@ -273,6 +304,10 @@ function Kitchen.duty(player, state, now, walk)
         if not entry then return false end
     end
     if entry.stage == "ready" then return Kitchen.place(player, state, now, entry, stove) end
+    if Soup.handles(entry.stage) then
+        if state and state.pending then return false end
+        return Soup.step(player, state, now, entry, stove)
+    end
     local present = dishesIn(stove, entry)
     local dish = present[1]
     local on = stove:Activated()
@@ -361,7 +396,8 @@ function Kitchen.lit(player)
     local entry = Kitchen.ledger(player)
     if not entry then return false end
     local stove = stoveAt(entry)
-    return stove ~= nil and stove:Activated() and entry.stage ~= "fetching" and entry.stage ~= "ready"
+    local stage = entry.stage
+    return stove ~= nil and stove:Activated() and (stage == "starting" or stage == "cooking" or stage == "finishing")
 end
 
 -- Something on the stove needs a hand now, not just watching.
@@ -379,13 +415,38 @@ function Kitchen.urgent(player)
 end
 
 -- Starts a meal when hunger is due and nothing ready to eat is known.
-function Kitchen.meal(player, state, now)
+-- Hungry, but not yet badly, and not thirsty: cook what can be cooked rather
+-- than eat it raw. Runs before ordinary eating; when nothing can be cooked,
+-- eating goes on as usual.
+function Kitchen.prefer(player, state, now)
+    local entry = Kitchen.ledger(player)
+    if entry then
+        -- A plan under way goes on before anything is eaten, unless hunger presses:
+        -- otherwise its ingredients would be eaten raw between the steps.
+        if entry.stage ~= "cooking" and entry.stage ~= "finishing" and not Needs.pressing(player, "food") then
+            return Kitchen.duty(player, state, now, true)
+        end
+        return false
+    end
+    if not Options.cookMeals() or not Needs.due(player, "food") or Needs.pressing(player, "food") or Needs.due(player, "water")
+            or Needs.lowHealth(player) or P.stat(player, "FATIGUE") >= Kitchen.policy.tired then return false end
+    -- Its own timer: a look that found nothing must not hold up the real meal.
+    if state.preferNext and now < state.preferNext and state.preferNext - now <= Kitchen.policy.lookMs then return false end
+    state.preferNext = now + Kitchen.policy.lookMs
+    return Kitchen.meal(player, state, now, true)
+end
+
+function Kitchen.meal(player, state, now, preferring)
     if Kitchen.ledger(player) then return Kitchen.duty(player, state, now, true) end
     if not Options.cookMeals() or not Needs.due(player, "food") then return false end
-    if state.kitchenNext and now < state.kitchenNext and state.kitchenNext - now <= Kitchen.policy.lookMs then return false end
-    state.kitchenNext = now + Kitchen.policy.lookMs
-    if P.available(player, state, "food") then return false end
-    local found = Kitchen.scan(player, state.rejected, now)
+    if not preferring then
+        if state.kitchenNext and now < state.kitchenNext and state.kitchenNext - now <= Kitchen.policy.lookMs then return false end
+        state.kitchenNext = now + Kitchen.policy.lookMs
+    end
+    if not preferring and P.available(player, state, "food") then return false end
+    local found = Kitchen.scan(player, skip(state), now)
+    -- Leftovers and ready meals are eaten before anything new is cooked.
+    if preferring and found.ready > 0 then return false end
     local entry, stove = Kitchen.choose(found.food, player), found.stoves[1]
     Log.event(player, "kitchen.look", "raw", #found.food, "stoves", #found.stoves, "diet", Diet.goal(player),
         "chosen", entry and Snap.item(entry.item))
@@ -394,11 +455,11 @@ function Kitchen.meal(player, state, now)
         return false
     end
     if not stove then
-        state.kitchenNotice = "Only raw food is left, and there is no powered stove nearby."
+        if not preferring then state.kitchenNotice = "Only raw food is left, and there is no powered stove nearby." end
         return false
     end
     state.kitchenNotice = nil
-    return Kitchen.cook(player, state, now, entry, stove, found.food, "meal")
+    return Kitchen.cook(player, state, now, entry, stove, found.food, "meal", found)
 end
 
 -- Cooking practice: when nobody is hungry, raw food from the cupboards is cooked
@@ -414,7 +475,7 @@ function Kitchen.practice(player, state, now)
     if skill and skill.capped then return false end
     if state.practiceNext and now < state.practiceNext and state.practiceNext - now <= Kitchen.policy.practiceMs then return false end
     state.practiceNext = now + Kitchen.policy.practiceMs
-    local found = Kitchen.scan(player, state.rejected, now)
+    local found = Kitchen.scan(player, skip(state), now)
     local pool = {}
     for _, entry in ipairs(found.food) do
         if not entry.carried and (mode == "all" or rotHours(entry.item) <= Kitchen.policy.soonHours) then pool[#pool + 1] = entry end
@@ -426,16 +487,18 @@ function Kitchen.practice(player, state, now)
     Log.event(player, "kitchen.practice", "mode", mode, "raw", #pool, "stoves", #found.stoves, "fridge", cold == true,
         "chosen", entry and Snap.item(entry.item))
     if not entry or not stove or not cold then return false end
-    return Kitchen.cook(player, state, now, entry, stove, pool, "practice")
+    return Kitchen.cook(player, state, now, entry, stove, pool, "practice", found)
 end
 
 -- Puts the chosen dish and what goes with it on the stove: from a fridge
 -- first, then to the stove from wherever that leaves the survivor.
-function Kitchen.cook(player, state, now, entry, stove, pool, reason)
+function Kitchen.cook(player, state, now, entry, stove, pool, reason, found)
+    -- With a pot, water and two ingredients from one place: a soup or a stew.
+    if found and Options.makeSoup() and Soup.start(player, state, now, entry, pool, stove, found, reason) then return true end
     local item, object = entry.item, stove.object
     local inventory = player:getInventory()
     if not entry.carried and not inventory:hasRoomFor(player, item) then
-        state.rejected[item:getID()] = now + Kitchen.policy.retryMs
+        skip(state)[item:getID()] = now + Kitchen.policy.retryMs
         return false
     end
     -- What spoils soon and cooks in about the same time goes in alongside.
@@ -470,7 +533,7 @@ function Kitchen.cook(player, state, now, entry, stove, pool, reason)
     end)
     if not queued then
         write(player, nil)
-        state.rejected[item:getID()] = now + Kitchen.policy.retryMs
+        skip(state)[item:getID()] = now + Kitchen.policy.retryMs
         state.pending = nil
     end
     return queued
@@ -492,8 +555,8 @@ function Kitchen.place(player, state, now, entry, object)
     if not item or not container or object:Activated() or not container:isPowered()
             or others(container, entry) then
         write(player, nil)
-        if item then state.rejected[item:getID()] = now + Kitchen.policy.retryMs end
-        state.rejected["stove:" .. entry.x .. ":" .. entry.y .. ":" .. entry.z] = now + Kitchen.policy.lookMs
+        if item then skip(state)[item:getID()] = now + Kitchen.policy.retryMs end
+        skip(state)["stove:" .. entry.x .. ":" .. entry.y .. ":" .. entry.z] = now + Kitchen.policy.lookMs
         Log.event(player, "kitchen.unplaced", "carried", item ~= nil, "stove", entry.x .. ":" .. entry.y)
         return false
     end
@@ -514,7 +577,7 @@ function Kitchen.place(player, state, now, entry, object)
     end)
     if not queued then
         write(player, nil)
-        state.rejected[item:getID()] = now + Kitchen.policy.retryMs
+        skip(state)[item:getID()] = now + Kitchen.policy.retryMs
         state.pending = nil
     end
     return queued
@@ -525,6 +588,7 @@ end
 function Kitchen.settle(player, state, now, cut)
     local entry = Kitchen.ledger(player)
     if not entry then return end
+    if Soup.handles(entry.stage) then return Soup.settle(player, state, now, cut) end
     local stove = stoveAt(entry)
     local dish = dishIn(stove, entry)
     if entry.stage == "fetching" then
@@ -535,7 +599,7 @@ function Kitchen.settle(player, state, now, cut)
             write(player, entry)
         else
             -- Practice is never worth a second try at the same food soon; a meal may be.
-            if not cut or entry.reason == "practice" then state.rejected[entry.item] = now + Kitchen.policy.retryMs end
+            if not cut or entry.reason == "practice" then skip(state)[entry.item] = now + Kitchen.policy.retryMs end
             write(player, nil)
         end
     elseif entry.stage == "starting" then
@@ -546,7 +610,7 @@ function Kitchen.settle(player, state, now, cut)
             write(player, entry)
         else
             -- Never reached the stove, or someone else lit it first: nothing of ours to clean up.
-            if not cut then state.rejected[entry.item] = now + Kitchen.policy.retryMs end
+            if not cut then skip(state)[entry.item] = now + Kitchen.policy.retryMs end
             write(player, nil)
         end
     elseif entry.stage == "finishing" then
@@ -605,7 +669,7 @@ function Kitchen.ended(player)
     local entry = Kitchen.ledger(player)
     if not entry then return nil end
     local stove = stoveAt(entry)
-    if entry.stage == "fetching" or entry.stage == "ready" then write(player, nil); return nil end
+    if entry.stage == "fetching" or entry.stage == "ready" or Soup.handles(entry.stage) then write(player, nil); return nil end
     if not stove or not stove:Activated() or not entry.lit then return nil end
     if adjacent(player, stove:getSquare()) and not player:isDead() then
         toggle(player, stove, false)

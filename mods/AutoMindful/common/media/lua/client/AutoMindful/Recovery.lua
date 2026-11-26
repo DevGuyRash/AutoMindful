@@ -107,7 +107,7 @@ function Recovery.optionalWork(player, state)
     -- Fetching food for practice can wait; taking a dish out cannot.
     if state.phase == "kitchen" then
         local entry = Kitchen.ledger(player)
-        return entry ~= nil and entry.reason == "practice" and (entry.stage == "fetching" or entry.stage == "starting")
+        return entry ~= nil and entry.reason == "practice" and entry.stage ~= "cooking" and entry.stage ~= "finishing"
     end
     if state.phase == "collecting" then return state.supplyKind == "literature" or state.lifestylePickup ~= nil end
     return not essential[state.phase]
@@ -612,6 +612,8 @@ function Recovery.advance(player, state, now)
     -- A cooked or burning dish comes before anything else; watching it does not.
     if Kitchen.urgent(player) and Kitchen.duty(player, state, now, true) then return end
     -- While something cooks, care uses what is carried or within reach: no trips away from the stove.
+    -- Cooking comes before eating raw what could be cooked.
+    if Kitchen.prefer(player, state, now) or not state.active then return end
     local cooking = Kitchen.lit(player)
     if cooking then state.carriedOnly = true end
     local cared = P.care(player, state)

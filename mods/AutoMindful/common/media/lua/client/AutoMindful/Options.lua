@@ -98,18 +98,20 @@ for _, row in ipairs({
         "Carry on after loading", "If Autopilot was on when you left, it starts again."},
     {"recoveryCook", "Autopilot: cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off.",
         "Cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off."},
+    {"recoverySoup", "Autopilot: make soups and stews", "With a pot, water and two or more ingredients from one place, makes a soup or stew instead of cooking them one by one.",
+        "Make soups and stews", "With a pot, water and two or more ingredients from one place, makes a soup or stew."},
 }) do
     recoveryTicks[row[1]] = settings:getOption(row[1]) or settings:addTickBox(row[1], row[2], true, row[3])
     Options.windowText[row[1]] = {row[4], row[5]}
 end
 -- The window lists Autopilot's switches in this order.
-Options.autopilotToggles = {"recoveryFirstAid", "recoveryBetween", "recoveryRefill", "recoveryCook", "recoveryBeds",
+Options.autopilotToggles = {"recoveryFirstAid", "recoveryBetween", "recoveryRefill", "recoveryCook", "recoverySoup", "recoveryBeds",
     "recoveryLastResort", "recoverySound", "recoveryResume", "strictRecoveryTier"}
 local function ticked(id) return function() return recoveryTicks[id]:getValue() == true end end
 Options.firstAid = ticked("recoveryFirstAid")
 Options.careBetween, Options.refill, Options.useBeds = ticked("recoveryBetween"), ticked("recoveryRefill"), ticked("recoveryBeds")
 Options.lastResort, Options.alertSound, Options.resumeRecovery = ticked("recoveryLastResort"), ticked("recoverySound"), ticked("recoveryResume")
-Options.cookMeals = ticked("recoveryCook")
+Options.cookMeals, Options.makeSoup = ticked("recoveryCook"), ticked("recoverySoup")
 
 -- PZ stores the combo's index. Keep this order stable.
 local practiceChoices = {

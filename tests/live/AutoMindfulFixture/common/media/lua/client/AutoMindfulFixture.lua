@@ -747,6 +747,13 @@ Events.OnPlayerUpdate.Add(function(player)
                 local id, value = line:match("^%S+%s+(%S+)%s+(%S+)")
                 local parsed = value == "true" or (value ~= "false" and (tonumber(value) or value))
                 print("[AutoMindfulFixture] OPTION " .. id .. "=" .. tostring(require("AutoMindful/Options").set(id, parsed)))
+            elseif command == "lua" then
+                -- Test fixture only: run a probe line against the live game and print what it returns.
+                -- The command file ends with " #<nonce>"; that is not Lua.
+                local code = line:match("^%S+%s+(.-)%s+#%d+%s*$") or line:match("^%S+%s+(.+)$")
+                local chunk, failure = loadstring("local player = ...; " .. code)
+                local ok, value = pcall(chunk or error, player)
+                print("[AutoMindfulFixture] LUA " .. tostring(chunk and ok) .. " " .. tostring(chunk and value or failure))
             elseif command == "zen" then
                 local moodles = player:getModData().LSMoodles
                 local value = tonumber(line:match("^%S+%s+([%d%.]+)"))

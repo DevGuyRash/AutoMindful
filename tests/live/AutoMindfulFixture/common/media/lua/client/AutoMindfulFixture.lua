@@ -743,6 +743,10 @@ Events.OnPlayerUpdate.Add(function(player)
                 local name = line:match("^%S+%s+(%S+)") or "Cooking"
                 local perk = Perks[name]
                 print("[AutoMindfulFixture] PERKXP " .. name .. " level=" .. tostring(player:getPerkLevel(perk)) .. " xp=" .. tostring(player:getXp():getXP(perk)))
+            elseif command == "option" then
+                local id, value = line:match("^%S+%s+(%S+)%s+(%S+)")
+                local parsed = value == "true" or (value ~= "false" and (tonumber(value) or value))
+                print("[AutoMindfulFixture] OPTION " .. id .. "=" .. tostring(require("AutoMindful/Options").set(id, parsed)))
             elseif command == "zen" then
                 local moodles = player:getModData().LSMoodles
                 local value = tonumber(line:match("^%S+%s+([%d%.]+)"))

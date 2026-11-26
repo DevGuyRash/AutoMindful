@@ -77,7 +77,7 @@ local function survivor(x,y)
     return p
 end
 local phase
-local parts={available=function() return false end,
+local parts={available=function() return false end, stat=function(p,k) return p.values[k] or 0 end,
     setPhase=function(state,name,message) state.phase,state.message=name,message end,
     ownBatch=function(player,state,name,message,fn)
         queued={}
@@ -405,4 +405,77 @@ do
     -- Wild food keeps its own eating effect: left raw, as before.
     assert(not Kitchen.cookable(food({onEat="RecipeCodeOnEat.consumeWildFoodGeneric"})))
     passed("food with any eating effect is not cooked")
+end
+do
+    -- Practice: nobody hungry, raw food in the fridge that would spoil is cooked
+    -- for XP and put back cold; long-keeping and carried food is left alone.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    p.values.HUNGER=0
+    function p:getStats() return {get=function() return 0 end} end
+    function p:getMoodles() return {getMoodleLevel=function() return 0 end} end
+    local oven=stove(1,0)
+    local fridge=T.container(-1,0); fridge.square=square(-1,0)
+    function fridge:getType() return "fridge" end
+    function fridge:isPowered() return true end
+    fridge.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return fridge end}}
+    local soon=T.add(fridge,food({name="Chicken",rotsAt=2}))
+    local keeps=T.add(fridge,food({name="Jerky",offAge=30,rotsAt=40}))
+    local mine=T.add(p.inventory,food({name="Steak"}))
+    local mode="off"
+    Options.cookTraining=function() return mode end
+    assert(not Kitchen.practice(p,s,1000),"Off: nothing is cooked for practice")
+    mode="spoiling"; s.practiceNext=nil
+    assert(Kitchen.practice(p,s,2000) and Kitchen.ledger(p).reason=="practice","Spoiling food is cooked for practice")
+    assert(#Kitchen.ledger(p).items==1 and Kitchen.ledger(p).item==soon:getID(),"Only what would spoil, not the jerky or the carried steak")
+    run(); Kitchen.settle(p,s,2100,false); s.pending=nil
+    assert(Kitchen.meal(p,s,2200)); run(); Kitchen.settle(p,s,2300,false); s.pending=nil
+    soon.time,soon.cooked=31,true
+    assert(Kitchen.duty(p,s,3000,true)); run(); Kitchen.settle(p,s,3100,false); s.pending=nil
+    assert(not Kitchen.duty(p,s,3200,true))
+    assert(Kitchen.store(p,s,4000)); run()
+    assert(fridge:contains(soon) and soon.cooked and p.inventory:contains(mine),"Cooked and back in the fridge; the steak stays carried")
+    -- Tired, or no fridge to put it back in: no practice.
+    s.practiceNext=nil; local more=T.add(fridge,food({name="Chicken",rotsAt=2}))
+    p.values.FATIGUE=.7
+    assert(not Kitchen.practice(p,s,5000),"A tired survivor is not kept up by practice")
+    p.values.FATIGUE=0; s.practiceNext=nil
+    function fridge:isPowered() return false end
+    assert(not Kitchen.practice(p,s,6000),"Nowhere cold to put it back: no practice")
+    passed("cooking practice uses spoiling food from the cupboards and puts it back cold")
+end
+do
+    local p=T.playerNew()
+    local perk={getXpForLevel=function(_,level) return level*100 end,getTotalXpForLevel=function(_,level) return level*(level+1)*50 end}
+    function p:getPerkLevel() return 2 end
+    function p:getXp() return {getXP=function() return 400 end} end
+    local Progress=require "AutoMindful/Progress"
+    local value=Progress.perk(p,perk)
+    assert(value.level==2 and value.current==100 and value.required==300,"Level 2: 100 of 300 XP into level 3")
+    assert(Progress.perk(p,nil)==nil)
+    passed("any perk's progress is read the same way")
+end
+do
+    -- Cooking 10: nothing left to learn, so no practice.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    p.values.HUNGER=0
+    function p:getStats() return {get=function() return 0 end} end
+    function p:getMoodles() return {getMoodleLevel=function() return 0 end} end
+    stove(1,0)
+    local fridge=T.container(-1,0); fridge.square=square(-1,0)
+    function fridge:getType() return "fridge" end
+    function fridge:isPowered() return true end
+    fridge.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return fridge end}}
+    T.add(fridge,food({rotsAt=2}))
+    Options.cookTraining=function() return "all" end
+    Perks.Cooking={getXpForLevel=function() return 0 end,getTotalXpForLevel=function() return 0 end}
+    function p:getPerkLevel() return 10 end
+    function p:getXp() return {getXP=function() return 0 end} end
+    assert(not Kitchen.practice(p,s,1000),"Level 10 stops practice")
+    function p:getPerkLevel() return 3 end
+    s.practiceNext=nil
+    assert(Kitchen.practice(p,s,2000),"Below 10 it practises")
+    Perks.Cooking=nil
+    passed("cooking practice stops at level 10")
 end

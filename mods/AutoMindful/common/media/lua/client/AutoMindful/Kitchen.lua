@@ -10,10 +10,11 @@ local Saved = require "AutoMindful/Saved"
 local Needs = require "AutoMindful/SurvivalNeeds"
 local Fluids = require "AutoMindful/Fluids"
 local Diet = require "AutoMindful/Diet"
+local Progress = require "AutoMindful/Progress"
 local Alerts = require "AutoMindful/Alerts"
 
 local Kitchen = {policy = {radius = 10, lookMs = 30000, retryMs = 600000, attempts = 3, burnShare = 0.8, againMs = 120000,
-    batch = 4, soonHours = 72,
+    batch = 4, soonHours = 72, practiceMs = 60000, tired = 0.5,
     unwatchedMs = 15000, warnMs = 60000}}
 local watched, warned = {}, {}
 local P
@@ -128,6 +129,8 @@ function Kitchen.choose(food, player)
 end
 
 local function hoursLeft(item) return math.max(0, item:getOffAge() - item:getAge()) * 24 end
+-- Hours until it rots, not just goes stale.
+local function rotHours(item) return math.max(0, item:getOffAgeMax() - item:getAge()) * 24 end
 
 -- Cooked together with the main dish: from the same place, done at about the
 -- same time, and better cooked now than left to spoil.
@@ -282,7 +285,13 @@ function Kitchen.duty(player, state, now, walk)
     end
     if not dish and not on then
         Alerts.clear(player, "stove")
-        if entry.cooked and #entry.cooked > 0 then Saved.set(player, "AutoMindfulLeftovers", entry.cooked) end
+        if entry.cooked and #entry.cooked > 0 then
+            -- Added to what is still waiting for the fridge, never in its place.
+            local list, seen = {}, {}
+            for _, id in ipairs(player:getModData().AutoMindfulLeftovers or {}) do list[#list + 1], seen[id] = id, true end
+            for _, id in ipairs(entry.cooked) do if not seen[id] then list[#list + 1] = id end end
+            Saved.set(player, "AutoMindfulLeftovers", list)
+        end
         write(player, nil)
         if state then state.kitchenNotice = nil end
         Log.event(player, "kitchen.done", "stove", entry.x .. ":" .. entry.y)
@@ -389,6 +398,40 @@ function Kitchen.meal(player, state, now)
         return false
     end
     state.kitchenNotice = nil
+    return Kitchen.cook(player, state, now, entry, stove, found.food, "meal")
+end
+
+-- Cooking practice: when nobody is hungry, raw food from the cupboards is cooked
+-- for Cooking XP and put back cold. "spoiling" takes only what would spoil
+-- within three days; "all" any spare raw food. What is carried stays carried.
+function Kitchen.practice(player, state, now)
+    local mode = Options.cookTraining()
+    if mode == "off" or not Options.cookMeals() or Kitchen.ledger(player) or Needs.due(player, "food") then return false end
+    -- Practice waits for a rested, watered survivor: a lit stove holds up sleep and trips for water.
+    if Needs.due(player, "water") or P.stat(player, "FATIGUE") >= Kitchen.policy.tired then return false end
+    -- At level 10 there is nothing left to learn.
+    local skill = Progress.perk(player, Perks and Perks.Cooking)
+    if skill and skill.capped then return false end
+    if state.practiceNext and now < state.practiceNext and state.practiceNext - now <= Kitchen.policy.practiceMs then return false end
+    state.practiceNext = now + Kitchen.policy.practiceMs
+    local found = Kitchen.scan(player, state.rejected, now)
+    local pool = {}
+    for _, entry in ipairs(found.food) do
+        if not entry.carried and (mode == "all" or rotHours(entry.item) <= Kitchen.policy.soonHours) then pool[#pool + 1] = entry end
+    end
+    local entry, stove = Kitchen.choose(pool, player), found.stoves[1]
+    -- The cooked food needs somewhere cold to go back to.
+    local fridge = found.fridges[1]
+    local cold = fridge and entry and fridge.container:hasRoomFor(player, entry.item)
+    Log.event(player, "kitchen.practice", "mode", mode, "raw", #pool, "stoves", #found.stoves, "fridge", cold == true,
+        "chosen", entry and Snap.item(entry.item))
+    if not entry or not stove or not cold then return false end
+    return Kitchen.cook(player, state, now, entry, stove, pool, "practice")
+end
+
+-- Puts the chosen dish and what goes with it on the stove: from a fridge
+-- first, then to the stove from wherever that leaves the survivor.
+function Kitchen.cook(player, state, now, entry, stove, pool, reason)
     local item, object = entry.item, stove.object
     local inventory = player:getInventory()
     if not entry.carried and not inventory:hasRoomFor(player, item) then
@@ -397,7 +440,7 @@ function Kitchen.meal(player, state, now)
     end
     -- What spoils soon and cooks in about the same time goes in alongside.
     local batch, weight = {entry}, item:getActualWeight()
-    for _, extra in ipairs(Kitchen.companions(entry, found.food, Kitchen.policy.batch - 1)) do
+    for _, extra in ipairs(Kitchen.companions(entry, pool, Kitchen.policy.batch - 1)) do
         local extraWeight = extra.item:getActualWeight()
         if object:getContainer():hasRoomFor(player, weight + extraWeight)
                 and (extra.carried or inventory:hasRoomFor(player, weight + extraWeight)) then
@@ -412,9 +455,9 @@ function Kitchen.meal(player, state, now)
     local square = object:getSquare()
     local record = {x = square:getX(), y = square:getY(), z = square:getZ(), item = item:getID(), items = list,
         name = item:getDisplayName() .. (#list > 1 and (" and " .. (#list - 1) .. " more") or ""), fetched = fetched,
-        tries = 0, stage = entry.carried and "ready" or "fetching"}
+        tries = 0, stage = entry.carried and "ready" or "fetching", reason = reason}
     write(player, record)
-    Log.event(player, "kitchen.start", "dish", Snap.item(item), "count", #list, "stove", stoveKey(object), "carried", entry.carried,
+    Log.event(player, "kitchen.start", "reason", reason, "dish", Snap.item(item), "count", #list, "stove", stoveKey(object), "carried", entry.carried,
         "temperature", object.getMaxTemperature and object:getMaxTemperature() or nil)
     if entry.carried then return Kitchen.place(player, state, now, record, object) end
     -- First the fridge, then, from wherever that leaves the survivor, the stove.
@@ -491,7 +534,8 @@ function Kitchen.settle(player, state, now, cut)
             entry.stage = "ready"
             write(player, entry)
         else
-            if not cut then state.rejected[entry.item] = now + Kitchen.policy.retryMs end
+            -- Practice is never worth a second try at the same food soon; a meal may be.
+            if not cut or entry.reason == "practice" then state.rejected[entry.item] = now + Kitchen.policy.retryMs end
             write(player, nil)
         end
     elseif entry.stage == "starting" then

@@ -19,16 +19,20 @@ function Progress.yoga(player)
     return sample(level, current, required)
 end
 
+-- Any game perk: level, XP into it and XP it needs.
+function Progress.perk(player, perk)
+    if not player or not perk or not perk.getXpForLevel or not perk.getTotalXpForLevel then return nil end
+    local level, total = player:getPerkLevel(perk), player:getXp():getXP(perk)
+    local required = level < 10 and perk:getXpForLevel(level + 1) or 0
+    return sample(level, total - perk:getTotalXpForLevel(level), required, total)
+end
+
 function Progress.snapshot(player)
     local result = {}
     if not player then return result end
-    local perk = Perks and Perks.Meditation
-    if perk and perk.getXpForLevel and perk.getTotalXpForLevel then
-        local level, total = player:getPerkLevel(perk), player:getXp():getXP(perk)
-        local required = level < 10 and perk:getXpForLevel(level + 1) or 0
-        result.meditation = sample(level, total - perk:getTotalXpForLevel(level), required, total)
-    end
+    result.meditation = Progress.perk(player, Perks and Perks.Meditation)
     result.yoga = Progress.yoga(player)
+    result.cooking = Progress.perk(player, Perks and Perks.Cooking)
     return result
 end
 

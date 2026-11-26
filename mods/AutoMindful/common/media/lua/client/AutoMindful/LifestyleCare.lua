@@ -1,6 +1,7 @@
 -- Discover ready Lifestyle care only; actual work and success stay in the
 -- native adapters. Nothing here owns a queue or changes the player's needs.
 local Storage = require "AutoMindful/Storage"
+local Grid = require "AutoMindful/Grid"
 local Supplies = require "AutoMindful/Supplies"
 local Restroom = require "AutoMindful/RestroomCare"
 local Hygiene = require "AutoMindful/HygieneCare"
@@ -25,7 +26,7 @@ end
 
 local function fixtureTarget(player, state, kind, object, square, index, distance)
     if not object or not square then return nil end
-    local key = kind .. ":" .. square:getX() .. ":" .. square:getY() .. ":" .. square:getZ() .. ":" .. index
+    local key = kind .. ":" .. Grid.key(square) .. ":" .. index
     if state.lifestyleRejected and state.lifestyleRejected[key] then return nil end
     if SurvivalRoute.roomBlocked(state.travelRejected,square,player:getSquare(),nil,getTimestampMs()) then return nil end
     local a=adapters[kind]

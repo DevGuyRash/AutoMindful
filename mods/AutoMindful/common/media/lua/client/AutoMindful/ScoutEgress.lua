@@ -1,11 +1,10 @@
 local Storage = require "AutoMindful/Storage"
+local Grid = require "AutoMindful/Grid"
 local Egress = {}
 
 local cardinal = {{-1,0}, {1,0}, {0,-1}, {0,1}}
 
-local function key(square)
-    return square:getX()..":"..square:getY()..":"..square:getZ()
-end
+local key = Grid.key
 
 function Egress.obstructed(square)
     return square and ((square.isSolid and square:isSolid()) or (square.isSolidTrans and square:isSolidTrans())

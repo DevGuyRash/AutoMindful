@@ -255,7 +255,7 @@ function Views.log(window)
     rows[#rows + 1] = {kind="buttons", buttons={
         {text="Copy report", onClick=function() window:copyReport() end,
             tip="Copy the current state and recent events to the clipboard for a bug report."},
-        {text="Detail: " .. Options.logLabel(), menu=true, onClick=function() window:openLogMenu() end},
+        {text="Detail: " .. Options.logLabel(), menu=true, onClick=function() window:openChoiceMenu("logLevel") end},
     }}
     if window.copied then rows[#rows + 1] = {kind="text", text=window.copied, color=colors.good} end
     rows[#rows + 1] = {kind="text", text=Options.logLevel() > 1 and ("Full log: Zomboid/Lua/" .. Log.fileName()) or "The log file is off.", color=colors.faint}
@@ -301,14 +301,18 @@ end
 
 function Views.settings(window)
     local player, rows = window.player, {}
-    local function toggle(id, label, help)
-        local option = Options.option(id)
-        rows[#rows + 1] = {kind="setting", label=label, tip=help, toggle=option:getValue() == true,
+    local function toggle(id)
+        local option, text = Options.option(id), Options.windowText[id]
+        rows[#rows + 1] = {kind="setting", label=text[1], tip=text[2], toggle=option:getValue() == true,
             onClick=function() Options.set(id, option:getValue() ~= true); window:invalidate() end}
     end
+    local function choice(id)
+        local entry, text = Options.choice(id), Options.windowText[id]
+        rows[#rows + 1] = {kind="setting", label=text[1], value=entry.short or entry.label, menu=true,
+            tip=entry.help or text[2], onClick=function() window:openChoiceMenu(id) end}
+    end
     head(rows, "Training")
-    rows[#rows + 1] = {kind="setting", label="Training both", value=Options.cycleChoices()[Options.cycleIndex()].label, menu=true,
-        tip=Options.cycleChoices()[Options.cycleIndex()].help, onClick=function() window:openCycleMenu() end}
+    choice("cyclePolicy")
     for _, group in ipairs(Options.minimumGroups()) do
         rows[#rows + 1] = {kind="setting", label=group.label, value=group.summary, menu=true, tip=group.help,
             onClick=function() window:openMinimumMenu(group.id) end}
@@ -321,30 +325,20 @@ function Views.settings(window)
         rows[#rows + 1] = {kind="setting", label="Search radius", value=Options.searchRadius() .. " tiles", menu=true,
             onClick=function() window:openRadiusMenu() end}
     end
-    toggle("practiceCare", "Practise for relief", "Use Yoga or Meditation when it is the best way to ease a need.")
+    toggle("practiceCare")
     head(rows, "Autopilot")
-    rows[#rows + 1] = {kind="setting", label="Diet goal", value=Options.dietChoices()[Options.dietIndex()].label, menu=true,
-        tip=Options.dietChoices()[Options.dietIndex()].help, onClick=function() window:openDietMenu() end}
-    rows[#rows + 1] = {kind="setting", label="Away after", value=Options.awayMinutes[Options.awayIndex()] .. " min", menu=true,
-        tip="Without any input. While you are away, Autopilot does everything it can.", onClick=function() window:openAwayMenu() end}
-    toggle("recoveryFirstAid", "Bandage wounds", "Uses the best dressing carried or within reach. Also during training.")
-    toggle("recoveryBetween", "Eat and drink between actions", "While you or another mod keep the queue busy, a carried bite or sip goes between two actions.")
-    toggle("recoveryRefill", "Keep carried bottles full", "The game drinks from carried bottles by itself, so a full one keeps the survivor going when nothing else works.")
-    toggle("recoveryCook", "Cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off.")
-    toggle("recoveryBeds", "Sleep in a nearby bed", "Walks there and back. Off: sleeps on the spot.")
-    toggle("recoveryLastResort", "Unsafe water rather than death", "Only after a minute of Dying of Thirst with nothing clean left.")
-    toggle("recoverySound", "Sound when it needs you", "Heard only by you, not by zombies.")
-    toggle("recoveryResume", "Carry on after loading", "If Autopilot was on when you left, it starts again.")
-    toggle("strictRecoveryTier", "Finish its moodle tier", "Keep working toward the minimum even if the need that started it clears.")
+    choice("dietGoal")
+    choice("recoveryAway")
+    for _, id in ipairs(Options.autopilotToggles) do toggle(id) end
     head(rows, "Window and menu")
     rows[#rows + 1] = {kind="setting", label="Open and close key", value=window.capturing and (window.keyTaken and (window.keyTaken .. " is in use. Try another") or "Press a key, Esc to cancel")
         or Options.windowKeyLabel(),
         valueColor=window.capturing and colors.warn or nil, onClick=function() window:beginCapture() end,
         tip="Right click menus keep working without a key."}
-    toggle("defaultWindowKey", "Use 0 when no key is set", "Only while nothing else uses 0.")
-    toggle("generalContextMenu", "Always in the right-click menu", "Off: it appears under Wellness, and on your survivor while a job runs.")
+    toggle("defaultWindowKey")
+    toggle("generalContextMenu")
     head(rows, "Diagnostics")
-    rows[#rows + 1] = {kind="setting", label="Log detail", value=Options.logLabel(), menu=true, onClick=function() window:openLogMenu() end}
+    choice("logLevel")
     return rows
 end
 

@@ -8,6 +8,7 @@ require "ISMeditation/ZenWellnessContextMenu"
 require "TimedActions/WalkToTimedAction"
 local Controller = require "AutoMindful/Controller"
 local Jobs = require "AutoMindful/Jobs"
+local Grid = require "AutoMindful/Grid"
 local Log = require "AutoMindful/Log"
 local Options = require "AutoMindful/Options"
 local Theme = require "AutoMindful/Theme"
@@ -81,7 +82,7 @@ end
 
 local function root(context, player, status)
     for _, option in ipairs(context.options) do if option.autoMindful then return nil end end
-    local label = status.active and ("Second Nature: " .. Jobs.title(status)) or "Second Nature"
+    local label = status.active and (Theme.brand .. ": " .. Jobs.title(status)) or Theme.brand
     local option = context:addOption(label, nil, nil)
     if not option then return nil end
     option.autoMindful = true
@@ -116,7 +117,7 @@ function Menu.attach(context, player)
     local wellness = find(context, {})
     if not wellness then return end
     for _, option in ipairs(wellness.options) do if option.autoMindful then return end end
-    local option = wellness:addOption("Second Nature", nil, nil)
+    local option = wellness:addOption(Theme.brand, nil, nil)
     if not option then return end
     option.autoMindful = true
     option.iconTexture = Theme.icon("Mindful")
@@ -177,9 +178,7 @@ local function onSurvivor(player, worldobjects)
     local here = player:getSquare()
     if not here then return false end
     for _, object in ipairs(worldobjects or {}) do
-        local square = object.getSquare and object:getSquare()
-        if square and square:getZ() == here:getZ() and math.abs(square:getX() - here:getX()) <= 1
-                and math.abs(square:getY() - here:getY()) <= 1 then return true end
+        if Grid.adjacent(here, object.getSquare and object:getSquare()) then return true end
     end
     return false
 end

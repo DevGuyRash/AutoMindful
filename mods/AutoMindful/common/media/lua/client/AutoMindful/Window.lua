@@ -373,24 +373,11 @@ function Window:openRadiusMenu()
     end
 end
 
-function Window:openAwayMenu()
-    local menu = self:menu()
-    for index, minutes in ipairs(Options.awayMinutes) do
-        pick(menu, minutes == 1 and "1 minute" or minutes .. " minutes", index == Options.awayIndex(), self, Window.setOption, "recoveryAway", index)
-    end
-end
-
-function Window:openCycleMenu()
-    local menu = self:menu()
-    for index, entry in ipairs(Options.cycleChoices()) do
-        pick(menu, entry.label, index == Options.cycleIndex(), self, Window.setOption, "cyclePolicy", index)
-    end
-end
-
-function Window:openDietMenu()
-    local menu = self:menu()
-    for index, entry in ipairs(Options.dietChoices()) do
-        pick(menu, entry.label, index == Options.dietIndex(), self, Window.setOption, "dietGoal", index)
+-- One menu for every setting with a list of choices.
+function Window:openChoiceMenu(id)
+    local menu, current = self:menu(), Options.choiceIndex(id)
+    for index, entry in ipairs(Options.choiceEntries(id)) do
+        pick(menu, entry.label, index == current, self, Window.setOption, id, index)
     end
 end
 
@@ -410,12 +397,6 @@ function Window:openMinimumMenu(group)
     end
 end
 
-function Window:openLogMenu()
-    local menu = self:menu()
-    for index, label in ipairs(Options.logLabels) do
-        pick(menu, label, index == Options.logLevel(), self, Window.setOption, "logLevel", index)
-    end
-end
 
 function Window:copyReport()
     local ok = pcall(function() Clipboard.setClipboard(Views.report(self.player, self.status)) end)
@@ -488,7 +469,7 @@ function Window:refresh()
     if self.wasRunning ~= running then self.wasRunning, self.resetFit = running, true end
     if running then self.startError = nil end
     self.accent = running and Jobs.colors[self.status.mode] or "recovery"
-    self.title = self.geometry.mini and running and Jobs.title(self.status) or "Second Nature"
+    self.title = self.geometry.mini and running and Jobs.title(self.status) or Theme.brand
     self.body:setRows(Views[self.view](self))
     local reset = self.resetFit
     self.resetFit = nil
@@ -529,7 +510,7 @@ function Window.open(player)
     if window and window.player ~= player then window:close(); window = nil end
     if not window then
         window = Window:new(70, 70, 400, 300)
-        window.player, window.title, window.view = player, "Second Nature", "now"
+        window.player, window.title, window.view = player, Theme.brand, "now"
         window.backgroundColor, window.borderColor = colors.window, colors.border
         window.geometry = Preferences.geometry(player)
         window.resizable, window.nextRefresh, window.grown = true, 0, 0

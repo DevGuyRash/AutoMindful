@@ -1,9 +1,10 @@
 -- Shared storage access checks. Never opens doors, enters vehicles or wakes bodies.
 local Storage = {}
 
-function Storage.permitted(player, square)
+-- Safehouse rules allow this survivor here; interactOnly: no taking things.
+function Storage.permitted(player, square, interactOnly)
     return square and (not isClient() or (SafeHouse.isSafehouseAllowInteract(square, player)
-        and SafeHouse.isSafehouseAllowLoot(square, player)))
+        and (interactOnly or SafeHouse.isSafehouseAllowLoot(square, player))))
 end
 
 function Storage.safeCorpse(body)

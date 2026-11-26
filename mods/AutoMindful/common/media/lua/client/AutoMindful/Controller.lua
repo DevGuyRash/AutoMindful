@@ -4,6 +4,8 @@ require "TimedActions/ISDrinkFluidAction"
 require "TimedActions/ISWaitWhileGettingUp"
 require "ISUI/ISWorldObjectContextMenu"
 local Supplies = require "AutoMindful/Supplies"
+local Grid = require "AutoMindful/Grid"
+local Theme = require "AutoMindful/Theme"
 local Consumables = require "AutoMindful/Consumables"
 local Needs = require "AutoMindful/SurvivalNeeds"
 local WaterSources = require "AutoMindful/WaterSources"
@@ -346,7 +348,7 @@ local function showSessionEnd(player, state)
     end
     local stopped = state.endPhase == "stopped"
     hud.show(player:getPlayerNum(), {
-        brand="SECOND NATURE", theme="mindful",
+        brand=Theme.brandMark, theme="mindful",
         title=modeTitles[state.mode] .. (stopped and " session stopped" or " session complete"),
         detail=table.concat(detail, " | "),
         status=state.endPhase, note=stopped and state.endMessage or nil,
@@ -1705,7 +1707,7 @@ end
 local function learnedStop(player,state,kind,square,radius,now,onlyWorldWater)
     if not state.scoutMemory then return end
     return ScoutMemory.choose(state.scoutMemory,kind,square,radius,now,function(_,object,sourceSquare,container,suffix)
-        local key=kind..":"..sourceSquare:getX()..":"..sourceSquare:getY()..":"..sourceSquare:getZ()..(suffix or "")
+        local key=kind..":"..Grid.key(sourceSquare)..(suffix or "")
         local target={kind=kind,object=object,square=sourceSquare,key=key,container=container,remembered=true,storageScoped=suffix~=nil}
         if SurvivalRoute.roomBlocked(state.travelRejected,sourceSquare,square,nil,now) then return end
         if state.travelRejected[key] then

@@ -4,7 +4,8 @@
 -- parts (danger, first aid, last resort) also stand behind every training job.
 local Alerts = require "AutoMindful/Alerts"
 local Kitchen = require "AutoMindful/Kitchen"
-local HUD = require "AutoMindful/CompletionHUD"
+local Grid = require "AutoMindful/Grid"
+local Saved = require "AutoMindful/Saved"
 local Beds = require "AutoMindful/Beds"
 local Danger = require "AutoMindful/Danger"
 local FirstAid = require "AutoMindful/FirstAid"
@@ -110,10 +111,7 @@ end
 -- Saved with the survivor, so the job can go on after loading. In multiplayer
 -- the server keeps the survivor, so it has to be told.
 function Recovery.remember(player, on)
-    local data = player:getModData()
-    if (data.AutoMindfulRecovery == true) == on then return end
-    data.AutoMindfulRecovery = on or nil
-    if isClient() and player.transmitModData then pcall(player.transmitModData, player) end
+    Saved.set(player, "AutoMindfulRecovery", on or nil)
 end
 
 function Recovery.remembered(player) return player:getModData().AutoMindfulRecovery == true end
@@ -129,7 +127,7 @@ function Recovery.kitchenStopped(player)
     local stove = Kitchen.ended(player)
     if stove then
         Log.headline(player, "kitchen.ended", "result", stove)
-        HUD.show(player:getPlayerNum(), {brand="Second Nature", theme="mindful", status="stopped", title="Kitchen", detail=stove})
+        Alerts.notice(player, "Kitchen", stove)
     end
 end
 
@@ -382,7 +380,7 @@ end
 
 local function waterVessel(player, state, item)
     local fluid = Fluids.container(item)
-    if not fluid or item:isSealed() or (item.isFavorite and item:isFavorite() and fluid:isEmpty()) then return nil end
+    if not fluid or item:isSealed() or (Grid.favorite(item) and fluid:isEmpty()) then return nil end
     if not Fluids.drinkable(item, fluid) or fluid:isInputLocked() then return nil end
     state.vessels = state.vessels or {}
     if fluid:isEmpty() then
@@ -466,7 +464,7 @@ function Recovery.notePath(state, target, failed)
     local player = state.player
     local square = player and player:getSquare()
     if not square then return end
-    local here = square:getX() .. ":" .. square:getY() .. ":" .. square:getZ()
+    local here = Grid.key(square)
     local record = state.pathFails
     if not failed or not record or record.here ~= here then
         record = {here=here, keys={}, count=0}
@@ -530,7 +528,7 @@ function Recovery.watch(player, state, now)
     if errors and now - errors.at > 120000 then state.errors = nil; Alerts.clear(player, "error") end
     if state.pathFails and not player:isPlayerMoving() then
         local square = player:getSquare()
-        if square and state.pathFails.here ~= square:getX() .. ":" .. square:getY() .. ":" .. square:getZ() then
+        if square and state.pathFails.here ~= Grid.key(square) then
             Recovery.notePath(state, nil, false)
         end
     end

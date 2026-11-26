@@ -1,12 +1,34 @@
 require "PZAPI/ModOptions"
 local Tiers = require "AutoMindful/TierTargets"
+local Theme = require "AutoMindful/Theme"
 
 local Options = {}
 local settings = PZAPI.ModOptions:getOptions("AutoMindful")
 if not settings then
-    settings = PZAPI.ModOptions:create("AutoMindful", "Second Nature")
+    settings = PZAPI.ModOptions:create("AutoMindful", Theme.brand)
     settings:addDescription("The same settings are in the Second Nature window, under Settings. Closing the window does not stop the current job.")
 end
+
+-- Each setting's wording in the window, beside its definition here, so the
+-- window and Options > Mods never drift apart. {label, tip}
+Options.windowText = {
+    generalContextMenu = {"Always in the right-click menu", "Off: it appears under Wellness, and on your survivor while a job runs."},
+    defaultWindowKey = {"Use 0 when no key is set", "Only while nothing else uses 0."},
+    practiceCare = {"Practise for relief", "Use Yoga or Meditation when it is the best way to ease a need."},
+    strictRecoveryTier = {"Finish its moodle tier", "Keep working toward the minimum even if the need that started it clears."},
+    recoveryAway = {"Away after", "Without any input. While you are away, Autopilot does everything it can."},
+    cyclePolicy = {"Training both"},
+    dietGoal = {"Diet goal"},
+    logLevel = {"Log detail"},
+}
+
+-- Settings with a list of choices: their entries ({label, short, help}) and
+-- the chosen index, for the window's menus. PZ stores the index.
+local choiceSets = {}
+local function choices(id, entries, index) choiceSets[id] = {entries = entries, index = index} end
+function Options.choiceEntries(id) return choiceSets[id].entries end
+function Options.choiceIndex(id) return choiceSets[id].index() end
+function Options.choice(id) local set = choiceSets[id]; return set.entries[set.index()] end
 
 local general = settings:getOption("generalContextMenu") or settings:addTickBox("generalContextMenu",
     "Always show Second Nature in the world context menu", false,
@@ -36,11 +58,15 @@ local radius = settings:getOption("searchRadius") or settings:addSlider("searchR
 -- Recovery's own switches. Every one is safe to leave on; each is here because
 -- someone will want the survivor to behave differently.
 Options.awayMinutes = {1, 3, 5, 10}
+local awayEntries = {}
+for index, minutes in ipairs(Options.awayMinutes) do
+    awayEntries[index] = {label = minutes == 1 and "1 minute" or minutes .. " minutes", short = minutes .. " min"}
+end
 local away = settings:getOption("recoveryAway")
 if not away then
     away = settings:addComboBox("recoveryAway", "Autopilot: counts you as away after",
         "While you are away, Autopilot also walks for small needs, sleeps in bed, fills bottles and warns you out loud.")
-    for _, minutes in ipairs(Options.awayMinutes) do away:addItem(minutes == 1 and "1 minute" or minutes .. " minutes") end
+    for _, entry in ipairs(awayEntries) do away:addItem(entry.label) end
     away:setValue(2)
 end
 
@@ -50,20 +76,34 @@ function Options.awayIndex()
 end
 
 function Options.awayMs() return Options.awayMinutes[Options.awayIndex()] * 60000 end
+choices("recoveryAway", awayEntries, Options.awayIndex)
 
 local recoveryTicks = {}
+-- {id, Options > Mods label, its help, window label, window tip}
 for _, row in ipairs({
-    {"recoveryFirstAid", "Bandage wounds", "Uses the best dressing carried or within reach. Also during training."},
-    {"recoveryBetween", "Autopilot: eat and drink between your actions", "While you or another mod keep the action queue busy, a carried bite or sip goes between two actions."},
-    {"recoveryRefill", "Autopilot: keep carried bottles full", "Refills bottles you carry at clean water. The game drinks from them by itself."},
-    {"recoveryBeds", "Autopilot: sleep in a bed when one is near", "Walks to a bed within the search radius and back afterwards. Off: sleeps on the spot."},
-    {"recoveryLastResort", "Autopilot: drink unsafe water rather than die", "Only after a minute of Dying of Thirst with nothing clean left. It will make the survivor ill."},
-    {"recoverySound", "Autopilot: sound when it needs you", "Heard only by you, not by zombies."},
-    {"recoveryResume", "Autopilot: carry on after loading", "If Autopilot was on when you left, it starts again when you are back in."},
-    {"recoveryCook", "Autopilot: cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off."},
+    {"recoveryFirstAid", "Bandage wounds", "Uses the best dressing carried or within reach. Also during training.",
+        "Bandage wounds", "Uses the best dressing carried or within reach. Also during training."},
+    {"recoveryBetween", "Autopilot: eat and drink between your actions", "While you or another mod keep the action queue busy, a carried bite or sip goes between two actions.",
+        "Eat and drink between actions", "While you or another mod keep the queue busy, a carried bite or sip goes between two actions."},
+    {"recoveryRefill", "Autopilot: keep carried bottles full", "Refills bottles you carry at clean water. The game drinks from them by itself.",
+        "Keep carried bottles full", "The game drinks from carried bottles by itself, so a full one keeps the survivor going when nothing else works."},
+    {"recoveryBeds", "Autopilot: sleep in a bed when one is near", "Walks to a bed within the search radius and back afterwards. Off: sleeps on the spot.",
+        "Sleep in a nearby bed", "Walks there and back. Off: sleeps on the spot."},
+    {"recoveryLastResort", "Autopilot: drink unsafe water rather than die", "Only after a minute of Dying of Thirst with nothing clean left. It will make the survivor ill.",
+        "Unsafe water rather than death", "Only after a minute of Dying of Thirst with nothing clean left."},
+    {"recoverySound", "Autopilot: sound when it needs you", "Heard only by you, not by zombies.",
+        "Sound when it needs you", "Heard only by you, not by zombies."},
+    {"recoveryResume", "Autopilot: carry on after loading", "If Autopilot was on when you left, it starts again when you are back in.",
+        "Carry on after loading", "If Autopilot was on when you left, it starts again."},
+    {"recoveryCook", "Autopilot: cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off.",
+        "Cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off."},
 }) do
     recoveryTicks[row[1]] = settings:getOption(row[1]) or settings:addTickBox(row[1], row[2], true, row[3])
+    Options.windowText[row[1]] = {row[4], row[5]}
 end
+-- The window lists Autopilot's switches in this order.
+Options.autopilotToggles = {"recoveryFirstAid", "recoveryBetween", "recoveryRefill", "recoveryCook", "recoveryBeds",
+    "recoveryLastResort", "recoverySound", "recoveryResume", "strictRecoveryTier"}
 local function ticked(id) return function() return recoveryTicks[id]:getValue() == true end end
 Options.firstAid = ticked("recoveryFirstAid")
 Options.careBetween, Options.refill, Options.useBeds = ticked("recoveryBetween"), ticked("recoveryRefill"), ticked("recoveryBeds")
@@ -101,21 +141,18 @@ if not diet then
     for _, entry in ipairs(diets) do diet:addItem(entry.label) end
     diet:setValue(1)
 end
-function Options.dietChoices() return diets end
 function Options.dietIndex()
     local index = tonumber(diet:getValue())
     return index and diets[index] and index or 1
 end
+choices("dietGoal", diets, Options.dietIndex)
 function Options.dietGoal() return diets[Options.dietIndex()].id end
-
-function Options.cycleChoices()
-    return cycles
-end
 
 function Options.cycleIndex()
     local index = tonumber(cycle:getValue())
     return index and cycles[index] and index or 1
 end
+choices("cyclePolicy", cycles, Options.cycleIndex)
 
 function Options.cyclePolicy()
     return cycles[Options.cycleIndex()].id
@@ -141,7 +178,9 @@ end
 
 -- What the log file records. Everything is the default: a problem is usually
 -- noticed after it happened, and the files rotate at a fixed size.
-Options.logLabels = {"Off", "Decisions", "Everything"}
+local logEntries = {{label = "Off"}, {label = "Decisions"}, {label = "Everything"}}
+Options.logLabels = {}
+for index, entry in ipairs(logEntries) do Options.logLabels[index] = entry.label end
 local logOption = settings:getOption("logLevel")
 if not logOption then
     logOption = settings:addComboBox("logLevel", "Diagnostics log",
@@ -156,6 +195,7 @@ function Options.logLevel()
 end
 
 function Options.logLabel() return Options.logLabels[Options.logLevel()] end
+choices("logLevel", logEntries, Options.logLevel)
 
 local minimums = {}
 local minimumHelp = "Defaults to the highest tier and uses the highest unlocked tier at or below your choice. Select No minimum to turn this off. Safety, supplies and your other actions still take priority."

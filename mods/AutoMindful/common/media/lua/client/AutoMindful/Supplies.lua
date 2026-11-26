@@ -6,6 +6,7 @@ local Diet = require "AutoMindful/Diet"
 local WaterSources = require "AutoMindful/WaterSources"
 local Fluids = require "AutoMindful/Fluids"
 local Storage = require "AutoMindful/Storage"
+local Grid = require "AutoMindful/Grid"
 local PainCare = require "AutoMindful/PainCare"
 
 AutoMindful = AutoMindful or {}
@@ -74,21 +75,13 @@ function Supplies.refreshNearby(player)
     return containers(player, true)
 end
 
+-- Next to the survivor, with nothing in between.
 local function reachable(player, square)
     local here = player:getSquare()
-    return square and here and square:getZ() == here:getZ()
-        and math.abs(square:getX() - here:getX()) <= 1
-        and math.abs(square:getY() - here:getY()) <= 1
-        and (square == here or here:canReachTo(square))
+    return Grid.adjacent(here, square) and (square == here or here:canReachTo(square))
 end
 
-local function containerSquare(container)
-    local square = container:getSourceGrid()
-    if square then return square end
-    local item = container:getContainingItem()
-    local world = item and item:getWorldItem()
-    return world and world:getSquare()
-end
+local containerSquare = Grid.containerSquare
 
 local function canCollect(player, entry)
     return entry.worldSource ~= nil or entry.owned or entry.item:getContainer() == player:getInventory()
@@ -222,7 +215,7 @@ function Supplies.findCareItem(player, eligible, includeNearby)
                 local world=floor and item:getWorldItem()
                 local legal=not floor or (world and reachable(player,world:getSquare())
                     and Storage.permitted(player,world:getSquare()))
-                if legal and (not item.isFavorite or not item:isFavorite()) and eligible(item)
+                if legal and not Grid.favorite(item) and eligible(item)
                         and (container==main or main:hasRoomFor(player,item)) then return item end
             end
         end
@@ -735,9 +728,7 @@ end
 
 local favoriteReturnNotice = "Borrowed supplies marked as favorites stay in your inventory. Unfavorite them to allow their return."
 
-local function favorite(item)
-    return item.isFavorite and item:isFavorite() == true
-end
+local favorite = Grid.favorite
 
 local function protectFavoriteReturn(action, item)
     local nativeValid = action.isValid

@@ -29,7 +29,7 @@ end
 
 function Kitchen.bind(parts)
     P = parts
-    Soup.bind({write = function(player, entry) Kitchen.write(player, entry) end, ledger = Kitchen.ledger,
+    Soup.bind({write = function(player, entry) Kitchen.write(player, entry) end, ledger = Kitchen.ledger, heatKind = Kitchen.heatKind,
         place = function(...) return Kitchen.place(...) end}, parts)
 end
 
@@ -56,13 +56,40 @@ local function relief(item) return -item:getHungerChange() end
 
 -- ----------------------------------------------------------------- the stove
 
--- Ovens and ranges only: coffee machines, fryers and microwaves are IsoStoves
--- too, and a microwave sets fire to anything metal.
-function Kitchen.isStove(object)
-    if not object or not instanceof(object, "IsoStove") then return false end
-    local container = object:getContainer()
-    return container ~= nil and container:getType() == "stove"
+-- What can cook. Each kind says whether it is on, whether it can heat (power,
+-- propane) and which of the game's actions switches it. Microwaves are left
+-- out: they run on a timer and did not cook raw food in testing; coffee
+-- machines and fryers are IsoStoves too.
+local heats = {
+    {kind = "stove", name = "stove",
+        match = function(object) return instanceof(object, "IsoStove") and object:getContainer() ~= nil
+            and object:getContainer():getType() == "stove" end,
+        on = function(object) return object:Activated() end,
+        ready = function(object) return object:getContainer():isPowered() end,
+        action = function(player, object) return ISToggleStoveAction:new(player, object) end},
+    {kind = "grill", name = "grill",
+        match = function(object) return instanceof(object, "IsoBarbecue") and object:isPropaneBBQ() and object:getContainer() ~= nil end,
+        -- Out of propane it cannot heat and cannot be switched: off, in effect.
+        on = function(object) return object:isLit() and object:hasFuel() end,
+        ready = function(object) return object:hasFuel() end,
+        action = function(player, object) return ISBBQToggle:new(player, object) end},
+}
+
+local function heatOf(object)
+    if not object then return nil end
+    for _, heat in ipairs(heats) do
+        local ok, matched = pcall(heat.match, object)
+        if ok and matched then return heat end
+    end
+    return nil
 end
+
+function Kitchen.isStove(object) return heatOf(object) ~= nil end
+function Kitchen.heatKind(object) local heat = heatOf(object); return heat and heat.kind or nil end
+-- Gone or replaced since it was found: neither on nor able to heat.
+local function isOn(object) local heat = heatOf(object); return heat ~= nil and heat.on(object) == true end
+local function canHeat(object) local heat = heatOf(object); return heat ~= nil and heat.ready(object) == true end
+Kitchen.heatName = function(object) local heat = heatOf(object); return heat and heat.name or "stove" end
 
 local function stoveKey(object) return Grid.key(object:getSquare()) end
 Kitchen.key = stoveKey
@@ -102,20 +129,27 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
         end
     end
     take(player:getInventory(), true)
+    local home = player:getSquare():getBuilding()
     Grid.around(player, Kitchen.policy.radius, function(square, dx, dy)
         local distance = dx * dx + dy * dy
+        -- From indoors the yard is only for a grill: food, fridges and taps stay inside.
+        local yard = home ~= nil and square:getBuilding() == nil
         local objects = square:getObjects()
         for index = 0, objects:size() - 1 do
             local object = objects:get(index)
-            if not fridgesOnly and Soup.isTap(object) then
+            local outside = yard and not heatOf(object)
+            if not outside and not fridgesOnly and Soup.isTap(object) then
                 result.taps[#result.taps + 1] = {object = object, square = square, distance = distance}
             end
-            if Kitchen.isStove(object) then
+            if outside then
+                -- nothing but heat out there
+            elseif Kitchen.isStove(object) then
                 local container = object:getContainer()
                 local waiting = rejected and rejected["stove:" .. stoveKey(object)]
-                if not fridgesOnly and container:isPowered() and not object:Activated() and free(container)
+                if not fridgesOnly and canHeat(object) and not isOn(object) and free(container)
                         and not (waiting and now < waiting) then
-                    result.stoves[#result.stoves + 1] = {object = object, square = square, distance = distance}
+                    result.stoves[#result.stoves + 1] = {object = object, square = square, distance = distance,
+                        rank = heatOf(object).kind == "stove" and 0 or 1}
                 end
             elseif object.getContainerCount then
                 for c = 0, object:getContainerCount() - 1 do
@@ -130,7 +164,11 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             end
         end
     end, true)
-    table.sort(result.stoves, function(a, b) return a.distance < b.distance end)
+    -- A stove indoors before a grill outside, then the nearest.
+    table.sort(result.stoves, function(a, b)
+        if a.rank ~= b.rank then return a.rank < b.rank end
+        return a.distance < b.distance
+    end)
     table.sort(result.fridges, function(a, b) return a.distance < b.distance end)
     table.sort(result.taps, function(a, b) return a.distance < b.distance end)
     -- A pot already carried first.
@@ -187,7 +225,9 @@ local function stoveAt(entry)
     local objects = square:getObjects()
     for index = 0, objects:size() - 1 do
         local object = objects:get(index)
-        if Kitchen.isStove(object) then return object end
+        local heat = heatOf(object)
+        -- The kind it lit, when a square holds more than one.
+        if heat and (entry.heat == nil or entry.heat == heat.kind) then return object end
     end
     return nil
 end
@@ -225,12 +265,13 @@ local function adjacent(player, square) return Grid.adjacent(player:getSquare(),
 -- A toggle that only ever moves the stove the way it was meant to: someone
 -- else may have switched it in the meantime.
 local function toggle(player, stove, on, dish)
-    local action = ISToggleStoveAction:new(player, stove)
+    local action = heatOf(stove).action(player, stove)
     local valid = action.isValid
     function action:isValid()
-        if not valid(self) or self.object:Activated() == on then return false end
+        local object = stove
+        if not valid(self) or isOn(object) == on then return false end
         -- Lit only for our own dish, in a stove that still has power.
-        return not on or (self.object:getContainer():isPowered() and (not dish or self.object:getContainer():contains(dish)))
+        return not on or (canHeat(object) and (not dish or object:getContainer():contains(dish)))
     end
     ISTimedActionQueue.add(action)
 end
@@ -274,7 +315,7 @@ local function finish(player, state, entry, stove, take, all, message)
     write(player, entry)
     return P.ownBatch(player, state, "kitchen", message, function()
         if not adjacent(player, stove:getSquare()) and not luautils.walkAdj(player, stove:getSquare(), true) then return end
-        if all and stove:Activated() then toggle(player, stove, false) end
+        if all and isOn(stove) then toggle(player, stove, false) end
         for _, dish in ipairs(take) do transfer(player, dish, stove:getContainer(), player:getInventory()) end
     end)
 end
@@ -310,7 +351,7 @@ function Kitchen.duty(player, state, now, walk)
     end
     local present = dishesIn(stove, entry)
     local dish = present[1]
-    local on = stove:Activated()
+    local on = isOn(stove)
     if not dish and on and not entry.lit then
         -- Lit by someone else: theirs, not ours.
         write(player, nil)
@@ -343,7 +384,7 @@ function Kitchen.duty(player, state, now, walk)
         elseif not slowest or progress(item) < progress(slowest) then slowest = item end
     end
     local done = dish ~= nil and #ready == #present
-    local unpowered = not stove:getContainer():isPowered()
+    local unpowered = not canHeat(stove)
     local blocked = (entry.tries or 0) >= Kitchen.policy.attempts
     local all = not dish or done or unpowered or not on
     -- Cut short again and again (danger, the player): after a few, it counts as stuck.
@@ -352,9 +393,9 @@ function Kitchen.duty(player, state, now, walk)
         if blocked then
             -- Beside it, at least the heat goes off.
             if on and adjacent(player, stove:getSquare()) and walk ~= false then
-                P.ownBatch(player, state, "kitchen", "Turning the stove off.", function() toggle(player, stove, false) end)
+                P.ownBatch(player, state, "kitchen", "Turning the " .. Kitchen.heatName(stove) .. " off.", function() toggle(player, stove, false) end)
             end
-            state.kitchenNotice = "The stove is still on. Second Nature could not reach it."
+            state.kitchenNotice = "The " .. Kitchen.heatName(stove) .. " is still on. Second Nature could not reach it."
             Alerts.raise(player, "stove", "The stove is still on and Second Nature cannot reach it.", now, true)
             entry.blockedAt = entry.blockedAt or now
             if now < entry.blockedAt or now - entry.blockedAt >= Kitchen.policy.againMs then
@@ -364,7 +405,7 @@ function Kitchen.duty(player, state, now, walk)
             return false
         end
         if walk == false and not adjacent(player, stove:getSquare()) then
-            state.kitchenNotice = "The stove is on. It will be turned off once it is safe to walk."
+            state.kitchenNotice = "The " .. Kitchen.heatName(stove) .. " is on. It will be turned off once it is safe to walk."
             return false
         end
         local take = all and present or ready
@@ -373,10 +414,11 @@ function Kitchen.duty(player, state, now, walk)
         local cooked = first ~= nil
         for _, item in ipairs(take) do cooked = cooked and item:isCooked() and not nearBurning(item) end
         burning = first and nearBurning(first)
-        local message = not dish and "Turning the stove off." or cooked and ("Taking " .. name .. " out. Cooked.")
+        local heatName = Kitchen.heatName(stove)
+        local message = not dish and ("Turning the " .. heatName .. " off.") or cooked and ("Taking " .. name .. " out. Cooked.")
             or burning and ("Taking " .. name .. " out before it burns.")
-            or unpowered and ("The power went off. Taking " .. name .. " out.")
-            or ("The stove went off. Taking " .. name .. " out.")
+            or unpowered and ((heatName == "grill" and "The propane ran out. Taking " or "The power went off. Taking ") .. name .. " out.")
+            or ("The " .. heatName .. " went off. Taking " .. name .. " out.")
         if (unpowered or not on) and not cooked then giveUp(player, state, entry, now, "stove-off") end
         Log.event(player, "kitchen.finish", "dish", first and Snap.item(first), "count", #take, "cooked", cooked, "burning", burning,
             "unpowered", unpowered, "on", on)
@@ -387,7 +429,7 @@ function Kitchen.duty(player, state, now, walk)
     state.kitchenNotice = nil
     local name = slowest:getDisplayName() .. (#present > 1 and (" and " .. (#present - 1) .. " more") or "")
     -- Stay near the stove; the dishes need taking out on time.
-    P.setPhase(state, "kitchen-watch", "Cooking " .. name .. ": " .. share .. "%. Staying near the stove.")
+    P.setPhase(state, "kitchen-watch", "Cooking " .. name .. ": " .. share .. "%. Staying near the " .. Kitchen.heatName(stove) .. ".")
     return true
 end
 
@@ -397,7 +439,7 @@ function Kitchen.lit(player)
     if not entry then return false end
     local stove = stoveAt(entry)
     local stage = entry.stage
-    return stove ~= nil and stove:Activated() and (stage == "starting" or stage == "cooking" or stage == "finishing")
+    return stove ~= nil and isOn(stove) and (stage == "starting" or stage == "cooking" or stage == "finishing")
 end
 
 -- Something on the stove needs a hand now, not just watching.
@@ -407,7 +449,7 @@ function Kitchen.urgent(player)
     local stove = stoveAt(entry)
     if not stove then return false end
     local present = dishesIn(stove, entry)
-    if #present == 0 or not stove:getContainer():isPowered() or not stove:Activated() then return true end
+    if #present == 0 or not canHeat(stove) or not isOn(stove) then return true end
     for _, dish in ipairs(present) do
         if dish:isCooked() or nearBurning(dish) then return true end
     end
@@ -455,7 +497,7 @@ function Kitchen.meal(player, state, now, preferring)
         return false
     end
     if not stove then
-        if not preferring then state.kitchenNotice = "Only raw food is left, and there is no powered stove nearby." end
+        if not preferring then state.kitchenNotice = "Only raw food is left, and there is no powered stove or propane grill nearby." end
         return false
     end
     state.kitchenNotice = nil
@@ -516,7 +558,7 @@ function Kitchen.cook(player, state, now, entry, stove, pool, reason, found)
         if not chosen.carried then fetched[tostring(chosen.item:getID())] = true end
     end
     local square = object:getSquare()
-    local record = {x = square:getX(), y = square:getY(), z = square:getZ(), item = item:getID(), items = list,
+    local record = {x = square:getX(), y = square:getY(), z = square:getZ(), heat = heatOf(object).kind, item = item:getID(), items = list,
         name = item:getDisplayName() .. (#list > 1 and (" and " .. (#list - 1) .. " more") or ""), fetched = fetched,
         tries = 0, stage = entry.carried and "ready" or "fetching", reason = reason}
     write(player, record)
@@ -552,7 +594,7 @@ function Kitchen.place(player, state, now, entry, object)
     item = item and Kitchen.cookable(item) and item or carried[1]
     if item then entry.item = item:getID() end
     local container = object and object:getContainer()
-    if not item or not container or object:Activated() or not container:isPowered()
+    if not item or not container or isOn(object) or not canHeat(object)
             or others(container, entry) then
         write(player, nil)
         if item then skip(state)[item:getID()] = now + Kitchen.policy.retryMs end
@@ -563,14 +605,14 @@ function Kitchen.place(player, state, now, entry, object)
     entry.stage = "starting"
     write(player, entry)
     local square = object:getSquare()
-    local queued = P.ownBatch(player, state, "kitchen", "Cooking " .. (entry.name or item:getDisplayName()) .. " on the stove.", function()
+    local queued = P.ownBatch(player, state, "kitchen", "Cooking " .. (entry.name or item:getDisplayName()) .. " on the " .. Kitchen.heatName(object) .. ".", function()
         if not adjacent(player, square) and not luautils.walkAdj(player, square, true) then return end
         for _, dish in ipairs(carried) do
             local into = transfer(player, dish, dish:getContainer(), container)
             local valid = into.isValid
             function into:isValid()
                 -- Someone else may have started cooking here in the meantime.
-                return (not valid or valid(self)) and not object:Activated() and container:isPowered() and not others(container, entry)
+                return (not valid or valid(self)) and not isOn(object) and canHeat(object) and not others(container, entry)
             end
         end
         toggle(player, object, true, item)
@@ -603,7 +645,7 @@ function Kitchen.settle(player, state, now, cut)
             write(player, nil)
         end
     elseif entry.stage == "starting" then
-        local on = stove and stove:Activated()
+        local on = stove and isOn(stove)
         if dish then
             -- In the stove. Lit by us, or about to be taken out again.
             entry.stage, entry.lit = "cooking", on and true or nil
@@ -619,7 +661,7 @@ function Kitchen.settle(player, state, now, cut)
         -- A ledger saved before batches has no list: everything was being taken out.
         local all = entry.all or not entry.taking
         for _, id in ipairs(entry.taking or ids(entry)) do left = left or (container and container:getItemById(id) ~= nil) end
-        if all and stove and stove:Activated() then left = true end
+        if all and stove and isOn(stove) then left = true end
         if left and cut then entry.cuts = (entry.cuts or 0) + 1
         elseif left then entry.tries = (entry.tries or 0) + 1
         else entry.stage, entry.tries, entry.cuts = "cooking", 0, 0 end
@@ -670,13 +712,13 @@ function Kitchen.ended(player)
     if not entry then return nil end
     local stove = stoveAt(entry)
     if entry.stage == "fetching" or entry.stage == "ready" or Soup.handles(entry.stage) then write(player, nil); return nil end
-    if not stove or not stove:Activated() or not entry.lit then return nil end
+    if not stove or not isOn(stove) or not entry.lit then return nil end
     if adjacent(player, stove:getSquare()) and not player:isDead() then
         toggle(player, stove, false)
         for _, dish in ipairs(dishesIn(stove, entry)) do transfer(player, dish, stove:getContainer(), player:getInventory()) end
-        return "Turning the stove off."
+        return "Turning the " .. Kitchen.heatName(stove) .. " off."
     end
-    return "The stove is still on" .. (entry.name and (" with " .. entry.name .. " inside") or "") .. "."
+    return "The " .. Kitchen.heatName(stove) .. " is still on" .. (entry.name and (" with " .. entry.name .. " inside") or "") .. "."
 end
 
 -- Nobody minding a lit stove: Stop far away, a load without Autopilot, a
@@ -688,10 +730,11 @@ function Kitchen.watchdog(player, now)
     if warned[player] and now >= warned[player] and now - warned[player] < Kitchen.policy.warnMs then return end
     if not entry.lit then return end
     local stove = stoveAt(entry)
-    if stove and not stove:Activated() then return end
+    if stove and not isOn(stove) then return end
     local dish = dishIn(stove, entry)
-    local detail = dish and nearBurning(dish) and (dish:getDisplayName() .. " is about to burn on the stove.")
-        or ("The stove is on" .. (entry.name and (" with " .. entry.name .. " inside") or "") .. " and nothing is watching it.")
+    local heatName = stove and Kitchen.heatName(stove) or "stove"
+    local detail = dish and nearBurning(dish) and (dish:getDisplayName() .. " is about to burn on the " .. heatName .. ".")
+        or ("The " .. heatName .. " is on" .. (entry.name and (" with " .. entry.name .. " inside") or "") .. " and nothing is watching it.")
     warned[player] = now
     Log.headline(player, "kitchen.unwatched", "detail", detail)
     Alerts.notice(player, "Kitchen", detail)
@@ -720,7 +763,7 @@ function Kitchen.status(player, state)
     end
     local name = slowest and (slowest:getDisplayName() .. (#present > 1 and (" and " .. (#present - 1) .. " more") or "")) or entry.name
     return {dish = name, progress = slowest and progress(slowest) or nil, notice = notice,
-        on = stove and stove:Activated() and stove:getContainer():isPowered() or nil}
+        on = stove and isOn(stove) and canHeat(stove) or nil}
 end
 
 return Kitchen

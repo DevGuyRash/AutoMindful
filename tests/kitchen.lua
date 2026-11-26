@@ -568,3 +568,57 @@ do
     function p:getMoodles() return {getMoodleLevel=function(_,kind) return kind==MoodleType.HUNGRY and 2 or 0 end} end
     passed("cooking comes before eating raw, after leftovers")
 end
+do
+    -- No power: the propane grill in the yard cooks instead, and is turned off.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local sq=square(2,0)
+    local c=T.container(2,0); c.square=sq
+    function c:getType() return "barbecuepropane" end
+    local grill={kind="IsoBarbecue",container=c,lit=false,fuel=true,sq=sq}
+    function grill:isPropaneBBQ() return true end
+    function grill:isLit() return self.lit end
+    function grill:hasFuel() return self.fuel end
+    function grill:getContainer() return self.container end
+    function grill:getSquare() return self.sq end
+    sq.objects={grill}
+    ISBBQToggle={new=function(_,player,bbq) return {Type="grill",isValid=function() return bbq:isPropaneBBQ() and bbq:hasFuel() end,
+        perform=function() bbq.lit=not bbq.lit end} end}
+    local raw=T.add(p.inventory,food())
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).x==2,"The grill is used when there is no stove")
+    run(); Kitchen.settle(p,s,1100,false); s.pending=nil
+    assert(grill.lit and c:contains(raw),"Lit with the dish on it")
+    assert(Kitchen.duty(p,s,1200,true) and s.message:find("near the grill",1,true),s.message)
+    grill.fuel=false
+    assert(Kitchen.duty(p,s,1300,true) and s.message:find("propane ran out",1,true),s.message)
+    for _,action in ipairs(queued) do assert(action.Type~="grill","Out of propane it cannot be switched, and need not be") end
+    run()
+    assert(p.inventory:contains(raw),"The dish is taken back")
+    passed("a propane grill cooks when there is no stove, and runs out safely")
+end
+do
+    -- From indoors: a grill in the yard counts, the yard's crate does not, and
+    -- a stove indoors comes first.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local yard=square(3,0); yard.getBuilding=function() return nil end
+    local c=T.container(3,0); c.square=yard
+    function c:getType() return "barbecuepropane" end
+    local grill={kind="IsoBarbecue",container=c,lit=false}
+    function grill:isPropaneBBQ() return true end
+    function grill:isLit() return self.lit end
+    function grill:hasFuel() return true end
+    function grill:getContainer() return self.container end
+    function grill:getSquare() return yard end
+    local crate=T.container(3,1); local crateSquare=square(3,1); crateSquare.getBuilding=function() return nil end; crate.square=crateSquare
+    T.add(crate,food({name="Yard food"}))
+    crateSquare.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return crate end}}
+    yard.objects={grill}
+    local found=Kitchen.scan(p,{},1000)
+    assert(#found.stoves==1 and found.stoves[1].object==grill,"The yard grill is seen from indoors")
+    for _,entry in ipairs(found.food) do assert(entry.container~=crate,"The yard crate is not a pantry") end
+    local oven=stove(2,0)
+    found=Kitchen.scan(p,{},1000)
+    assert(found.stoves[1].object==oven,"A stove indoors comes before the grill")
+    passed("from indoors the yard is only for a grill, and a stove comes first")
+end

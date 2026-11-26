@@ -42,11 +42,12 @@ local function food(properties)
     local item=T.item("Food",p)
     item.name=p.name or "Chicken"
     function item:isCookable() return self.cookable ~= false end
-    function item:getMinutesToCook() return 30 end
+    function item:getMinutesToCook() return self.minutes or 30 end
     function item:getMinutesToBurn() return 60 end
     function item:getCookingTime() return self.time or 0 end
-    function item:getOffAge() return 2 end
     function item:isFavorite() return self.favorite or false end
+    function item:getActualWeight() return self.weight or 0.3 end
+    function item:getOffAge() return self.offAge or 2 end
     return item
 end
 
@@ -314,4 +315,79 @@ do
     squares={}
     assert(not Kitchen.lit(p),"A stove out of sight is not known to be on, so sleep is not blocked forever")
     passed("an unloaded stove does not block sleep")
+end
+do
+    -- A batch: what cooks in about the same time goes in together; each comes
+    -- out when done; the stove goes off with the last; leftovers go cold.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local oven=stove(1,0)
+    local fridge=T.container(-1,0); fridge.square=square(-1,0)
+    function fridge:getType() return "fridge" end
+    function fridge:isPowered() return true end
+    fridge.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return fridge end}}
+    local a=T.add(fridge,food({name="Chicken"}))
+    local b=T.add(fridge,food({name="Steak",minutes=40}))
+    local slow=T.add(fridge,food({name="Roast",minutes=120}))
+    local mine=T.add(p.inventory,food({name="Jerky",cookable=false}))
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).stage=="fetching"); run(); Kitchen.settle(p,s,1050,false); s.pending=nil
+    assert(Kitchen.meal(p,s,1060)); run(); Kitchen.settle(p,s,1100,false); s.pending=nil
+    assert(oven.container:contains(a) and oven.container:contains(b) and not oven.container:contains(slow),"Two dishes in, the slow roast waits")
+    assert(oven.on and Kitchen.ledger(p).name=="Chicken and 1 more")
+    a.time,a.cooked=31,true
+    assert(Kitchen.duty(p,s,2000,true) and s.message:find("Chicken out",1,true),s.message)
+    run(); Kitchen.settle(p,s,2100,false); s.pending=nil
+    assert(oven.on and p.inventory:contains(a) and oven.container:contains(b),"The chicken is out, the steak cooks on")
+    assert(Kitchen.duty(p,s,2200,true) and s.phase=="kitchen-watch" and s.message:find("Steak",1,true),s.message)
+    b.time,b.cooked=41,true
+    assert(Kitchen.duty(p,s,3000,true)); run(); Kitchen.settle(p,s,3100,false); s.pending=nil
+    assert(not oven.on and p.inventory:contains(b),"The last one out, the stove off")
+    assert(not Kitchen.duty(p,s,3200,true) and Kitchen.ledger(p)==nil)
+    p.values.HUNGER=0
+    function p:getStats() return {get=function(_,k) return k=="HUNGER" and 0 or 0 end} end
+    function p:getMoodles() return {getMoodleLevel=function() return 0 end} end
+    assert(Kitchen.store(p,s,4000),"Not hungry: the leftovers go in the fridge")
+    run()
+    assert(fridge:contains(a) and fridge:contains(b) and fridge:contains(slow) and p.inventory:contains(mine),"Cooked food back in the fridge; the roast never left it; carried food stays carried")
+    passed("several dishes cook together, come out one by one, and the rest is kept cold")
+end
+do
+    -- Power blinks during the take-out: the stove is off with a raw dish inside.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local oven=stove(1,0)
+    local raw=T.add(p.inventory,food())
+    Kitchen.meal(p,s,1000); run(); Kitchen.settle(p,s,1100,false); s.pending=nil
+    oven.container.off=true
+    assert(Kitchen.duty(p,s,2000,true)); queued={}
+    oven.on=false; oven.container.off=nil
+    Kitchen.settle(p,s,2100,true); s.pending=nil
+    assert(Kitchen.urgent(p) and Kitchen.duty(p,s,2200,true) and s.phase=="kitchen","An off stove with food inside is emptied, not watched: "..tostring(s.phase))
+    run()
+    assert(p.inventory:contains(raw))
+    passed("a dish left in a cold stove is taken out")
+end
+do
+    -- Cut short over and over: it stops pretending and turns the heat off.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local oven=stove(1,0)
+    local raw=T.add(p.inventory,food())
+    Kitchen.meal(p,s,1000); run(); Kitchen.settle(p,s,1100,false); s.pending=nil
+    raw.cooked=true
+    for attempt=1,6 do Kitchen.duty(p,s,2000+attempt,true); queued={}; Kitchen.settle(p,s,2000+attempt,true); s.pending=nil end
+    assert(not Kitchen.duty(p,s,3000,true) and s.kitchenNotice:find("could not reach",1,true))
+    local kinds={}; for _,a in ipairs(queued) do kinds[#kinds+1]=a.Type end
+    assert(table.concat(kinds,",")=="toggle","Beside the stove, the heat goes off: "..table.concat(kinds,","))
+    run()
+    assert(not oven.on)
+    passed("endless interruptions still end with the stove off")
+end
+
+do
+    -- Bread becomes toast, a new item: never put in, so nothing burns unseen.
+    local toast=food({name="Bread slices"})
+    function toast:getReplaceOnCooked() return {size=function() return 1 end} end
+    assert(not Kitchen.cookable(toast))
+    passed("food that turns into another item is not cooked")
 end

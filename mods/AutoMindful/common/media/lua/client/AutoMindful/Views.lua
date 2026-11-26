@@ -155,6 +155,11 @@ function Views.now(window)
         skillBars(rows, status)
         chips(rows, player)
         local said
+        local kitchen = status.kitchen
+        if kitchen and kitchen.progress and kitchen.on then
+            rows[#rows + 1] = {kind="bar", label="Cooking " .. (Theme.plain(kitchen.dish) or "on the stove"), right=math.floor(kitchen.progress * 100) .. "%",
+                fraction=kitchen.progress, color=colors.warn}
+        end
         if status.mode == "recovery" then
             gap(rows, 4)
             said = outlookRows(rows, player, status)

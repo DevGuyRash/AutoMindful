@@ -85,6 +85,29 @@ if not cycle then
     for _, entry in ipairs(cycles) do cycle:addItem(entry.label) end
 end
 
+-- PZ stores the combo's index. Keep this order stable.
+local diets = {
+    {id="auto", label="Auto: keep a healthy weight", help="Prefers calorie-dense food below 75 kg and lighter food above 85 kg; otherwise balanced."},
+    {id="balanced", label="Balanced", help="No preference beyond what the need calls for."},
+    {id="protein", label="High protein", help="Prefers protein-rich food when choices are close."},
+    {id="more", label="More calories (gain weight)", help="Prefers calorie-dense food when choices are close."},
+    {id="fewer", label="Fewer calories (lose weight)", help="Prefers lighter food when choices are close. The survivor may eat a little more often."},
+    {id="lowcarb", label="Low carb", help="Prefers food with fewer carbohydrates when choices are close."},
+    {id="lowfat", label="Low fat", help="Prefers food with less fat when choices are close."},
+}
+local diet = settings:getOption("dietGoal")
+if not diet then
+    diet = settings:addComboBox("dietGoal", "Diet goal", "What Autopilot and the kitchen prefer when several foods would do.")
+    for _, entry in ipairs(diets) do diet:addItem(entry.label) end
+    diet:setValue(1)
+end
+function Options.dietChoices() return diets end
+function Options.dietIndex()
+    local index = tonumber(diet:getValue())
+    return index and diets[index] and index or 1
+end
+function Options.dietGoal() return diets[Options.dietIndex()].id end
+
 function Options.cycleChoices()
     return cycles
 end

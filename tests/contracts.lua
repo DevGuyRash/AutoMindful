@@ -15,7 +15,7 @@ local roaming = {enabled=false, radius=10}
 -- prompt so a journey shows what it does rather than when.
 local on = function() return true end
 package.loaded["AutoMindful/Options"] = {awayMs=function() return 180000 end,careBetween=function() return false end,firstAid=on,refill=function() return false end,
-    useBeds=function() return false end,cookMeals=function() return false end,lastResort=function() return false end,alertSound=on,resumeRecovery=on,cyclePolicy=function() return "alternate" end,searchNearby=function() return roaming.enabled end,
+    useBeds=function() return false end,cookMeals=function() return false end,dietGoal=function() return "balanced" end,lastResort=function() return false end,alertSound=on,resumeRecovery=on,cyclePolicy=function() return "alternate" end,searchNearby=function() return roaming.enabled end,
     searchRadius=function() return roaming.radius end}
 local nearbyTarget, nearbyArea
 package.loaded["AutoMindful/Nearby"] = {find=function(_, _, _, _, rejected)

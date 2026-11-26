@@ -387,6 +387,13 @@ function Window:openCycleMenu()
     end
 end
 
+function Window:openDietMenu()
+    local menu = self:menu()
+    for index, entry in ipairs(Options.dietChoices()) do
+        pick(menu, entry.label, index == Options.dietIndex(), self, Window.setOption, "dietGoal", index)
+    end
+end
+
 function Window:openMinimumMenu(group)
     local menu = self:menu()
     for _, item in ipairs(Options.minimumItems(group)) do

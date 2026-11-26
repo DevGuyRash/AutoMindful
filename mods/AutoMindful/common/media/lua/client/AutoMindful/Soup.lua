@@ -33,7 +33,11 @@ end
 
 -- Running water that is safe: a sink or tap with enough for a pot.
 function Soup.isTap(object)
-    local ok, water = pcall(function() return object:hasWater() and not object:isTaintedWater() and object:getFluidAmount() end)
+    -- Walls and floors have no water: answered without building a closure.
+    if not object or not object.hasWater then return false end
+    local has, wet = pcall(object.hasWater, object)
+    if not (has and wet) then return false end
+    local ok, water = pcall(function() return not object:isTaintedWater() and object:getFluidAmount() end)
     return ok and type(water) == "number" and water >= Soup.policy.water
 end
 

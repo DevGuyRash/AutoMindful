@@ -113,7 +113,8 @@ function Soup.start(player, state, now, main, pool, stove, found, reason)
     for _, candidate in ipairs(found.pots) do
         if reason ~= "practice" or not candidate.carried then pot = candidate; break end
     end
-    if not pot or not K.accepts(stove.object, pot.item) then return false end
+    -- Not on a wood fire for now: the fire's own materials are not planned with a soup.
+    if not pot or not K.accepts(stove.object, pot.item) or K.fueled(stove.object) then return false end
     local ingredients = {main}
     for _, entry in ipairs(pool) do
         if #ingredients >= Soup.policy.ingredients then break end
@@ -171,7 +172,7 @@ function Soup.step(player, state, now, entry, stove)
         if not from or not Fetch.present(from) then return fail(player, state, now, entry, "pot-lost") end
         return P.ownBatch(player, state, "kitchen", "Getting a pot for " .. string.lower(entry.name) .. ".", function()
             local square = Fetch.square(from)
-            if square and not Grid.adjacent(player:getSquare(), square) and not luautils.walkAdj(player, square, true) then return end
+            if square and not Grid.reachable(player:getSquare(), square) and not luautils.walkAdj(player, square, true) then return end
             Fetch.queue(player, from)
         end)
     elseif entry.stage == "soup-fetch" then
@@ -193,7 +194,7 @@ function Soup.step(player, state, now, entry, stove)
         return P.ownBatch(player, state, "kitchen", "Getting the ingredients for " .. string.lower(entry.name) .. ".", function()
             -- One place per batch: the walk is decided from where the survivor stands now.
             local square = Fetch.square(missing[1])
-            if square and not Grid.adjacent(player:getSquare(), square) and not luautils.walkAdj(player, square, true) then return end
+            if square and not Grid.reachable(player:getSquare(), square) and not luautils.walkAdj(player, square, true) then return end
             for _, ingredient in ipairs(missing) do
                 if ingredient.from == missing[1].from then Fetch.queue(player, ingredient) end
             end
@@ -205,7 +206,7 @@ function Soup.step(player, state, now, entry, stove)
         if not tap then return fail(player, state, now, entry, "no-water") end
         return P.ownBatch(player, state, "kitchen", "Filling the pot with water.", function()
             local square = tap:getSquare()
-            if not Grid.adjacent(player:getSquare(), square) and not luautils.walkAdj(player, square, true) then return end
+            if not Grid.reachable(player:getSquare(), square) and not luautils.walkAdj(player, square, true) then return end
             ISTimedActionQueue.add(ISTakeWaterAction:new(player, pot, tap, false))
         end)
     elseif entry.stage == "soup-add" then

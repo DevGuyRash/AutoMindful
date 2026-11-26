@@ -16,6 +16,13 @@ function Grid.adjacent(here, square)
 end
 
 -- Where a container is: its own square, or that of the bag lying on the floor.
+-- Next to it with nothing in between: no wall, no closed window. What the
+-- game needs before an item can be picked up or a stove used.
+function Grid.reachable(here, square)
+    if not Grid.adjacent(here, square) then return false end
+    return here == square or not here.canReachTo or here:canReachTo(square)
+end
+
 function Grid.containerSquare(container)
     local square = container:getSourceGrid()
     if square then return square end

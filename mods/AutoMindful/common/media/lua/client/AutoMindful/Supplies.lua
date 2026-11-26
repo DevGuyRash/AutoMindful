@@ -78,7 +78,7 @@ end
 -- Next to the survivor, with nothing in between.
 local function reachable(player, square)
     local here = player:getSquare()
-    return Grid.adjacent(here, square) and (square == here or here:canReachTo(square))
+    return Grid.reachable(here, square)
 end
 
 local containerSquare = Grid.containerSquare

@@ -122,8 +122,11 @@ kinds.bar = {
     measure=function() return Theme.line() + 14 end,
     draw=function(self, row, x, y, w)
         local line = Theme.line()
-        self:text(row.label, x, y, colors.text)
-        if row.gain then self:text(row.gain, x + Theme.width(row.label) + 10, y, row.loss and colors.bad or colors.good) end
+        -- The label gives way to the percentage and any gain, never overlapping them.
+        local room = w - (row.right and Theme.width(row.right) + 8 or 0) - (row.gain and Theme.width(row.gain) + 10 or 0)
+        local label = Theme.fit(row.label, room)
+        self:text(label, x, y, colors.text)
+        if row.gain then self:text(row.gain, x + Theme.width(label) + 10, y, row.loss and colors.bad or colors.good) end
         self:textRight(row.right or "", x + w, y, colors.muted)
         self:drawRect(x, y + line + 2, w, 5, color(colors.line))
         self:drawRect(x, y + line + 2, w * math.max(0, math.min(1, row.fraction or 0)), 5, color(row.color))

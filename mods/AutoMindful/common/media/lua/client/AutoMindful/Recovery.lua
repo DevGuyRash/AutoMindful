@@ -615,6 +615,7 @@ function Recovery.advance(player, state, now)
     if cooking then state.carriedOnly = nil end
     if cared or not state.active then return end
     if Kitchen.meal(player, state, now) or not state.active then return end
+    if Kitchen.store(player, state, now) or not state.active then return end
     local away = Presence.away(player, now)
     local calm = Recovery.permit(player, state, "posture", now)
     if P.lifestyleCare(player, state, P.lifestyleReady(player, state, now), now) then return end

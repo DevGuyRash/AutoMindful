@@ -186,7 +186,7 @@ end
 
 local function stoveAt(entry)
     local square = entry and getCell():getGridSquare(entry.x, entry.y, entry.z)
-    if not square then return nil end
+    if not square or not square.getObjects then return nil end
     local objects = square:getObjects()
     for index = 0, objects:size() - 1 do
         local object = objects:get(index)

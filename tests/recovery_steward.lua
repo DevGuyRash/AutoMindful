@@ -501,4 +501,26 @@ do
     O.lastResort=function() return false end
 end
 passed("unsafe water only after a minute of dying of thirst, and never otherwise")
+do
+    -- Raw food on the stove: the outlook says so instead of "no food".
+    local p=survivor()
+    begin(p); seconds(p,2)
+    local before=issue(p,"food")
+    assert(before and before.severity==3,"Nothing to eat at all is the worst")
+    p:getModData().AutoMindfulKitchen={lit=true,stage="cooking",x=0,y=0,z=0,item=1}
+    local K=require "AutoMindful/Kitchen"
+    T.now=T.now+11000
+    local stale
+    for _,i in ipairs(C.outlook(p).issues) do if i.id=="food" then stale=i end end
+    assert(stale and stale.severity==3,"A ledger with no stove seen on is not dinner")
+    local lit=K.status; K.status=function() return {on=true,progress=.4} end
+    local after
+    T.now=T.now+11000 -- past the outlook's ten-second cache
+    for _,i in ipairs(C.outlook(p).issues) do if i.id=="food" then after=i end end
+    assert(after and after.severity==2 and after.text:find("cooking on the stove",1,true),"Cooking: worth knowing, not an emergency")
+    K.status=lit
+    p:getModData().AutoMindfulKitchen=nil
+    C.stop(p)
+    passed("food on the stove is not reported as no food")
+end
 print("RECOVERY STEWARD PASS")

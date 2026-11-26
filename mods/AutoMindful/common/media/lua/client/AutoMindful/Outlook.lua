@@ -130,7 +130,15 @@ function Outlook.read(player, range, state)
         issue("bleeding", 3, FirstAid.bandagesWithin(player, range ~= "carried") and "Bleeding. It will be bandaged."
             or "Bleeding, and there is no bandage within reach.")
     end
-    if held.food <= 0 then issue("food", 3, "No food it could use.")
+    -- A dish on the stove is food on the way, not none at all.
+    -- Only while the stove is seen to be on: a ledger left behind is no dinner.
+    local kitchen = player.getModData and player:getModData().AutoMindfulKitchen
+    local ok, Kitchen = pcall(require, "AutoMindful/Kitchen")
+    local status = kitchen and kitchen.lit and ok and type(Kitchen) == "table" and Kitchen.status(player)
+    -- A dish in a stove that is on and powered.
+    local cooking = status and status.on and status.progress ~= nil
+    if held.food <= 0 and cooking then issue("food", 2, "Food is cooking on the stove.")
+    elseif held.food <= 0 then issue("food", 3, "No food it could use.")
     elseif food < 24 then issue("food", 2, "Food runs out soon.") end
     if not held.endless then
         if held.water <= 0 then issue("water", 3, "No drink it could use.")

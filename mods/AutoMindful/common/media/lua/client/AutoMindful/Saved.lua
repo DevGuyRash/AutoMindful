@@ -2,8 +2,6 @@
 -- survivor, so it has to be told.
 local Saved = {}
 
-function Saved.get(player, key) return player:getModData()[key] end
-
 -- Returns false when nothing changed, so nothing is sent.
 function Saved.set(player, key, value)
     local data = player:getModData()

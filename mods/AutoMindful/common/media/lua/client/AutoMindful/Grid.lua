@@ -29,9 +29,9 @@ function Grid.favorite(item)
 end
 
 -- Each loaded, permitted square within radius on the survivor's floor and in the
--- same building (outdoors: outdoors): nobody crosses the street for a stove or a bed.
--- visit(square, dx, dy) may return true to stop early.
-function Grid.around(player, radius, visit)
+-- same building: nobody crosses the street for a bed. openAir: when the survivor
+-- is outdoors, any building nearby counts too (the kitchen through the back door).
+function Grid.around(player, radius, visit, openAir)
     local here = player:getSquare()
     if not here then return end
     local x0, y0, z = here:getX(), here:getY(), here:getZ()
@@ -43,9 +43,9 @@ function Grid.around(player, radius, visit)
             local dy = y - y0
             -- Outside the circle, the square is never fetched.
             local square = dx * dx + dy * dy <= reach and cell:getGridSquare(x, y, z)
-            if square and (square.getBuilding and square:getBuilding()) == building
+            if square and ((openAir and building == nil) or (square.getBuilding and square:getBuilding()) == building)
                     and Storage.permitted(player, square) then
-                if visit(square, dx, dy) then return end
+                visit(square, dx, dy)
             end
         end
     end

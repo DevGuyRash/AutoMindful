@@ -111,7 +111,6 @@ end
 -- Saved with the survivor, so the job can go on after loading. In multiplayer
 -- the server keeps the survivor, so it has to be told.
 function Recovery.remember(player, on)
-    if (Saved.get(player, "AutoMindfulRecovery") == true) == on then return end
     Saved.set(player, "AutoMindfulRecovery", on or nil)
 end
 

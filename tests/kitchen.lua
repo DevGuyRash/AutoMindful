@@ -391,3 +391,18 @@ do
     assert(not Kitchen.cookable(toast))
     passed("food that turns into another item is not cooked")
 end
+do
+    -- From the yard, the kitchen through the back door still counts.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    function p:getSquare() local here=squares["0:0"]; here.getBuilding=function() return nil end; return here end
+    local oven=stove(2,0)
+    T.add(p.inventory,food())
+    assert(Kitchen.meal(p,s,1000),"An indoor stove is found from just outside")
+    passed("a survivor outdoors still finds the kitchen")
+end
+do
+    -- Wild food keeps its own eating effect: left raw, as before.
+    assert(not Kitchen.cookable(food({onEat="RecipeCodeOnEat.consumeWildFoodGeneric"})))
+    passed("food with any eating effect is not cooked")
+end

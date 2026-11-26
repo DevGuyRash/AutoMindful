@@ -87,8 +87,6 @@ for _, row in ipairs({
         "Eat and drink between actions", "While you or another mod keep the queue busy, a carried bite or sip goes between two actions."},
     {"recoveryRefill", "Autopilot: keep carried bottles full", "Refills bottles you carry at clean water. The game drinks from them by itself.",
         "Keep carried bottles full", "The game drinks from carried bottles by itself, so a full one keeps the survivor going when nothing else works."},
-    {"recoveryCook", "Autopilot: cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off.",
-        "Cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off."},
     {"recoveryBeds", "Autopilot: sleep in a bed when one is near", "Walks to a bed within the search radius and back afterwards. Off: sleeps on the spot.",
         "Sleep in a nearby bed", "Walks there and back. Off: sleeps on the spot."},
     {"recoveryLastResort", "Autopilot: drink unsafe water rather than die", "Only after a minute of Dying of Thirst with nothing clean left. It will make the survivor ill.",
@@ -97,6 +95,8 @@ for _, row in ipairs({
         "Sound when it needs you", "Heard only by you, not by zombies."},
     {"recoveryResume", "Autopilot: carry on after loading", "If Autopilot was on when you left, it starts again when you are back in.",
         "Carry on after loading", "If Autopilot was on when you left, it starts again."},
+    {"recoveryCook", "Autopilot: cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off.",
+        "Cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off."},
 }) do
     recoveryTicks[row[1]] = settings:getOption(row[1]) or settings:addTickBox(row[1], row[2], true, row[3])
     Options.windowText[row[1]] = {row[4], row[5]}

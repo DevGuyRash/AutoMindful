@@ -27,6 +27,9 @@ function Kitchen.bind(parts) P = parts end
 function Kitchen.cookable(item)
     if not item or not instanceof(item, "Food") or not item:isCookable() or item:isCooked() or item:isBurnt() then return false end
     if item:isFrozen() or not Fluids.harmless(item) or Grid.favorite(item) then return false end
+    -- Stricter than eating: any eating effect at all, even the stock wild-food one, is left raw.
+    local effect = item:getOnEat()
+    if effect and effect ~= "" then return false end
     -- Bread that turns into toast becomes a new item, which could not be followed in the stove.
     local replaced = item.getReplaceOnCooked and item:getReplaceOnCooked()
     if replaced and (type(replaced) == "string" and replaced ~= "" or type(replaced) ~= "string" and replaced.size and replaced:size() > 0) then
@@ -104,7 +107,7 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
                 end
             end
         end
-    end)
+    end, true)
     table.sort(result.stoves, function(a, b) return a.distance < b.distance end)
     table.sort(result.fridges, function(a, b) return a.distance < b.distance end)
     return result
@@ -279,7 +282,7 @@ function Kitchen.duty(player, state, now, walk)
     end
     if not dish and not on then
         Alerts.clear(player, "stove")
-        if entry.cooked and #entry.cooked > 0 then player:getModData().AutoMindfulLeftovers = entry.cooked end
+        if entry.cooked and #entry.cooked > 0 then Saved.set(player, "AutoMindfulLeftovers", entry.cooked) end
         write(player, nil)
         if state then state.kitchenNotice = nil end
         Log.event(player, "kitchen.done", "stove", entry.x .. ":" .. entry.y)
@@ -529,7 +532,7 @@ function Kitchen.store(player, state, now)
         if item and instanceof(item, "Food") and item:isCooked() and not item:isRotten() and not item:isBurnt()
                 and not Grid.favorite(item) then items[#items + 1] = item end
     end
-    if #items == 0 then data.AutoMindfulLeftovers = nil; return false end
+    if #items == 0 then Saved.set(player, "AutoMindfulLeftovers", nil); return false end
     if state.storeNext and now < state.storeNext and state.storeNext - now <= Kitchen.policy.lookMs then return false end
     state.storeNext = now + Kitchen.policy.lookMs
     local fridge
@@ -549,7 +552,7 @@ function Kitchen.store(player, state, now)
             end
         end
     end)
-    if queued then data.AutoMindfulLeftovers = nil else state.pending = nil end
+    if queued then Saved.set(player, "AutoMindfulLeftovers", nil) else state.pending = nil end
     return queued
 end
 

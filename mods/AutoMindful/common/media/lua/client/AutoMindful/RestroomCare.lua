@@ -162,8 +162,7 @@ local function wipeAllowed(player, item)
     local world = item:getWorldItem()
     local square = (world and world:getSquare()) or (obj and obj:getSquare()) or outer:getSourceGrid()
     local here = player:getSquare()
-    return Storage.permitted(player, square) and here and here:getZ() == square:getZ()
-        and math.abs(here:getX()-square:getX()) <= 1 and math.abs(here:getY()-square:getY()) <= 1
+    return Storage.permitted(player, square) and Grid.adjacent(here, square)
         and Storage.containerReachable(player, container, here == square or here:canReachTo(square))
 end
 

@@ -210,7 +210,7 @@ end
 
 -- Take the dish out and switch off, from beside the stove.
 local function finish(player, state, entry, stove, dish, message)
-    entry.stage, entry.tries = "finishing", (entry.tries or 0) + 1
+    entry.stage = "finishing"
     write(player, entry)
     return P.ownBatch(player, state, "kitchen", message, function()
         if not adjacent(player, stove:getSquare()) and not luautils.walkAdj(player, stove:getSquare(), true) then return end
@@ -230,9 +230,23 @@ function Kitchen.duty(player, state, now, walk)
         if state then state.kitchenNotice = "The stove that was cooking is out of sight." end
         return false
     end
+    watched[player] = now
+    if entry.stage == "fetching" then
+        if state and state.pending then return false end
+        Kitchen.settle(player, state, now, true)
+        entry = Kitchen.ledger(player)
+        if not entry then return false end
+    end
+    if entry.stage == "ready" then return Kitchen.place(player, state, now, entry, stove) end
     local dish = dishIn(stove, entry)
     local on = stove:Activated()
-    watched[player] = now
+    if not dish and on and (not entry.lit or not free(stove:getContainer())) then
+        -- Lit by someone else, or holding their food now: theirs, not ours.
+        write(player, nil)
+        Alerts.clear(player, "stove")
+        Log.event(player, "kitchen.released", "stove", entry.x .. ":" .. entry.y, "lit", entry.lit)
+        return false
+    end
     if not dish and not on then
         Alerts.clear(player, "stove")
         write(player, nil)
@@ -283,13 +297,13 @@ function Kitchen.lit(player)
     local entry = Kitchen.ledger(player)
     if not entry then return false end
     local stove = stoveAt(entry)
-    return stove == nil or stove:Activated()
+    return stove ~= nil and stove:Activated() and entry.stage ~= "fetching" and entry.stage ~= "ready"
 end
 
 -- Something on the stove needs a hand now, not just watching.
 function Kitchen.urgent(player)
     local entry = Kitchen.ledger(player)
-    if not entry or entry.stage == "starting" then return false end
+    if not entry or entry.stage ~= "cooking" and entry.stage ~= "finishing" then return false end
     local stove = stoveAt(entry)
     if not stove then return false end
     local dish = dishIn(stove, entry)
@@ -323,24 +337,48 @@ function Kitchen.meal(player, state, now)
         return false
     end
     local square = object:getSquare()
-    write(player, {x = square:getX(), y = square:getY(), z = square:getZ(), item = item:getID(), stage = "starting",
-        name = item:getDisplayName(), tries = 0})
-    Log.event(player, "kitchen.start", "dish", Snap.item(item), "stove", stoveKey(object),
+    local record = {x = square:getX(), y = square:getY(), z = square:getZ(), item = item:getID(), name = item:getDisplayName(),
+        tries = 0, stage = entry.carried and "ready" or "fetching"}
+    write(player, record)
+    Log.event(player, "kitchen.start", "dish", Snap.item(item), "stove", stoveKey(object), "carried", entry.carried,
         "temperature", object.getMaxTemperature and object:getMaxTemperature() or nil)
+    if entry.carried then return Kitchen.place(player, state, now, record, object) end
+    -- First the fridge, then, from wherever that leaves the survivor, the stove.
+    local queued = P.ownBatch(player, state, "kitchen", "Getting " .. item:getDisplayName() .. " to cook.", function()
+        local from = squareOf(entry.container)
+        if from and not adjacent(player, from) and not luautils.walkAdj(player, from, true) then return end
+        transfer(player, item, entry.container, inventory)
+    end)
+    if not queued then
+        write(player, nil)
+        state.rejected[item:getID()] = now + Kitchen.policy.retryMs
+        state.pending = nil
+    end
+    return queued
+end
+
+-- The dish is carried: to the stove with it, in, and on.
+function Kitchen.place(player, state, now, entry, object)
+    local item = player:getInventory():getItemById(entry.item)
+    local container = object and object:getContainer()
+    if not item or not Kitchen.cookable(item) or not container or object:Activated() or not container:isPowered()
+            or not free(container) then
+        write(player, nil)
+        if item then state.rejected[item:getID()] = now + Kitchen.policy.retryMs end
+        state.rejected["stove:" .. entry.x .. ":" .. entry.y .. ":" .. entry.z] = now + Kitchen.policy.lookMs
+        Log.event(player, "kitchen.unplaced", "carried", item ~= nil, "stove", entry.x .. ":" .. entry.y)
+        return false
+    end
+    entry.stage = "starting"
+    write(player, entry)
+    local square = object:getSquare()
     local queued = P.ownBatch(player, state, "kitchen", "Cooking " .. item:getDisplayName() .. " on the stove.", function()
-        if not entry.carried then
-            local from = squareOf(entry.container)
-            if from and not adjacent(player, from) and not luautils.walkAdj(player, from, true) then return end
-            transfer(player, item, entry.container, inventory)
-        end
-        -- Fetched from a fridge: the walk back is decided now, not where the survivor stood.
-        if (not entry.carried or not adjacent(player, square)) and not luautils.walkAdj(player, square, true) then return end
-        local into = transfer(player, item, entry.carried and item:getContainer() or inventory, object:getContainer())
+        if not adjacent(player, square) and not luautils.walkAdj(player, square, true) then return end
+        local into = transfer(player, item, item:getContainer(), container)
         local valid = into.isValid
         function into:isValid()
             -- Someone else may have started cooking here in the meantime.
-            local stoveContainer = object:getContainer()
-            return (not valid or valid(self)) and not object:Activated() and stoveContainer:isPowered() and free(stoveContainer)
+            return (not valid or valid(self)) and not object:Activated() and container:isPowered() and free(container)
         end
         toggle(player, object, true, item)
     end)
@@ -353,23 +391,33 @@ function Kitchen.meal(player, state, now)
 end
 
 -- The batch is over. The world says what happened, not how the actions ended.
-function Kitchen.settle(player, state, now)
+-- cut: an action was stopped (danger, the player), which is no failed try.
+function Kitchen.settle(player, state, now, cut)
     local entry = Kitchen.ledger(player)
     if not entry then return end
     local stove = stoveAt(entry)
     local dish = dishIn(stove, entry)
-    if entry.stage == "starting" then
-        if dish and stove:Activated() then
-            entry.stage = "cooking"
-        elseif not dish and not (stove and stove:Activated()) then
-            -- Never reached the stove: nothing to clean up.
-            state.rejected[entry.item] = now + Kitchen.policy.retryMs
-            write(player, nil)
-            return
+    if entry.stage == "fetching" then
+        if player:getInventory():getItemById(entry.item) then
+            entry.stage = "ready"
+            write(player, entry)
         else
-            entry.tries = (entry.tries or 0) + 1
-            entry.stage = "cooking"
+            if not cut then state.rejected[entry.item] = now + Kitchen.policy.retryMs end
+            write(player, nil)
         end
+    elseif entry.stage == "starting" then
+        local on = stove and stove:Activated()
+        if dish then
+            -- In the stove. Lit by us, or about to be taken out again.
+            entry.stage, entry.lit = "cooking", on and true or nil
+            write(player, entry)
+        else
+            -- Never reached the stove, or someone else lit it first: nothing of ours to clean up.
+            if not cut then state.rejected[entry.item] = now + Kitchen.policy.retryMs end
+            write(player, nil)
+        end
+    elseif entry.stage == "finishing" and not cut and (dish or (stove and stove:Activated())) then
+        entry.tries = (entry.tries or 0) + 1
         write(player, entry)
     end
 end
@@ -379,7 +427,8 @@ function Kitchen.ended(player)
     local entry = Kitchen.ledger(player)
     if not entry then return nil end
     local stove = stoveAt(entry)
-    if not stove or not stove:Activated() then return nil end
+    if entry.stage == "fetching" or entry.stage == "ready" then write(player, nil); return nil end
+    if not stove or not stove:Activated() or not entry.lit then return nil end
     if adjacent(player, stove:getSquare()) and not player:isDead() then
         toggle(player, stove, false)
         local dish = dishIn(stove, entry)
@@ -396,6 +445,7 @@ function Kitchen.watchdog(player, now)
     if not entry or player:isDead() then return end
     if watched[player] and now >= watched[player] and now - watched[player] < Kitchen.policy.unwatchedMs then return end
     if warned[player] and now >= warned[player] and now - warned[player] < Kitchen.policy.warnMs then return end
+    if not entry.lit then return end
     local stove = stoveAt(entry)
     if stove and not stove:Activated() then return end
     local dish = dishIn(stove, entry)

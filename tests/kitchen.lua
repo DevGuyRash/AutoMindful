@@ -227,7 +227,9 @@ do
     local raw=T.add(p.inventory,food())
     Kitchen.meal(p,s,1000); run(); Kitchen.settle(p,s,1100)
     raw.cooked=true
-    for attempt=1,3 do assert(Kitchen.duty(p,s,2000+attempt,true)); queued={}; s.pending=nil end
+    assert(Kitchen.duty(p,s,1500,true)); queued={}; Kitchen.settle(p,s,1501,true); s.pending=nil
+    assert(Kitchen.ledger(p).tries==0,"Cut short by danger or the player is not a failed try")
+    for attempt=1,3 do assert(Kitchen.duty(p,s,2000+attempt,true)); queued={}; Kitchen.settle(p,s,2000+attempt,false); s.pending=nil end
     assert(not Kitchen.duty(p,s,3000,true) and Kitchen.lit(p),"Out of attempts, the stove is still lit")
     assert(s.kitchenNotice:find("could not reach",1,true))
     assert(Kitchen.duty(p,s,3000+Kitchen.policy.againMs,true) or Kitchen.duty(p,s,3001+Kitchen.policy.againMs,true),"And later it tries again")
@@ -268,4 +270,48 @@ do
     assert(not light:isValid(),"And the stove is not lit for food that is not ours")
     ISTimedActionQueue.add=function(action) queued[#queued+1]=action; return action end
     passed("the stove is checked again when the actions run")
+end
+
+do
+    -- From the fridge: fetched first, then the walk to the stove is decided from there.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local oven=stove(1,0)
+    local fridge=T.container(4,0); fridge.square=square(4,0)
+    fridge.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return fridge end}}
+    local raw=T.add(fridge,food())
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).stage=="fetching")
+    local kinds={}; for _,a in ipairs(queued) do kinds[#kinds+1]=a.Type end
+    assert(table.concat(kinds,",")=="transfer","Only the fetch in the first batch: "..table.concat(kinds,","))
+    run(); Kitchen.settle(p,s,1100,false); s.pending=nil
+    assert(Kitchen.ledger(p).stage=="ready" and p.inventory:contains(raw))
+    walks=0
+    assert(Kitchen.meal(p,s,1200),"Then to the stove")
+    run(); Kitchen.settle(p,s,1300,false)
+    assert(oven.on and oven.container:contains(raw) and Kitchen.ledger(p).lit,"In and lit")
+    passed("food from a fridge is fetched, then cooked")
+end
+do
+    -- Someone else lit the stove while the survivor walked over.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local oven=stove(1,0)
+    T.add(p.inventory,food())
+    Kitchen.meal(p,s,1000)
+    oven.on=true
+    for _,a in ipairs(queued) do if a:isValid() then a:perform() end end; queued={}
+    Kitchen.settle(p,s,1100,false)
+    assert(Kitchen.ledger(p)==nil and oven.on,"Theirs: left on, nothing claimed")
+    assert(Kitchen.ended(p)==nil,"Stop does not touch it either")
+    passed("a stove someone else lit is never turned off")
+end
+do
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local oven=stove(1,0)
+    T.add(p.inventory,food())
+    Kitchen.meal(p,s,1000); run(); Kitchen.settle(p,s,1100)
+    squares={}
+    assert(not Kitchen.lit(p),"A stove out of sight is not known to be on, so sleep is not blocked forever")
+    passed("an unloaded stove does not block sleep")
 end

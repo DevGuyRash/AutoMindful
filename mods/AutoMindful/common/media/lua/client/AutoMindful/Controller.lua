@@ -389,6 +389,7 @@ function Controller.stop(player, reason, cause, nativeReason)
         for _, loan in ipairs(state.loans) do loan.interference = true end
     end
     clearOwned(player, state)
+    Recovery.kitchenStopped(player)
     Supplies.finishLoan(player, state.supplyLoan)
     for _, loan in ipairs(state.loans) do loan.defer = nil end
     state.supplyItem, state.supplyKind, state.supplyLoan, state.supplySource = nil, nil, nil, nil
@@ -2620,6 +2621,8 @@ local function chooseCare(player, state)
             local started
             started,reason=Controller.hungerPrerequisite(player,state)
             if started then return true end
+            -- Starving with raw food and a stove: cook now, not after the moodle passes.
+            if Recovery.kitchenMeal(player,state,getTimestampMs()) then return true end
             if not reason and state.hungerAid and state.hungerAid.tried then reason="Native hunger relief was not confirmed." end
         end
         local message=criticalWater and (full and "Dying of Thirst. No usable water found while the game restricts drinking."
@@ -3524,7 +3527,11 @@ end
 
 local function finishPending(player, state, now)
     if state.phase=="kitchen" then
-        Recovery.kitchenSettled(player, state, now)
+        local cut=false
+        for _, action in ipairs(state.pending) do
+            if not action.autoMindfulFinished or action.autoMindfulStopped then cut=true end
+        end
+        Recovery.kitchenSettled(player, state, now, cut)
         state.pending=nil
         return false
     end

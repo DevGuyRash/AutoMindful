@@ -705,11 +705,16 @@ Events.OnPlayerUpdate.Add(function(player)
                     for i = 0, objects and objects:size()-1 or -1 do
                         local object = objects:get(i)
                         for c = 0, (object.getContainerCount and object:getContainerCount() or 0) - 1 do
-                            local container = object:getContainerByIndex(c)
-                            local items = container:getItems()
-                            for k = items:size()-1, 0, -1 do
-                                if instanceof(items:get(k), "Food") then container:Remove(items:get(k)); removed = removed + 1 end
+                            local function strip(container)
+                                local items = container:getItems()
+                                for k = items:size()-1, 0, -1 do
+                                    local it = items:get(k)
+                                    if instanceof(it, "InventoryContainer") then strip(it:getInventory()) end
+                                    local fluid = it.getFluidContainer and it:getFluidContainer()
+                                    if instanceof(it, "Food") or (fluid and not fluid:isEmpty()) then container:Remove(it); removed = removed + 1 end
+                                end
                             end
+                            strip(object:getContainerByIndex(c))
                         end
                     end
                 end end

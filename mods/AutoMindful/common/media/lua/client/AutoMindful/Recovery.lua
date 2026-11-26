@@ -92,7 +92,7 @@ end
 -- ------------------------------------------------------------------ danger
 
 local essential = {eating=true, drinking=true, preparing=true, transferring=true, firstaid=true, paincare=true,
-    ["restoring-mask"]=true, returning=true, standing=true}
+    ["restoring-mask"]=true, returning=true, standing=true, kitchen=true}
 
 -- Work that can wait until it is safe. A bite, a bandage and the way to water
 -- for someone dying of thirst are not.
@@ -122,6 +122,10 @@ function Recovery.ended(player)
     Fluids.allowTainted = false
     Alerts.forget(player)
     Presence.forget(player)
+end
+
+-- After Stop has cleared its own actions, so the switch-off is not cleared with them.
+function Recovery.kitchenStopped(player)
     local stove = Kitchen.ended(player)
     if stove then
         Log.headline(player, "kitchen.ended", "result", stove)
@@ -129,7 +133,8 @@ function Recovery.ended(player)
     end
 end
 
-function Recovery.kitchenSettled(player, state, now) Kitchen.settle(player, state, now) end
+function Recovery.kitchenSettled(player, state, now, cut) Kitchen.settle(player, state, now, cut) end
+function Recovery.kitchenMeal(player, state, now) return state.recovery and Kitchen.meal(player, state, now) end
 function Recovery.kitchen(player, state) return Kitchen.status(player, state) end
 
 function Recovery.alerts(player) return Alerts.list(player) end
@@ -574,7 +579,7 @@ function Recovery.guarded(player, state, now)
     P.sampleIdle(state, now)
     Recovery.parkTrip(state)
     if Recovery.firstAid(player, state, now) then return end
-    if Kitchen.ledger(player) and Kitchen.duty(player, state, now, false) then return end
+    if Kitchen.urgent(player) and Kitchen.duty(player, state, now, false) then return end
     if state.guardAt and now >= state.guardAt and now - state.guardAt < guardMs then return end
     state.guardAt = now
     Recovery.prepareCare(player, state, now)
@@ -603,7 +608,12 @@ function Recovery.advance(player, state, now)
     P.sampleIdle(state, now)
     -- A cooked or burning dish comes before anything else; watching it does not.
     if Kitchen.urgent(player) and Kitchen.duty(player, state, now, true) then return end
-    if P.care(player, state) or not state.active then return end
+    -- While something cooks, care uses what is carried or within reach: no trips away from the stove.
+    local cooking = Kitchen.lit(player)
+    if cooking then state.carriedOnly = true end
+    local cared = P.care(player, state)
+    if cooking then state.carriedOnly = nil end
+    if cared or not state.active then return end
     if Kitchen.meal(player, state, now) or not state.active then return end
     local away = Presence.away(player, now)
     local calm = Recovery.permit(player, state, "posture", now)

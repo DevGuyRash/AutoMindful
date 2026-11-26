@@ -29,8 +29,13 @@ local function camping(check, item)
     return ok and result == true
 end
 
-function Fire.isFuel(item) return spare(item) and fuelTypes[typeOf(item) or ""] == true and camping("isValidFuel", item) end
-function Fire.isTinder(item) return spare(item) and tinderTypes[typeOf(item) or ""] == true and camping("isValidTinder", item) end
+-- Cheap: only these types are worth the checks below.
+function Fire.candidate(item)
+    local kind = typeOf(item) or ""
+    return fuelTypes[kind] or tinderTypes[kind] or kind == "Lighter" or kind == "Matches" or false
+end
+function Fire.isFuel(item) return fuelTypes[typeOf(item) or ""] == true and spare(item) and camping("isValidFuel", item) end
+function Fire.isTinder(item) return tinderTypes[typeOf(item) or ""] == true and spare(item) and camping("isValidTinder", item) end
 function Fire.isStarter(item)
     if not item then return false end
     local kind = typeOf(item)
@@ -91,22 +96,23 @@ function Fire.plan(object, minutes, materials)
         -- Only a campfire gets fuel from its tinder.
         if Fire.campfire(object) then have = have + Fire.duration(plan.tinder.item) end
     end
-    local fuel = {}
+    -- Each piece's burn time and kind read once, not on every comparison.
+    local fuel, cap = {}, maximum()
     for _, entry in ipairs(materials.fuel or {}) do
         -- Never the same thing twice: the tinder is not burned as fuel first.
-        if not (plan.tinder and entry.item == plan.tinder.item) then fuel[#fuel + 1] = entry end
+        if not (plan.tinder and entry.item == plan.tinder.item) then
+            fuel[#fuel + 1] = {entry = entry, minutes = Fire.duration(entry.item), last = lastResort[typeOf(entry.item)] and 1 or 0}
+        end
     end
     table.sort(fuel, function(a, b)
-        local la, lb = lastResort[typeOf(a.item)] and 1 or 0, lastResort[typeOf(b.item)] and 1 or 0
-        if la ~= lb then return la < lb end
-        return Fire.duration(a.item) > Fire.duration(b.item)
+        if a.last ~= b.last then return a.last < b.last end
+        return a.minutes > b.minutes
     end)
-    for _, entry in ipairs(fuel) do
+    for _, piece in ipairs(fuel) do
         if have >= need then break end
-        local add = Fire.duration(entry.item)
-        if add > 0 and have + add <= maximum() then
-            plan.fuel[#plan.fuel + 1] = entry
-            have = have + add
+        if piece.minutes > 0 and have + piece.minutes <= cap then
+            plan.fuel[#plan.fuel + 1] = piece.entry
+            have = have + piece.minutes
         end
     end
     if have < need then return nil end

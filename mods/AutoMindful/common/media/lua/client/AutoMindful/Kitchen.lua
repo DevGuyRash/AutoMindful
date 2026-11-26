@@ -157,8 +157,12 @@ function Kitchen.step(player, check, run)
     return ISTimedActionQueue.add(Step:new(player, check, run))
 end
 
+-- A stove indoors first, a campfire last.
+local ranks = {stove = 0, microwave = 1, grill = 2, fire = 3, campfire = 4}
+
 local function heatOf(object)
-    if not object then return nil end
+    -- Every heat cooks in a container: most objects stop here, before any driver.
+    if not object or not object.getContainer or not object:getContainer() then return nil end
     for _, heat in ipairs(heats) do
         local ok, matched = pcall(heat.match, object)
         if ok and matched then return heat end
@@ -241,6 +245,7 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             take(item:getInventory(), true)
         end
         -- What a fire needs: wood, tinder and a lighter or matches.
+        if not Fire.candidate(item) then return end
         if Fire.isFuel(item) then result.fuel[#result.fuel + 1] = Fetch.entry(item, container, world, carried, holder) end
         if Fire.isTinder(item) then result.tinder[#result.tinder + 1] = Fetch.entry(item, container, world, carried, holder) end
         if Fire.isStarter(item) then result.starters[#result.starters + 1] = Fetch.entry(item, container, world, carried, holder) end
@@ -268,24 +273,25 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
         local objects = square:getObjects()
         for index = 0, objects:size() - 1 do
             local object = objects:get(index)
-            local outside = yard and not heatOf(object)
+            -- Looked up once: the drivers are tried in turn.
+            local heat = heatOf(object)
+            local outside = yard and not heat
             if not outside and not fridgesOnly and Soup.isTap(object) then
                 result.taps[#result.taps + 1] = {object = object, square = square, distance = distance}
             end
-            if heatOf(object) then
+            if heat then
                 result.heats = result.heats + 1
                 result.heatList[#result.heatList + 1] = {object = object, square = square, distance = distance}
             end
             if outside then
                 -- nothing but heat out there
-            elseif Kitchen.isStove(object) then
+            elseif heat then
                 local container = object:getContainer()
                 local waiting = rejected and rejected["stove:" .. stoveKey(object)]
-                local heat = heatOf(object)
-                if not fridgesOnly and canHeat(object) and (heat.shared or not isOn(object)) and free(container)
+                if not fridgesOnly and heat.ready(object) == true and (heat.shared or heat.on(object) ~= true) and free(container)
                         and not (waiting and now < waiting) then
                     result.stoves[#result.stoves + 1] = {object = object, square = square, distance = distance,
-                        rank = ({stove = 0, microwave = 1, grill = 2, fire = 3, campfire = 4})[heat.kind] or 5}
+                        rank = ranks[heat.kind] or 5}
                 end
             elseif object.getContainerCount then
                 for c = 0, object:getContainerCount() - 1 do

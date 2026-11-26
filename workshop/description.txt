@@ -17,7 +17,8 @@ Second Nature (formerly AutoMindful) looks after your survivor: food, water, rea
 [*][b]Sleeps in a bed[/b] in the same building and walks back.
 [*][b]Never quietly gives up.[/b] Only Stop or death ends it. Problems back off and retry, and it carries on after you load in again.
 [*][b]Diet goal.[/b] Auto keeps a healthy weight; or prefer high protein, more or fewer calories, low carb or low fat when choices are close.
-[*][b]Cooks raw food.[/b] When only raw food is left, it cooks it on a powered stove nearby, takes each dish out once cooked (never burnt), turns the stove off and eats. Raw food that would spoil soon cooks in the same batch, and leftovers go into a powered fridge. Stoves in use by someone else are left alone.
+[*][b]Cooks.[/b] When only raw food is left, it cooks it on a powered stove or oven, a microwave (never anything metal), a propane grill, or, with no power, a fireplace, antique stove, charcoal grill or campfire that it fuels, lights and puts out again. Food comes from any cupboard, bag, the floor or a dead body's pockets indoors. Each dish comes out cooked, never burnt, and the heat goes off with the last one. With a pot and water it makes soups and stews. Raw food that would spoil soon cooks in the same batch, leftovers go into a powered fridge or freezer, and frozen food is taken out to thaw ahead of the next meal. Stoves and fires someone else is using are left alone.
+[*][b]Cooking practice.[/b] When nobody is hungry it cooks spare raw food that would spoil for Cooking XP, and shows the time to the next level.
 [*][b]Last resort:[/b] plain unsafe water after a minute of Dying of Thirst with nothing clean left. It never eats rotten or poisonous food.
 [/list]
 Each of these has a switch under Settings > Autopilot.
@@ -25,7 +26,7 @@ Each of these has a switch under Settings > Autopilot.
 [h2]How to use[/h2]
 Right-click the ground, open Lifestyle's [b]Wellness[/b] menu and choose [b]Second Nature[/b], or press [b]0[/b] for the window. While a job runs, right-click your survivor for Stop, Switch and I am going AFK.
 
-The window has [b]Now[/b] (what it is doing and why), [b]Supplies[/b] (what it knows of nearby), [b]Log[/b] (recent decisions and Copy report), [b]Guide[/b] and [b]Settings[/b]. Drag a corner to resize; double-click it to fit.
+The window has [b]Now[/b] (what it is doing and why), [b]Supplies[/b] (what it knows of nearby), [b]Kitchen[/b] (every stove, grill and fire nearby and what it needs, food, fridges and freezers), [b]Log[/b] (recent decisions and Copy report), [b]Guide[/b] and [b]Settings[/b]. Drag a corner to resize; double-click it to fit.
 
 Under Supplies, choose how far care may reach: only what you carry, what is within arm's reach, or a short walk to nearby supplies (default 10 tiles). Borrowed items go back where they came from.
 

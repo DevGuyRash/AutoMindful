@@ -1,4 +1,4 @@
-# Second Nature 0.5.0 (unreleased)
+# Second Nature 0.5.0
 
 - **Cooking practice:** when nobody is hungry, Autopilot cooks raw food from the cupboards for Cooking XP and puts it back cold. Settings: cook food that would spoil (default), cook all spare raw food, or off. What you carry is left alone. The Now tab shows the Cooking level.
 - **Soups and stews:** with a pot, water from a sink or tap and two or more ingredients from the same place, Autopilot makes a soup (a stew with meat) using the game's own recipe and cooks it. Option: **Make soups and stews**.
@@ -11,3 +11,4 @@
 - **Fires:** fireplaces, antique stoves, charcoal grills and campfires cook too. Autopilot gathers wood, tinder (newspaper, paper scraps) and a lighter or matches from any container, the floor or a woodpile in the yard, adds enough fuel for the cooking, lights it and puts it out afterwards. A fire someone else lit is borrowed and left burning. Books worth reading, favourites and worn items are never burned.
 - **Freezers:** when nothing ready or raw is left but the freezer holds food, Autopilot takes one meal out to thaw (raw food only when there is something to cook it on) and waits until it has thawed before taking more; cooked leftovers go to a freezer when no fridge has room; frozen food counts toward how long food lasts when there is something to cook it on.
 - **Kitchen tab:** every heat source nearby and what it needs or that it is ready, the raw, ready and frozen food, fridges and freezers, fire materials, the Cooking level and the cooking settings, in one place. The window is never narrower than its tabs.
+- **Faster:** looking around the kitchen takes about a third of the time it did (around 3.5 ms instead of 10 ms in a furnished house), so Autopilot no longer causes a hitch when it checks for food, heat and storage.

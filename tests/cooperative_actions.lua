@@ -10,7 +10,7 @@ return function(T, C, test, scoutTarget)
     end
     local function untouched(action)
         assert(not action.autoMindfulOwner and not action.stopped and not action.cancelled,
-            "Another action keeps its owner and is never stopped by AutoMindful")
+            "Another action keeps its owner and is never stopped by Second Nature")
         assert((action.begins or 0)<=1, "Foreign actions begin at most once")
         assert(action.adds==1 and not action.removes, "Foreign actions are never removed and re-added")
     end

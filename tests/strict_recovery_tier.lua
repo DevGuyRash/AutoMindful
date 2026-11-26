@@ -244,7 +244,7 @@ test("strict awaits a live native gate without a blind retry; changed minimum ca
     C.stop(p)
 end)
 
-test("strict cancels incompatible, unreachable, and disabled targets without stopping Recovery",function()
+test("strict cancels incompatible, unreachable, and disabled targets without stopping Autopilot",function()
     for _,reason in ipairs({"version","settings","rank","checkbox"}) do
         local p=survivor(10); p.values.STRESS=.61
         start(p); local a=await(p,"Meditation")
@@ -293,4 +293,4 @@ test("an explicit tier goal does not inherit the strict objective",function()
     assert(a.stopped and C.status(p).phase=="complete" and not C.status(p).active)
 end)
 
-print("strict Recovery: "..n.." cases passed")
+print("strict Autopilot: "..n.." cases passed")

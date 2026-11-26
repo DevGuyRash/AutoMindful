@@ -69,7 +69,7 @@ end
 local function assertUntouchedFitness(p, action, native)
     assert(queue(p)[1] == action and p.nativeHead == native)
     assert(action.begins == 1 and not action.stopped and not action.cancelled and not action.forceStopped)
-    assert(not action.autoMindfulOwner, "The workout must never become AutoMindful-owned")
+    assert(not action.autoMindfulOwner, "The workout must never become Second Nature-owned")
 end
 
 -- Reproduce the live handoff: finished practice, a foreign set starts on the

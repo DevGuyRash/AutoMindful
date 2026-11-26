@@ -1,13 +1,13 @@
-Trains Lifestyle: Hobbies Meditation and Yoga for you, and looks after the survivor while it does: food, water, reading, rest, sleep, the toilet, washing and wounds. At level 10, or whenever you like, Recovery keeps doing the looking after on its own.
+Second Nature (formerly AutoMindful) looks after your survivor: food, water, reading, rest, sleep, the toilet, washing and wounds. [b]Autopilot[/b] does it while you play or step away. With Lifestyle: Hobbies it also trains Meditation and Yoga for you, and at level 10 Autopilot keeps doing the looking after on its own. Lifestyle is optional; without it, right-click your survivor to start Autopilot.
 
 [h2]Jobs[/h2]
 [list]
 [*][b]Yoga[/b], [b]Meditation[/b] or [b]Yoga and Meditation[/b]: train toward level 10 with Lifestyle's own actions and XP, taking care breaks and resuming by itself.
 [*][b]Reach a moodle tier[/b]: practise until a Mindfulness or Zen tier is active, then stop.
-[*][b]Recovery[/b]: look after the survivor without training. It works at any rank and is what a training job turns into at level 10.
+[*][b]Autopilot[/b]: look after the survivor without training. It works at any rank and is what a training job turns into at level 10.
 [/list]
 
-[h2]Recovery[/h2]
+[h2]Autopilot[/h2]
 [list]
 [*][b]Knows whether you are there.[/b] While you or another mod keep the action queue busy, a carried bite or sip goes between two actions; nothing is cancelled or reordered. While you stand around it does small things. Once you are away (3 minutes without input, or [i]I am going AFK[/i]) it does everything it can.
 [*][b]Danger in degrees.[/b] Being chased, touched or on fire: hands off. A zombie in view, a wound or a parked car: it stays where it is but still eats, drinks and bandages.
@@ -16,12 +16,13 @@ Trains Lifestyle: Hobbies Meditation and Yoga for you, and looks after the survi
 [*][b]Water on the survivor.[/b] Keeps carried bottles full; the game drinks from them by itself.
 [*][b]Sleeps in a bed[/b] in the same building and walks back.
 [*][b]Never quietly gives up.[/b] Only Stop or death ends it. Problems back off and retry, and it carries on after you load in again.
+[*][b]Cooks raw food.[/b] When only raw food is left, it cooks it on a powered stove nearby, takes it out once cooked (never burnt), turns the stove off and eats. Stoves in use by someone else are left alone.
 [*][b]Last resort:[/b] plain unsafe water after a minute of Dying of Thirst with nothing clean left. It never eats rotten or poisonous food.
 [/list]
-Each of these has a switch under Settings > Recovery.
+Each of these has a switch under Settings > Autopilot.
 
 [h2]How to use[/h2]
-Right-click the ground, open Lifestyle's [b]Wellness[/b] menu and choose [b]AutoMindful[/b], or press [b]0[/b] for the window. While a job runs, right-click your survivor for Stop, Switch and I am going AFK.
+Right-click the ground, open Lifestyle's [b]Wellness[/b] menu and choose [b]Second Nature[/b], or press [b]0[/b] for the window. While a job runs, right-click your survivor for Stop, Switch and I am going AFK.
 
 The window has [b]Now[/b] (what it is doing and why), [b]Supplies[/b] (what it knows of nearby), [b]Log[/b] (recent decisions and Copy report), [b]Guide[/b] and [b]Settings[/b]. Drag a corner to resize; double-click it to fit.
 
@@ -31,8 +32,8 @@ Under Supplies, choose how far care may reach: only what you carry, what is with
 Decisions, containers and the survivor's state go to [i]Zomboid/Lua/AutoMindful/log-N.txt[/i]. If something goes wrong, use Copy report in the Log tab and include it in your report.
 
 [h2]Requirements and multiplayer[/h2]
-Project Zomboid Build 42.22+ and [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858]Lifestyle: Hobbies by Angry[/url] with Wellness enabled. Tested on 42.22.2 with Lifestyle 0.4.0.3. No Lifestyle files are bundled.
+Project Zomboid Build 42.22+. Yoga and Meditation also need [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858]Lifestyle: Hobbies by Angry[/url] with Wellness enabled; Autopilot works without it. Tested on 42.22.2 with Lifestyle 0.4.0.3. No Lifestyle files are bundled.
 
-All AutoMindful code runs on the client. On a server it must still be in the server's mod list, and the server's rules and Lifestyle's own requirements apply.
+All Second Nature code runs on the client. On a server it must still be in the server's mod list, and the server's rules and, with Lifestyle, its own requirements apply.
 
 Mod ID: AutoMindful

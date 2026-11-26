@@ -40,7 +40,7 @@ local shelf=T.container(1,0); p.nearby={shelf}
 local bottle=T.add(shelf,T.water())
 assert(C.start(p,"meditation",true))
 for _=1,30 do step(p); if queue(p)[1] and queue(p)[1].Type~="Meditation" then queue(p)[1]:perform() end end
-need("^AutoMindful 9%.9","Lifestyle 0.4.0.3")
+need("^Second Nature 9%.9","Lifestyle 0.4.0.3")
 need(" job%.start ","mode=meditation","collect=true","scout=","radius=","policy=","me=","thirst:0.3")
 need(" phase ","from=starting","to=collecting","message=")
 need(" supply%.choice%.water ","chosen=","utility=","candidates=1","nearby")
@@ -59,7 +59,7 @@ Q.add(yieldTo); step(p,2); yieldTo:perform(); step(p,10)
 need(" yield ","cause=current-action","SomeoneElsesWork")
 need(" resume ","waitedMs=")
 need(" action%.stopped ","Meditation","by=automindful-release","ranMs=")
-C.stop(p,"You stopped AutoMindful.")
+C.stop(p,"You stopped Second Nature.")
 need(" job%.stop ","reason=","tally=","yields:1")
 passed("who interrupted, what it was doing, and how the job ended")
 

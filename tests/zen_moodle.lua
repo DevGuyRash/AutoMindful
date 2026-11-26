@@ -113,7 +113,7 @@ local hudZen = widgets[#widgets-1]:getTable()
 local hudOther = widgets[#widgets-2]:getTable()
 painted={}
 hudZen:render()
-assert(painted[1]=="Zen", "Control: registered before AutoMindful, displaying the upstream hover")
+assert(painted[1]=="Zen", "Control: registered before Second Nature, displaying the upstream hover")
 -- Exercise the real entry hook with UIManager's pending AddUI not yet visible.
 local uiList = UIManager.getUI
 UIManager.getUI=function() return nil end
@@ -123,10 +123,10 @@ UIManager.getUI=uiList
 local clock = 1000
 getTimestampMs = function() return clock end
 postDraw()
-assert(postDraw, "It keeps looking: a server can load AutoMindful after Lifestyle made its moodles")
+assert(postDraw, "It keeps looking: a server can load Second Nature after Lifestyle made its moodles")
 painted={}
 hudZen:render()
-assert(painted[1]=="Zen I", "AutoMindful must update a Zen widget already registered before its client UI runs")
+assert(painted[1]=="Zen I", "Second Nature must update a Zen widget already registered before its client UI runs")
 assert(table.concat(painted, " "):find("Meditation XP: +10%", 1, true))
 painted={}
 hudOther:render()

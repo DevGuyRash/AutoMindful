@@ -140,7 +140,7 @@ local function route(mode)
             C.update(p)
         end
         for _=1,7 do idleSample() end
-        assert(not head(p),"Recovery scouted before the idle grace elapsed")
+        assert(not head(p),"Autopilot scouted before the idle grace elapsed")
         for _=1,12 do
             if head(p) then break end
             idleSample()
@@ -223,7 +223,7 @@ test("a waiter appended inside outbound stop survives; released world cancel sta
     perform(p,map); tick(p,4); assert(not head(p) and not C.status(p).active and #p.cards==1)
 end)
 
-test("manual movement interrupts a Recovery route without an automatic walk back",function()
+test("manual movement interrupts a Autopilot route without an automatic walk back",function()
     local p,walk=route("recovery")
     local job=action(p,"UnrelatedWalkAndChop")
     ISTimedActionQueue.add(job)

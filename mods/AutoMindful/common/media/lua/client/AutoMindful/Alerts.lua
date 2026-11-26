@@ -21,7 +21,7 @@ function Alerts.raise(player, id, text, now, audible)
     mine[id] = {text=text, at=now, since=alert and alert.since or now, count=count,
         nextAt=now + math.min(repeatLimitMs, firstRepeatMs * 2 ^ (count - 1))}
     Log.headline(player, "alert", "id", id, "text", text, "count", count, "audible", audible == true)
-    HUD.show(player:getPlayerNum(), {brand="AutoMindful", theme="mindful", status="stopped", title="Recovery needs you", detail=text})
+    HUD.show(player:getPlayerNum(), {brand="Second Nature", theme="mindful", status="stopped", title="Autopilot needs you", detail=text})
     if HaloTextHelper and HaloTextHelper.addBadText then pcall(HaloTextHelper.addBadText, player, text) end
     if audible and Options.alertSound() then
         -- Interface sound: the player hears it, the world does not.

@@ -49,7 +49,7 @@ package.loaded["PZAPI/ModOptions"]=true
 local Options=require "AutoMindful/Options"
 local modes=PZAPI.ModOptions:getOptions("AutoMindful")
 local groups={
-    {"recovery","Recovery / relief"},
+    {"recovery","Autopilot / relief"},
     {"capped","Capped practice"},
     {"rotation","Train Both"},
 }

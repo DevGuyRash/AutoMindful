@@ -4,12 +4,12 @@ local Tiers = require "AutoMindful/TierTargets"
 local Options = {}
 local settings = PZAPI.ModOptions:getOptions("AutoMindful")
 if not settings then
-    settings = PZAPI.ModOptions:create("AutoMindful", "AutoMindful")
-    settings:addDescription("The same settings are in the AutoMindful window, under Settings. Closing the window does not stop the current job.")
+    settings = PZAPI.ModOptions:create("AutoMindful", "Second Nature")
+    settings:addDescription("The same settings are in the Second Nature window, under Settings. Closing the window does not stop the current job.")
 end
 
 local general = settings:getOption("generalContextMenu") or settings:addTickBox("generalContextMenu",
-    "Always show AutoMindful in the world context menu", false,
+    "Always show Second Nature in the world context menu", false,
     "Off: it appears under Wellness, on a yoga mat, and on your survivor while a job runs. On: it is always at the bottom of the menu.")
 local windowKeyLabel = "Open AutoMindful window"
 local key = settings:getOption("openWindow") or settings:addKeyBind("openWindow",
@@ -17,7 +17,7 @@ local key = settings:getOption("openWindow") or settings:addKeyBind("openWindow"
     "Set a shortcut to open the window without starting or stopping a mode. Leave unassigned to use 0 if the default is enabled and the key is free.")
 local defaultKey = settings:getOption("defaultWindowKey") or settings:addTickBox("defaultWindowKey",
     "Use 0 when the open shortcut is unassigned", true,
-    "Use the number-row 0 as a fallback. AutoMindful leaves the key alone if another game or mod binding uses it.")
+    "Use the number-row 0 as a fallback. Second Nature leaves the key alone if another game or mod binding uses it.")
 
 Options.scoutingLabel = "Scout nearby for supplies"
 Options.scoutingHelp = "When you need supplies, walk to a nearby source or inspect an unknown container on the same floor, then return. Danger, manual movement or Stop cancels the trip."
@@ -27,8 +27,8 @@ local practice = settings:getOption("practiceCare") or settings:addTickBox("prac
     "Use Yoga or Meditation for relief when useful", true,
     "When a suitable practice is likely to help, take a bounded care break without using up a training turn. Food, water, medicine and ready reading still take priority.")
 local strictRecovery = settings:getOption("strictRecoveryTier") or settings:addTickBox("strictRecoveryTier",
-    "Recovery: strict tier targets", false,
-    "Once Recovery starts a useful practice, keep its minimum tier pending even if that need clears. Your actions, urgent needs, and native requirements still take priority. This does not start a practice just to renew a buff.")
+    "Autopilot: strict tier targets", false,
+    "Once Autopilot starts a useful practice, keep its minimum tier pending even if that need clears. Your actions, urgent needs, and native requirements still take priority. This does not start a practice just to renew a buff.")
 local radius = settings:getOption("searchRadius") or settings:addSlider("searchRadius",
     "Nearby search radius (tiles)", 2, 30, 1, 10,
     "Search distance from the original training spot for each care trip. Default: 10 tiles. The route itself may be longer.")
@@ -38,8 +38,8 @@ local radius = settings:getOption("searchRadius") or settings:addSlider("searchR
 Options.awayMinutes = {1, 3, 5, 10}
 local away = settings:getOption("recoveryAway")
 if not away then
-    away = settings:addComboBox("recoveryAway", "Recovery: counts you as away after",
-        "While you are away, Recovery also walks for small needs, sleeps in bed, fills bottles and warns you out loud.")
+    away = settings:addComboBox("recoveryAway", "Autopilot: counts you as away after",
+        "While you are away, Autopilot also walks for small needs, sleeps in bed, fills bottles and warns you out loud.")
     for _, minutes in ipairs(Options.awayMinutes) do away:addItem(minutes == 1 and "1 minute" or minutes .. " minutes") end
     away:setValue(2)
 end
@@ -54,12 +54,13 @@ function Options.awayMs() return Options.awayMinutes[Options.awayIndex()] * 6000
 local recoveryTicks = {}
 for _, row in ipairs({
     {"recoveryFirstAid", "Bandage wounds", "Uses the best dressing carried or within reach. Also during training."},
-    {"recoveryBetween", "Recovery: eat and drink between your actions", "While you or another mod keep the action queue busy, a carried bite or sip goes between two actions."},
-    {"recoveryRefill", "Recovery: keep carried bottles full", "Refills bottles you carry at clean water. The game drinks from them by itself."},
-    {"recoveryBeds", "Recovery: sleep in a bed when one is near", "Walks to a bed within the search radius and back afterwards. Off: sleeps on the spot."},
-    {"recoveryLastResort", "Recovery: drink unsafe water rather than die", "Only after a minute of Dying of Thirst with nothing clean left. It will make the survivor ill."},
-    {"recoverySound", "Recovery: sound when it needs you", "Heard only by you, not by zombies."},
-    {"recoveryResume", "Recovery: carry on after loading", "If Recovery was on when you left, it starts again when you are back in."},
+    {"recoveryBetween", "Autopilot: eat and drink between your actions", "While you or another mod keep the action queue busy, a carried bite or sip goes between two actions."},
+    {"recoveryRefill", "Autopilot: keep carried bottles full", "Refills bottles you carry at clean water. The game drinks from them by itself."},
+    {"recoveryBeds", "Autopilot: sleep in a bed when one is near", "Walks to a bed within the search radius and back afterwards. Off: sleeps on the spot."},
+    {"recoveryLastResort", "Autopilot: drink unsafe water rather than die", "Only after a minute of Dying of Thirst with nothing clean left. It will make the survivor ill."},
+    {"recoverySound", "Autopilot: sound when it needs you", "Heard only by you, not by zombies."},
+    {"recoveryResume", "Autopilot: carry on after loading", "If Autopilot was on when you left, it starts again when you are back in."},
+    {"recoveryCook", "Autopilot: cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off."},
 }) do
     recoveryTicks[row[1]] = settings:getOption(row[1]) or settings:addTickBox(row[1], row[2], true, row[3])
 end
@@ -67,6 +68,7 @@ local function ticked(id) return function() return recoveryTicks[id]:getValue() 
 Options.firstAid = ticked("recoveryFirstAid")
 Options.careBetween, Options.refill, Options.useBeds = ticked("recoveryBetween"), ticked("recoveryRefill"), ticked("recoveryBeds")
 Options.lastResort, Options.alertSound, Options.resumeRecovery = ticked("recoveryLastResort"), ticked("recoverySound"), ticked("recoveryResume")
+Options.cookMeals = ticked("recoveryCook")
 
 -- PZ stores the stock combo's selected index. Keep this order stable.
 local cycles = {
@@ -135,7 +137,7 @@ function Options.logLabel() return Options.logLabels[Options.logLevel()] end
 local minimums = {}
 local minimumHelp = "Defaults to the highest tier and uses the highest unlocked tier at or below your choice. Select No minimum to turn this off. Safety, supplies and your other actions still take priority."
 for _, group in ipairs({
-    {id="recovery", label="Recovery / relief", scope="A practice must already be useful for a need. The Recovery strict option keeps a started target even if that need clears."},
+    {id="recovery", label="Autopilot / relief", scope="A practice must already be useful for a need. The Autopilot strict option keeps a started target even if that need clears."},
     {id="capped", label="Capped practice", scope="Regular practice turns started at the level cap, not endurance-only rest breaks."},
     {id="rotation", label="Train Both", scope="Regular Yoga and Meditation turns in Train Both, not endurance-only rest breaks."},
 }) do

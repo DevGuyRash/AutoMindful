@@ -91,7 +91,7 @@ local function new(rank)
         return self.exerciseEnded==nil and "" or tostring(self.exerciseEnded)
     end
     function p:setVariable(key,value)
-        assert(inStock,"AutoMindful must never write exercise flags")
+        assert(inStock,"Second Nature must never write exercise flags")
         if key=="ExerciseEnded" then self.exerciseEnded=value else self.exerciseStarted=value end
         self.nativeFlagWrites=(self.nativeFlagWrites or 0)+1
     end
@@ -197,7 +197,7 @@ for _,mode in ipairs({"both","recovery"}) do
     slept(p,false)
     ISInventoryPaneContextMenu.takePill=take
 end
-print("PASS confirmed meal then exact native painkiller receipt before admissible sleep in Both and Recovery")
+print("PASS confirmed meal then exact native painkiller receipt before admissible sleep in Both and Autopilot")
 
 do
     local p=new(3)

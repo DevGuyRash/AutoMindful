@@ -295,12 +295,12 @@ files["AutoMindful/window-0.txt"] = "1 62 25 538 828 1\n"
 local before
 local window = Window.open(player)
 assert(window:getX() == 62 and window:getY() == 25 and window.width < 400 and window.height < 420, "The old position carries over, the old size does not")
-assert(job(window, "Yoga") and job(window, "Meditation") and job(window, "Yoga and Meditation") and job(window, "Recovery"))
+assert(job(window, "Yoga") and job(window, "Meditation") and job(window, "Yoga and Meditation") and job(window, "Autopilot"))
 assert(job(window, "Yoga").sub == "Level 5, 40 of 100 XP" and #rows(window, "title") == 0 and not button(window, "Stop"))
-assert(job(window, "Recovery").sub:find("while you play or are away", 1, true) and #rows(window, "chips") == 0, "No need, no chips")
+assert(job(window, "Autopilot").sub:find("while you play or are away", 1, true) and #rows(window, "chips") == 0, "No need, no chips")
 player.moodles.THIRST, player.moodles.BORED = 2, 1
 window:invalidate()
-assert(rows(window, "chips")[1].chips[1].text == "Thirsty" and job(window, "Recovery").sub == "Looks after: thirsty, bored")
+assert(rows(window, "chips")[1].chips[1].text == "Thirsty" and job(window, "Autopilot").sub == "Looks after: thirsty, bored")
 passed("idle shows the jobs that apply, live needs, and nothing else")
 
 assert(job(window, "Reach a moodle tier").sub == "Practise, then stop. Up to Mindfulness or Zen III", job(window, "Reach a moodle tier").sub)
@@ -323,12 +323,12 @@ assert(job(window, "Yoga").disabled and job(window, "Yoga").sub == "Not while zo
 click(window, job(window, "Yoga"))
 assert(#launches == 0, "A refused job cannot be started")
 refuse.yoga = nil
-gates, refuse.recovery = nil, "Enable Lifestyle: Hobbies with yoga support before starting AutoMindful."
+gates, refuse.recovery = nil, "Enable Lifestyle: Hobbies with yoga support before starting Second Nature."
 window:invalidate()
 assert(#rows(window, "job") == 0 and text(window):find("Enable Lifestyle", 1, true), "One clear sentence instead of a wall of dead buttons")
 refuse.recovery, refuse.both = nil, "Lifestyle Wellness is disabled in this world."
 window:invalidate()
-assert(#rows(window, "job") == 1 and job(window, "Recovery") and text(window):find("Wellness is disabled", 1, true), "Recovery needs no Wellness")
+assert(#rows(window, "job") == 1 and job(window, "Autopilot") and text(window):find("Wellness is disabled", 1, true), "Autopilot needs no Wellness")
 gates, refuse.both = {meditation={ready=true}, yoga={ready=true}}, nil
 window:invalidate()
 passed("blocked, finished and unreachable jobs explain themselves or disappear")
@@ -344,13 +344,13 @@ assert(#rows(window, "job") == 0 and rows(window, "title")[1].text == "Yoga" and
 local bar = rows(window, "bar")
 assert(#bar == 1 and bar[1].label == "Yoga 5" and bar[1].gain == "+30 XP", "Only the trained skill, with what this session earned")
 click(window, button(window, "Switch"))
-assert(not named(lastMenu, "Yoga") and named(lastMenu, "Meditation") and named(lastMenu, "Recovery"), "Every other job")
-choose(named(lastMenu, "Recovery"))
+assert(not named(lastMenu, "Yoga") and named(lastMenu, "Meditation") and named(lastMenu, "Autopilot"), "Every other job")
+choose(named(lastMenu, "Autopilot"))
 assert(launches[2].mode == "recovery")
 state.mode = "yoga"
 window:invalidate()
 click(window, button(window, "Stop"))
-assert(#stops == 1 and not state.active and job(window, "Yoga") and text(window):find("You stopped AutoMindful", 1, true))
+assert(#stops == 1 and not state.active and job(window, "Yoga") and text(window):find("You stopped Second Nature", 1, true))
 refuse.launch = "Stop moving before training."
 click(window, job(window, "Meditation"))
 assert(text(window):find("Stop moving before training", 1, true), "A refusal is shown where it was clicked")
@@ -362,7 +362,7 @@ state.active, state.mode = false, nil; window:invalidate()
 passed("start, switch and stop by clicking, with the result visible")
 
 state.active, state.mode = true, "recovery"
-click(window, job(window, "Recovery") or window.body.rows[1])
+click(window, job(window, "Autopilot") or window.body.rows[1])
 state.active, state.mode, state.phase = false, nil, "idle"
 window:show("now"); window:invalidate()
 click(window, job(window, "Reach a moodle tier"))
@@ -390,8 +390,8 @@ state.alerts = {{text="Very hungry, and there is nothing to eat within reach."}}
 window:invalidate(true); assert(text(window):find("nothing to eat within reach", 1, true))
 state.alerts, state.active, state.mode, state.phase = nil, false, nil, "idle"
 window:invalidate(true)
-assert(not setting(window, "Helping while you play"), "Nothing about being away while no Recovery runs")
-passed("Recovery says who it thinks is there, how long supplies last, and what would go wrong first")
+assert(not setting(window, "Helping while you play"), "Nothing about being away while no Autopilot runs")
+passed("Autopilot says who it thinks is there, how long supplies last, and what would go wrong first")
 
 -- Other tabs -------------------------------------------------------------------
 window:show("supplies")
@@ -404,11 +404,11 @@ assert(prepares == before, "Tabs that do not show supplies never scan for them")
 window:show("now"); local base = prepares
 for _ = 1, 8 do now = now + 500; window:update() end
 assert(prepares - base <= 1, "The idle view does not rescan twice a second: " .. (prepares - base))
-decisions = {{clock="08:41", code="drinking", label="Drinking", message="Using Water Bottle."}, {clock="08:40", code="stopped", label="AutoMindful stopped"}}
+decisions = {{clock="08:41", code="drinking", label="Drinking", message="Using Water Bottle."}, {clock="08:40", code="stopped", label="Second Nature stopped"}}
 window:show("log")
 assert(rows(window, "entry")[1].clock == "08:41" and rows(window, "entry")[1].detail == "Using Water Bottle.")
 click(window, button(window, "Copy report"))
-assert(Clipboard.text:find("AutoMindful report", 1, true) and Clipboard.text:find("08:41 Drinking", 1, true))
+assert(Clipboard.text:find("Second Nature report", 1, true) and Clipboard.text:find("08:41 Drinking", 1, true))
 passed("supplies, log and report show live facts and scan only when looked at")
 
 window:show("supplies")
@@ -580,12 +580,12 @@ local here, far = at(10, 11), at(40, 40)
 local context = worldMenu({far})
 assert(names(context) == "Wellness", "Idle adds nothing at the top level: " .. names(context))
 local wellness = context:getSubMenu(context.options[1].subOption)
-assert(names(wellness) == "Yoga|AutoMindful", names(wellness))
+assert(names(wellness) == "Yoga|Second Nature", names(wellness))
 local native = wellness.options[1]
 assert(native.onSelect == nativeYoga.onAction and native.param1 == nativeYoga and native.toolTip == "native tip" and not native.subOption,
     "Lifestyle's own action is untouched and still one click")
 local ours = wellness:getSubMenu(wellness.options[2].subOption)
-assert(names(ours) == "Yoga|Meditation|Yoga and Meditation|Reach a moodle tier|Recovery|Show window", names(ours))
+assert(names(ours) == "Yoga|Meditation|Yoga and Meditation|Reach a moodle tier|Autopilot|Show window", names(ours))
 assert(named(ours, "Yoga").toolTip.description == "Level 5, 40 of 100 XP" and not named(ours, "Yoga").notAvailable)
 refuse.meditation = "Not while zombies are nearby."
 context = worldMenu({far}); wellness = context:getSubMenu(context.options[1].subOption); ours = wellness:getSubMenu(wellness.options[2].subOption)
@@ -597,12 +597,12 @@ choose(named(ours, "Yoga")); assert(launches[#launches].mode == "yoga")
 passed("idle: one entry beside Lifestyle's own actions, listing what can be done now")
 
 context = worldMenu({far})
-assert(names(context) == "Wellness" and #context:getSubMenu(context.options[1].subOption).options == 1, "An idle Recovery adds no second entry")
+assert(names(context) == "Wellness" and #context:getSubMenu(context.options[1].subOption).options == 1, "An idle Autopilot adds no second entry")
 player.busy = true
 context = worldMenu({far})
 assert(#context.options == 0, "Running, and you clicked somewhere else: nothing in the way")
 context = worldMenu({here})
-assert(names(context) == "AutoMindful: Yoga", names(context))
+assert(names(context) == "Second Nature: Yoga", names(context))
 ours = context:getSubMenu(context.options[1].subOption)
 assert(names(ours) == "Stop|Switch to|Show window", names(ours))
 state.mode = "recovery"
@@ -611,12 +611,12 @@ assert(names(helping) == "Stop|I am going AFK|Switch to|Show window", names(help
 choose(named(helping, "I am going AFK")); assert(awayCalls[#awayCalls] == true)
 state.away, state.mode = nil, "yoga"
 local switch = ours:getSubMenu(named(ours, "Switch to").subOption)
-assert(not named(switch, "Yoga") and named(switch, "Recovery"))
-choose(named(ours, "Stop")); assert(stops[#stops] == "You stopped AutoMindful." and not state.active)
+assert(not named(switch, "Yoga") and named(switch, "Autopilot"))
+choose(named(ours, "Stop")); assert(stops[#stops] == "You stopped Second Nature." and not state.active)
 player.busy = false
 context = worldMenu({at(30, 30, "floors_rugs_01_52")}); assert(names(context) == "Wellness", "Half a mat is no place to train")
 context = worldMenu({at(30, 30, "floors_rugs_01_52", "floors_rugs_01_53")})
-ours = context:getSubMenu(named(context, "AutoMindful").subOption)
+ours = context:getSubMenu(named(context, "Second Nature").subOption)
 assert(names(ours) == "Train Yoga here|Show window", names(ours))
 choose(ours.options[1])
 local walk = ISTimedActionQueue.queued[1]
@@ -625,7 +625,7 @@ local count = #launches; walk.done(); assert(#launches == count + 1 and launches
 state.active, state.mode = false, nil
 context = worldMenu({at(30, 30, "floors_rugs_01_10")}); assert(names(context) == "Wellness", "Other rugs are just rugs")
 Options.set("generalContextMenu", true)
-context = worldMenu({far}); assert(names(context) == "Wellness|AutoMindful")
+context = worldMenu({far}); assert(names(context) == "Wellness|Second Nature")
 Options.set("generalContextMenu", false)
 player.dead = true; context = worldMenu({here}); assert(names(context) == "Wellness" and #context:getSubMenu(context.options[1].subOption).options == 1)
 player.dead = false

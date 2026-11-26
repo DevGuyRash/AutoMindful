@@ -416,7 +416,7 @@ Events.OnMainMenuEnter.Add(function()
     SandboxVars.ZombieConfig.PopulationStartMultiplier = 0
     SandboxVars.ZombieConfig.RespawnHours = 0
     SandboxVars.MultiplierConfig.Meditation = 1000
-    SandboxVars.Yoga.YogaXPMultiplier = 5
+    if SandboxVars.Yoga then SandboxVars.Yoga.YogaXPMultiplier = 5 end
     local start = {x=11778, y=6749, z=0}
     local location = getFileReader("automindful-fixture-location.txt", false)
     if location then
@@ -618,6 +618,131 @@ Events.OnPlayerUpdate.Add(function(player)
                 local dx, dy = line:match("^%S+%s+(%-?%d+)%s+(%-?%d+)")
                 player:setX(player:getX() + tonumber(dx)); player:setY(player:getY() + tonumber(dy))
             elseif command == "save" then save(true)
+            elseif command == "probe" then
+                -- Squares around the survivor: what is on them and how the game treats them.
+                local here = player:getSquare()
+                local r = tonumber(line:match("^%S+%s+(%d+)")) or 6
+                for dy = -r, r do for dx = -r, r do
+                    local sq = getCell():getGridSquare(here:getX()+dx, here:getY()+dy, here:getZ())
+                    if sq then
+                        local names = {}
+                        local objects = sq:getObjects()
+                        for i = 0, objects:size()-1 do
+                            local o = objects:get(i)
+                            local sprite = o:getSprite() and o:getSprite():getName()
+                            if sprite and not sprite:find("^floors_") and not sprite:find("^blends") then names[#names+1] = sprite end
+                        end
+                        if #names > 0 or sq:isSolid() or sq:isSolidTrans() then
+                            print(string.format("[AutoMindfulFixture] SQ %d,%d stand=%s free=%s solid=%s trans=%s reach=%s room=%s %s", sq:getX(), sq:getY(),
+                                tostring(sq:canStand()), tostring(sq:isFree(false)), tostring(sq:isSolid()), tostring(sq:isSolidTrans()),
+                                tostring(here:canReachTo(sq)), tostring(sq:getRoom() and sq:getRoom():getName()), table.concat(names, ",")))
+                        end
+                    end
+                end end
+            elseif command == "place" then
+                local dx, dy, sprite = line:match("^%S+%s+(%-?%d+)%s+(%-?%d+)%s+(%S+)")
+                local here = player:getSquare()
+                local sq = getCell():getGridSquare(here:getX()+tonumber(dx), here:getY()+tonumber(dy), here:getZ())
+                local object = IsoObject.new(getCell(), sq, sprite)
+                sq:AddTileObject(object)
+                if object.createContainersFromSpriteProperties then object:createContainersFromSpriteProperties() end
+                print("[AutoMindfulFixture] PLACED " .. sprite .. " at " .. sq:getX() .. "," .. sq:getY() .. " container=" .. tostring(object:getContainer() ~= nil))
+            elseif command == "crate" then
+                -- A crate as the carpentry menu builds it: thumpable, a container, blocking its whole tile.
+                local x, y = line:match("^%S+%s+(%d+)%s+(%d+)")
+                local sq = getCell():getGridSquare(tonumber(x), tonumber(y), player:getZ())
+                local crate = IsoThumpable.new(getCell(), sq, "carpentry_01_16", false, {})
+                crate:setIsContainer(true)
+                crate:setBlockAllTheSquare(true)
+                crate:setIsThumpable(true)
+                crate:setMaxHealth(300); crate:setHealth(300)
+                sq:AddSpecialObject(crate)
+                print("[AutoMindfulFixture] CRATE at " .. x .. "," .. y .. " container=" .. tostring(crate:getContainer() ~= nil))
+            elseif command == "window" then
+                local x, y, sprite, north = line:match("^%S+%s+(%d+)%s+(%d+)%s+(%S+)%s*(%S*)")
+                local sq = getCell():getGridSquare(tonumber(x), tonumber(y), player:getZ())
+                local window = IsoWindow.new(getCell(), sq, getSprite(sprite), north == "north")
+                sq:AddSpecialObject(window)
+                print("[AutoMindfulFixture] WINDOW " .. sprite .. " at " .. x .. "," .. y)
+            elseif command == "remove" then
+                local x, y = line:match("^%S+%s+(%d+)%s+(%d+)")
+                local sq = getCell():getGridSquare(tonumber(x), tonumber(y), player:getZ())
+                local objects, removed = sq:getObjects(), {}
+                for i = objects:size()-1, 0, -1 do
+                    local o = objects:get(i)
+                    local name = o:getSprite() and o:getSprite():getName() or ""
+                    if not name:find("^floors_") and not name:find("^walls_") and not name:find("^fixtures_windows") and not instanceof(o, "IsoWindow") then
+                        removed[#removed+1] = name
+                        sq:transmitRemoveItemFromSquare(o)
+                    end
+                end
+                print("[AutoMindfulFixture] REMOVED " .. table.concat(removed, ","))
+            elseif command == "fill" then
+                local x, y, kind, n = line:match("^%S+%s+(%d+)%s+(%d+)%s+(%S+)%s*(%d*)")
+                local sq = getCell():getGridSquare(tonumber(x), tonumber(y), player:getZ())
+                local filled = 0
+                local objects = sq and sq:getObjects()
+                for i = objects and objects:size()-1 or -1, 0, -1 do
+                    local container = objects:get(i):getContainer()
+                    if container and filled == 0 then
+                        for _ = 1, tonumber(n) or 1 do container:AddItem(kind) end
+                        container:setExplored(true)
+                        filled = tonumber(n) or 1
+                    end
+                end
+                print("[AutoMindfulFixture] FILLED " .. tostring(filled) .. " " .. kind .. " at " .. x .. "," .. y)
+            elseif command == "nofood" then
+                -- Takes every food item out of the containers around the survivor.
+                local here, r, removed = player:getSquare(), tonumber(line:match("^%S+%s+(%d+)")) or 10, 0
+                for dy = -r, r do for dx = -r, r do
+                    local sq = getCell():getGridSquare(here:getX()+dx, here:getY()+dy, here:getZ())
+                    local worlds = sq and sq:getWorldObjects()
+                    for i = worlds and worlds:size()-1 or -1, 0, -1 do
+                        local world = worlds:get(i)
+                        if instanceof(world:getItem(), "Food") then world:removeFromWorld(); world:removeFromSquare(); removed = removed + 1 end
+                    end
+                    local objects = sq and sq:getObjects()
+                    for i = 0, objects and objects:size()-1 or -1 do
+                        local object = objects:get(i)
+                        for c = 0, (object.getContainerCount and object:getContainerCount() or 0) - 1 do
+                            local function strip(container)
+                                local items = container:getItems()
+                                for k = items:size()-1, 0, -1 do
+                                    local it = items:get(k)
+                                    if instanceof(it, "InventoryContainer") then strip(it:getInventory()) end
+                                    local fluid = it.getFluidContainer and it:getFluidContainer()
+                                    if instanceof(it, "Food") or (fluid and not fluid:isEmpty()) then container:Remove(it); removed = removed + 1 end
+                                end
+                            end
+                            strip(object:getContainerByIndex(c))
+                        end
+                    end
+                end end
+                print("[AutoMindfulFixture] NOFOOD removed=" .. removed)
+            elseif command == "stove" then
+                -- What every stove nearby is doing, and what is cooking in it.
+                local here = player:getSquare()
+                for dy = -8, 8 do for dx = -8, 8 do
+                    local sq = getCell():getGridSquare(here:getX()+dx, here:getY()+dy, here:getZ())
+                    local objects = sq and sq:getObjects()
+                    for i = 0, objects and objects:size()-1 or -1 do
+                        local o = objects:get(i)
+                        if instanceof(o, "IsoStove") then
+                            local c, dishes = o:getContainer(), {}
+                            for k = 0, c:getItems():size()-1 do
+                                local it = c:getItems():get(k)
+                                if instanceof(it, "Food") then
+                                    dishes[#dishes+1] = string.format("%s cook=%.1f/%.1f burn=%.1f cooked=%s burnt=%s", it:getFullType(), it:getCookingTime(), it:getMinutesToCook(), it:getMinutesToBurn(), tostring(it:isCooked()), tostring(it:isBurnt()))
+                                end
+                            end
+                            print(string.format("[AutoMindfulFixture] STOVE %d,%d type=%s on=%s powered=%s temp=%.1f max=%.1f %s", sq:getX(), sq:getY(), c:getType(), tostring(o:Activated()), tostring(c:isPowered()), (c.getTemprature and c:getTemprature() or -1), o:getMaxTemperature(), table.concat(dishes, "; ")))
+                        end
+                    end
+                end end
+            elseif command == "perkxp" then
+                local name = line:match("^%S+%s+(%S+)") or "Cooking"
+                local perk = Perks[name]
+                print("[AutoMindfulFixture] PERKXP " .. name .. " level=" .. tostring(player:getPerkLevel(perk)) .. " xp=" .. tostring(player:getXp():getXP(perk)))
             elseif command == "zen" then
                 local moodles = player:getModData().LSMoodles
                 local value = tonumber(line:match("^%S+%s+([%d%.]+)"))

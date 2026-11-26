@@ -35,7 +35,7 @@ for round = 1, 3 do
         local p = getSpecificPlayer(index)
         p.dead = false
         local root, wellness = build(index)
-        local entry = wellness:getOptionFromName("AutoMindful")
+        local entry = wellness:getOptionFromName("Second Nature")
         assert(#wellness.options == 2 and entry and entry.subOption, "One entry, with a submenu, round " .. round)
         local ours = wellness:getSubMenu(entry.subOption)
         assert(ours.player == index and ours:getOptionFromName("Yoga") and ours:getOptionFromName("Show window"))

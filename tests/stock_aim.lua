@@ -311,7 +311,7 @@ test("a genuinely unrelated native handle during a held handoff has no timeout a
     C.stop(p,"test cleanup")
 end)
 for _,input in ipairs({"aim","run","cancel"}) do
-    test("Recovery owns only its drink at a native stop boundary ("..input..")",function()
+    test("Autopilot owns only its drink at a native stop boundary ("..input..")",function()
         local p=player()
         T.add(p.inventory,T.water({thirst=-0.8}))
         p.values.THIRST,p.thirstMoodle,p.values.ENDURANCE=.48,4,.6
@@ -330,14 +330,14 @@ for _,input in ipairs({"aim","run","cancel"}) do
             and not first.starts and not second.starts,"A stock stop erased or started someone else's work")
         p.nativeHead=nil; q:tick(); step(p)
         assert(first.starts==1 and not second.starts and not first.autoMindfulOwner and not first.cancels)
-        assert(C.status(p).active and #p.cards==0,"Only Stop ends Recovery; Escape steps back")
+        assert(C.status(p).active and #p.cards==0,"Only Stop ends Autopilot; Escape steps back")
         finish(p,first); assert(q.queue[1]==second and second.starts==1 and not second.cancels)
         finish(p,second); step(p,5)
         assert(C.status(p).active and #p.cards==0 and q.queue[1]~=own and q.queue[1].Type=="drink")
         C.stop(p,"test cleanup")
     end)
 end
-test("Recovery waits out an unrelated Java-only action with no Lua queue entry",function()
+test("Autopilot waits out an unrelated Java-only action with no Lua queue entry",function()
     local p=player()
     local nativeOnly={}
     p.nativeHead=nativeOnly

@@ -114,7 +114,7 @@ for _,mode in ipairs({"both","recovery"}) do
         meal(p); local food=untilHead(p,"eat"); food:perform(); assert(p.calories>2000); C.stop(p)
     end
 end
-print("PASS critical owned timeout keeps Training and Recovery watching for real food without retry loops")
+print("PASS critical owned timeout keeps Training and Autopilot watching for real food without retry loops")
 
 do
     local p=new(6,.80,true); badge(p,.4); begin(p,"recovery")
@@ -242,7 +242,7 @@ for _,mode in ipairs({"both","meditation","yoga","recovery"}) do
         C.stop(p)
     end
 end
-print("PASS first native hunger/thirst moodle admits native portions during Recovery or training")
+print("PASS first native hunger/thirst moodle admits native portions during Autopilot or training")
 
 -- Missing critical water must never veto a safe meal, and crossing 50 must
 -- not stop an already-owned portion or native drink. The original session
@@ -354,10 +354,10 @@ for _,which in ipairs({"med-only","yoga-only","both-one-med","both-one-yoga","bo
     end
     steps(p,20)
     assert(C.status(p).mode=="recovery" and C.status(p).active and #p.cards==1,
-        which..": switch to ongoing Recovery once the selected skills cap")
+        which..": switch to ongoing Autopilot once the selected skills cap")
     C.stop(p); assert(#p.cards==1)
 end
-print("PASS one or both mid-training caps, endurance recovery, foreign dose, and rank-complete Recovery")
+print("PASS one or both mid-training caps, endurance recovery, foreign dose, and rank-complete Autopilot")
 
 do
     local p=new(5,.75); p.sitting=true

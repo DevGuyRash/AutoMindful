@@ -146,7 +146,7 @@ ISDrinkFluidAction={new=function(_,p,item,portion)
     return {kind="drink",item=item,portion=portion,player=p,character=p,fluidContainer=item.fluid}
 end}
 ISTimedActionQueue={add=function(a) events[#events+1]=a end}
-ISCraftingUI = {ReturnItemsToOriginalContainer = function() error("Native trait-dependent return helper must not own AutoMindful loans") end}
+ISCraftingUI = {ReturnItemsToOriginalContainer = function() error("Native trait-dependent return helper must not own Second Nature loans") end}
 ISEntityUI = {HandcraftStart = function(target, logic, force, queue)
     local action = {player = target, logic = logic, force = force, queue = queue}
     function action:setOnComplete(callback, argument) self.callback, self.argument = callback, argument end

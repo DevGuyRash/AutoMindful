@@ -28,10 +28,11 @@ def profile_options(profile: Path | None) -> dict[str, str]:
 
 
 def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[Path], profile: Path | None = None) -> int:
-    game, lifestyle, evidence = game.resolve(), lifestyle.resolve(), evidence.resolve()
+    game, evidence = game.resolve(), evidence.resolve()
+    lifestyle = lifestyle.resolve() if lifestyle else None
     if not (game / "projectzomboid.jar").is_file():
         raise ValueError("--game must contain projectzomboid.jar")
-    if not (lifestyle / "42/mod.info").is_file():
+    if lifestyle and not (lifestyle / "42/mod.info").is_file():
         raise ValueError("--lifestyle must point to the installed Lifestyle mod root")
     if resume:
         state = json.loads((evidence / "session.json").read_text())
@@ -60,9 +61,9 @@ def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[
     lifestyle_link = cache / "mods/lifestyle"
     if lifestyle_link.is_symlink():
         lifestyle_link.unlink()
-    if not lifestyle_link.exists():
+    if lifestyle and not lifestyle_link.exists():
         shutil.copytree(lifestyle, lifestyle_link, copy_function=os.link)
-    mod_ids = ["LifestyleHobbies", "AutoMindful"]
+    mod_ids = (["LifestyleHobbies"] if lifestyle else []) + ["AutoMindful"]
     for mod in extra:
         target = cache / "mods" / mod.name
         if target.is_symlink():
@@ -131,7 +132,7 @@ def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", required=True, type=Path)
-    parser.add_argument("--lifestyle", required=True, type=Path)
+    parser.add_argument("--lifestyle", type=Path, help="Installed Lifestyle mod root; omit to play without Lifestyle")
     parser.add_argument("--evidence", required=True, type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--profile-options", type=Path,

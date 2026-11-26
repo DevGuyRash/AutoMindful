@@ -44,7 +44,7 @@ do
     local action=head(p)
     SandboxVars.Text.DividerMeditationNew=false
     coast(p,2)
-    assert(C.status(p).active and action.stopped,"Toggling the module stops its owned optional work without stopping Recovery")
+    assert(C.status(p).active and action.stopped,"Toggling the module stops its owned optional work without stopping Autopilot")
     C.stop(p)
 end
 print("PASS Wellness module opt-out, and unverified version safely keeps native basics without numeric tiers")

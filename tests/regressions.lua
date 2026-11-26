@@ -211,7 +211,7 @@ do
     function p:reportEvent() end
     assert(C.start(p,"recovery",false))
     step(p,160)
-    assert(C.status(p).active,"One awkward tile does not end Recovery")
+    assert(C.status(p).active,"One awkward tile does not end Autopilot")
     C.stop(p)
 end
 -- A zombie glimpsed through a window ended training that takes days.

@@ -131,7 +131,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         record = workshop.checked_stage(output)
         self.assertEqual(record["version"], build.version())
-        self.assertEqual(record["changeNote"], f'AutoMindful {self.tag}\n\nFix "quoted" paths\\folders.\nResume training.')
+        self.assertEqual(record["changeNote"], f'Second Nature {self.tag}\n\nFix "quoted" paths\\folders.\nResume training.')
         with zipfile.ZipFile(self.archive) as package:
             for name in package.namelist():
                 self.assertEqual((output / name).read_bytes(), package.read(name))

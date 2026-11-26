@@ -7,6 +7,7 @@ local Options = require "AutoMindful/Options"
 local Snap = require "AutoMindful/Snapshot"
 local Storage = require "AutoMindful/Storage"
 local Needs = require "AutoMindful/SurvivalNeeds"
+local Diet = require "AutoMindful/Diet"
 local Alerts = require "AutoMindful/Alerts"
 local HUD = require "AutoMindful/CompletionHUD"
 
@@ -142,12 +143,13 @@ end
 
 -- What to cook: what is already carried first, then whatever spoils soonest,
 -- and enough of it to matter.
-function Kitchen.choose(food)
+function Kitchen.choose(food, player)
     local best, score
     for _, entry in ipairs(food) do
         local item = entry.item
         local hoursLeft = math.max(0, item:getOffAge() - item:getAge()) * 24
-        local value = relief(item) * 100 - math.min(hoursLeft, 240) / 10 + (entry.carried and 20 or 0)
+        -- The diet goal scales the relief, so it never beats a much more filling dish.
+        local value = Diet.adjust(player, relief(item) * 100, item) - math.min(hoursLeft, 240) / 10 + (entry.carried and 20 or 0)
         if not score or value > score then best, score = entry, value end
     end
     return best
@@ -410,7 +412,7 @@ function Kitchen.meal(player, state, now)
     state.kitchenNext = now + Kitchen.policy.lookMs
     if P.available(player, state, "food") then return false end
     local found = Kitchen.scan(player, state.rejected, now)
-    local entry, stove = Kitchen.choose(found.food), found.stoves[1]
+    local entry, stove = Kitchen.choose(found.food, player), found.stoves[1]
     Log.event(player, "kitchen.look", "raw", #found.food, "stoves", #found.stoves, "chosen", entry and Snap.item(entry.item))
     if not entry then
         state.kitchenNotice = nil

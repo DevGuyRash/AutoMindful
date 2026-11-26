@@ -16,6 +16,7 @@ Second Nature (formerly AutoMindful) looks after your survivor: food, water, rea
 [*][b]Water on the survivor.[/b] Keeps carried bottles full; the game drinks from them by itself.
 [*][b]Sleeps in a bed[/b] in the same building and walks back.
 [*][b]Never quietly gives up.[/b] Only Stop or death ends it. Problems back off and retry, and it carries on after you load in again.
+[*][b]Diet goal.[/b] Auto keeps a healthy weight; or prefer high protein, more or fewer calories, or low carb when choices are close.
 [*][b]Cooks raw food.[/b] When only raw food is left, it cooks it on a powered stove nearby, takes each dish out once cooked (never burnt), turns the stove off and eats. Raw food that would spoil soon cooks in the same batch, and leftovers go into a powered fridge. Stoves in use by someone else are left alone.
 [*][b]Last resort:[/b] plain unsafe water after a minute of Dying of Thirst with nothing clean left. It never eats rotten or poisonous food.
 [/list]

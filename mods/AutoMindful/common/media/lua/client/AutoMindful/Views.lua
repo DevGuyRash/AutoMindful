@@ -323,6 +323,8 @@ function Views.settings(window)
     end
     toggle("practiceCare", "Practise for relief", "Use Yoga or Meditation when it is the best way to ease a need.")
     head(rows, "Autopilot")
+    rows[#rows + 1] = {kind="setting", label="Diet goal", value=Options.dietChoices()[Options.dietIndex()].label, menu=true,
+        tip=Options.dietChoices()[Options.dietIndex()].help, onClick=function() window:openDietMenu() end}
     rows[#rows + 1] = {kind="setting", label="Away after", value=Options.awayMinutes[Options.awayIndex()] .. " min", menu=true,
         tip="Without any input. While you are away, Autopilot does everything it can.", onClick=function() window:openAwayMenu() end}
     toggle("recoveryFirstAid", "Bandage wounds", "Uses the best dressing carried or within reach. Also during training.")

@@ -2,6 +2,7 @@ require "ISUI/ISInventoryPaneContextMenu"
 require "TimedActions/ISInventoryTransferUtil"
 require "TimedActions/ISDropWorldItemAction"
 local Consumables = require "AutoMindful/Consumables"
+local Diet = require "AutoMindful/Diet"
 local WaterSources = require "AutoMindful/WaterSources"
 local Fluids = require "AutoMindful/Fluids"
 local Storage = require "AutoMindful/Storage"
@@ -376,7 +377,13 @@ local function better(candidate, best, kind, critical)
 end
 
 local function consider(player, candidate, best, kind, critical)
-    candidate.plan = candidate.plan or Consumables.plan(player, candidate.description, kind)
+    if not candidate.plan then
+        candidate.plan = Consumables.plan(player, candidate.description, kind)
+        -- The diet goal decides between foods that would do about as well.
+        if candidate.plan and kind == "food" and candidate.item then
+            candidate.plan.utility = Diet.adjust(player, candidate.plan.utility, candidate.item)
+        end
+    end
     if not candidate.plan then return best end
     local reserve = candidate.transfer and candidate.transfer.source.description or candidate.description
     candidate.reserve = reserve.remainingLiters or reserve.thirstRelief * 2

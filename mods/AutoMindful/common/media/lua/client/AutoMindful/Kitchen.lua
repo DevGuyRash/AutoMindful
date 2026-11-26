@@ -13,6 +13,7 @@ local Diet = require "AutoMindful/Diet"
 local Progress = require "AutoMindful/Progress"
 local Soup = require "AutoMindful/Soup"
 local Fetch = require "AutoMindful/Fetch"
+local Fire = require "AutoMindful/Fire"
 local Alerts = require "AutoMindful/Alerts"
 
 local Kitchen = {policy = {radius = 10, lookMs = 30000, retryMs = 600000, attempts = 3, burnShare = 0.8, againMs = 120000,
@@ -31,6 +32,7 @@ end
 function Kitchen.bind(parts)
     P = parts
     Soup.bind({write = function(player, entry) Kitchen.write(player, entry) end, ledger = Kitchen.ledger, heatKind = Kitchen.heatKind, accepts = Kitchen.accepts,
+        fueled = function(object) return Kitchen.isFueled(object) end,
         place = function(...) return Kitchen.place(...) end}, parts)
 end
 
@@ -60,6 +62,7 @@ local function relief(item) return -item:getHungerChange() end
 -- What can cook. Each kind says whether it is on, whether it can heat (power,
 -- propane), what it takes, and which of the game's actions switch it. Coffee
 -- machines and fryers are IsoStoves too, and are left alone.
+local fireName = function(object) return instanceof(object, "IsoBarbecue") and "grill" or "fireplace" end
 local heats = {
     {kind = "stove", name = "stove",
         match = function(object) return instanceof(object, "IsoStove") and object:getContainer() ~= nil
@@ -105,6 +108,20 @@ local heats = {
         on = function(object) return object:isLit() and object:hasFuel() end,
         ready = function(object) return object:hasFuel() end,
         action = function(player, object) return ISBBQToggle:new(player, object) end},
+    -- Wood fires: fuel and a light, from what is nearby. One someone else lit is
+    -- borrowed and left burning.
+    {kind = "fire", name = fireName, shared = true, fueled = true,
+        match = function(object) return Fire.kind(object) == "fire" end,
+        on = function(object) return Fire.lit(object) end,
+        ready = function() return true end,
+        action = function(player, object) return Fire.stop(player, object) end,
+        start = function(player, object, dish, minutes, entry, lit) return Fire.start(player, object, entry and entry.fire or {}, dish, lit) end},
+    {kind = "campfire", name = "campfire", shared = true, fueled = true,
+        match = function(object) return Fire.kind(object) == "campfire" end,
+        on = function(object) return Fire.lit(object) end,
+        ready = function() return true end,
+        action = function(player, object) return Fire.stop(player, object) end,
+        start = function(player, object, dish, minutes, entry, lit) return Fire.start(player, object, entry and entry.fire or {}, dish, lit) end},
 }
 
 -- A one-tick action that runs a check and a function in the queue, after what
@@ -157,11 +174,16 @@ function Kitchen.heatFor(stoves, item)
     end
     return nil
 end
+function Kitchen.isFueled(object) local heat = heatOf(object); return heat ~= nil and heat.fueled == true end
 function Kitchen.heatKind(object) local heat = heatOf(object); return heat and heat.kind or nil end
 -- Gone or replaced since it was found: neither on nor able to heat.
 local function isOn(object) local heat = heatOf(object); return heat ~= nil and heat.on(object) == true end
 local function canHeat(object) local heat = heatOf(object); return heat ~= nil and heat.ready(object) == true end
-Kitchen.heatName = function(object) local heat = heatOf(object); return heat and heat.name or "stove" end
+Kitchen.heatName = function(object)
+    local heat = heatOf(object)
+    local name = heat and heat.name or "stove"
+    return type(name) == "function" and name(object) or name
+end
 
 local function stoveKey(object) return Grid.key(object:getSquare()) end
 Kitchen.key = stoveKey
@@ -179,12 +201,17 @@ end
 -- containers around them, and powered fridges. fridgesOnly skips the food.
 function Kitchen.scan(player, rejected, now, fridgesOnly)
     -- heats: every stove or grill seen, on or off, busy or not.
-    local result = {stoves = {}, food = {}, fridges = {}, pots = {}, taps = {}, ready = 0, heats = 0}
+    local result = {stoves = {}, food = {}, fridges = {}, pots = {}, taps = {}, ready = 0, heats = 0,
+        fuel = {}, tinder = {}, starters = {}}
     if not player:getSquare() then return result end
     local seen, take = {}, nil
     -- One item, wherever it is: in a container, a bag, or on the floor.
-    local function classify(item, container, world, carried, floor, holder)
-        if Kitchen.cookable(item) and not (rejected and rejected[item:getID()] and now < rejected[item:getID()]) then
+    local function classify(item, container, world, carried, floor, holder, woodOnly)
+        if woodOnly then
+            -- From the yard only wood: a woodpile is often outside.
+            if Fire.isFuel(item) then result.fuel[#result.fuel + 1] = Fetch.entry(item, container, world, carried, holder) end
+            return
+        elseif Kitchen.cookable(item) and not (rejected and rejected[item:getID()] and now < rejected[item:getID()]) then
             result.food[#result.food + 1] = Fetch.entry(item, container, world, carried, holder)
         elseif not floor and instanceof(item, "Food") and Fluids.safeFood(item) and item:getHungerChange() <= -0.05
                 and not item:getOpeningRecipe() and not Grid.favorite(item) then
@@ -195,6 +222,10 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
         elseif carried and instanceof(item, "InventoryContainer") then
             take(item:getInventory(), true)
         end
+        -- What a fire needs: wood, tinder and a lighter or matches.
+        if Fire.isFuel(item) then result.fuel[#result.fuel + 1] = Fetch.entry(item, container, world, carried, holder) end
+        if Fire.isTinder(item) then result.tinder[#result.tinder + 1] = Fetch.entry(item, container, world, carried, holder) end
+        if Fire.isStarter(item) then result.starters[#result.starters + 1] = Fetch.entry(item, container, world, carried, holder) end
     end
     take = function(container, carried)
         if fridgesOnly or not container or seen[container] then return end
@@ -208,11 +239,12 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
         local distance = dx * dx + dy * dy
         -- From indoors the yard is only for a grill: food, fridges and taps stay inside.
         local yard = home ~= nil and square:getBuilding() == nil
-        -- Food lying on the floor, or in bags left there, counts like any cupboard.
-        if not yard and not fridgesOnly then
-            -- Floor food is fetched for cooking, but is not "ready" food: eating never reaches it.
+        -- Food lying on the floor, or in bags left there, counts like any cupboard;
+        -- from the yard, only firewood and the like. Floor food is fetched for
+        -- cooking, but is not "ready" food: eating never reaches it.
+        if not fridgesOnly then
             Fetch.floor(square, function(item, container, world, holder)
-                classify(item, container, world, false, true, holder)
+                classify(item, container, world, false, true, holder, yard)
             end)
         end
         local objects = square:getObjects()
@@ -228,10 +260,11 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             elseif Kitchen.isStove(object) then
                 local container = object:getContainer()
                 local waiting = rejected and rejected["stove:" .. stoveKey(object)]
-                if not fridgesOnly and canHeat(object) and not isOn(object) and free(container)
+                local heat = heatOf(object)
+                if not fridgesOnly and canHeat(object) and (heat.shared or not isOn(object)) and free(container)
                         and not (waiting and now < waiting) then
                     result.stoves[#result.stoves + 1] = {object = object, square = square, distance = distance,
-                        rank = ({stove = 0, microwave = 1, grill = 2})[heatOf(object).kind] or 3}
+                        rank = ({stove = 0, microwave = 1, grill = 2, fire = 3, campfire = 4})[heat.kind] or 5}
                 end
             elseif object.getContainerCount then
                 for c = 0, object:getContainerCount() - 1 do
@@ -246,6 +279,14 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             end
         end
     end, true)
+    -- A fire is only a heat source with the fuel and a light to go with it.
+    local usable = {}
+    for _, stove in ipairs(result.stoves) do
+        if not heatOf(stove.object).fueled or Fire.lit(stove.object) or Fire.plan(stove.object, 60, result) then
+            usable[#usable + 1] = stove
+        end
+    end
+    result.stoves = usable
     -- A stove indoors before a grill outside, then the nearest.
     table.sort(result.stoves, function(a, b)
         if a.rank ~= b.rank then return a.rank < b.rank end
@@ -299,6 +340,8 @@ end
 function Kitchen.ledger(player) return player:getModData().AutoMindfulKitchen end
 
 local function write(player, entry) Saved.set(player, "AutoMindfulKitchen", entry) end
+-- Where the things being fetched were found; in memory only, like the soup's.
+local sources = {}
 Kitchen.write = write
 
 local function stoveAt(entry)
@@ -342,13 +385,13 @@ local function others(container, entry)
     return false
 end
 
-local function adjacent(player, square) return Grid.adjacent(player:getSquare(), square) end
+local function adjacent(player, square) return Grid.reachable(player:getSquare(), square) end
 
 -- A toggle that only ever moves the stove the way it was meant to: someone
 -- else may have switched it in the meantime.
-local function toggle(player, stove, on, dish, minutes)
+local function toggle(player, stove, on, dish, minutes, entry, lit)
     local heat = heatOf(stove)
-    if on and heat.start then return heat.start(player, stove, dish, minutes or 30) end
+    if on and heat.start then return heat.start(player, stove, dish, minutes or 30, entry, lit) end
     local action = heat.action(player, stove)
     local valid = action.isValid
     function action:isValid()
@@ -399,7 +442,7 @@ local function finish(player, state, entry, stove, take, all, message)
     write(player, entry)
     return P.ownBatch(player, state, "kitchen", message, function()
         if not adjacent(player, stove:getSquare()) and not luautils.walkAdj(player, stove:getSquare(), true) then return end
-        if all and isOn(stove) then toggle(player, stove, false) end
+        if all and entry.lit and isOn(stove) then toggle(player, stove, false) end
         for _, dish in ipairs(take) do transfer(player, dish, stove:getContainer(), player:getInventory()) end
     end)
 end
@@ -424,9 +467,7 @@ function Kitchen.duty(player, state, now, walk)
     watched[player] = now
     if entry.stage == "fetching" then
         if state and state.pending then return false end
-        Kitchen.settle(player, state, now, true)
-        entry = Kitchen.ledger(player)
-        if not entry then return false end
+        return Kitchen.fetchStep(player, state, now, entry)
     end
     if entry.stage == "ready" then return Kitchen.place(player, state, now, entry, stove) end
     if Soup.handles(entry.stage) then
@@ -477,7 +518,7 @@ function Kitchen.duty(player, state, now, walk)
     if all or #ready > 0 or blocked then
         if blocked then
             -- Beside it, at least the heat goes off.
-            if on and adjacent(player, stove:getSquare()) and walk ~= false then
+            if on and entry.lit and adjacent(player, stove:getSquare()) and walk ~= false then
                 P.ownBatch(player, state, "kitchen", "Turning the " .. Kitchen.heatName(stove) .. " off.", function() toggle(player, stove, false) end)
             end
             state.kitchenNotice = "The " .. Kitchen.heatName(stove) .. " is still on. Second Nature could not reach it."
@@ -647,24 +688,102 @@ function Kitchen.cook(player, state, now, entry, stove, pool, reason, found)
         if not chosen.carried then fetched[tostring(chosen.item:getID())] = true end
     end
     local square = object:getSquare()
-    local record = {x = square:getX(), y = square:getY(), z = square:getZ(), heat = heatOf(object).kind, item = item:getID(), items = list,
+    local heat = heatOf(object)
+    local record = {x = square:getX(), y = square:getY(), z = square:getZ(), heat = heat.kind, item = item:getID(), items = list,
         name = item:getDisplayName() .. (#list > 1 and (" and " .. (#list - 1) .. " more") or ""), fetched = fetched,
-        tries = 0, stage = entry.carried and "ready" or "fetching", reason = reason}
+        tries = 0, stage = "fetching", reason = reason}
+    -- Everything to bring: food from the cupboards and, for a fire, wood and a light.
+    local fetch, seen = {}, {}
+    -- Carried in a bag still needs taking out: the game's actions want it in hand.
+    local function want(found)
+        if found and (not found.carried or found.item:getContainer() ~= inventory) and not seen[found.item:getID()] then
+            seen[found.item:getID()] = true
+            fetch[#fetch + 1] = found
+        end
+    end
+    for _, chosen in ipairs(batch) do want(chosen) end
+    if heat.fueled then
+        record.borrowed = Fire.lit(object) or nil
+        local minutes = 0
+        for _, chosen in ipairs(batch) do minutes = math.max(minutes, chosen.item:getMinutesToCook()) end
+        local plan = Fire.plan(object, minutes, found or {})
+        if not plan then
+            skip(state)["stove:" .. stoveKey(object)] = now + Kitchen.policy.lookMs
+            return false
+        end
+        record.fire = {fuel = {}, tinder = plan.tinder and plan.tinder.item:getID(), starter = plan.starter and plan.starter.item:getID()}
+        for _, fuel in ipairs(plan.fuel) do
+            record.fire.fuel[#record.fire.fuel + 1] = fuel.item:getID()
+            want(fuel)
+        end
+        want(plan.tinder); want(plan.starter)
+    end
+    local load = 0
+    for _, found in ipairs(fetch) do load = load + found.item:getActualWeight() end
+    if load > 0 and not inventory:hasRoomFor(player, load) then
+        skip(state)[item:getID()] = now + Kitchen.policy.retryMs
+        return false
+    end
+    record.need = {}
+    for _, found in ipairs(fetch) do record.need[#record.need + 1] = found.item:getID() end
     write(player, record)
-    Log.event(player, "kitchen.start", "reason", reason, "dish", Snap.item(item), "count", #list, "stove", stoveKey(object), "carried", entry.carried,
-        "temperature", object.getMaxTemperature and object:getMaxTemperature() or nil)
-    if entry.carried then return Kitchen.place(player, state, now, record, object) end
-    -- First the fridge, then, from wherever that leaves the survivor, the stove.
-    local queued = P.ownBatch(player, state, "kitchen", "Getting " .. record.name .. " to cook.", function()
-        local from = Fetch.square(entry)
-        if from and not adjacent(player, from) and not luautils.walkAdj(player, from, true) then return end
-        for _, chosen in ipairs(batch) do
-            if not chosen.carried then Fetch.queue(player, chosen) end
+    Log.event(player, "kitchen.start", "reason", reason, "dish", Snap.item(item), "count", #list, "stove", stoveKey(object),
+        "heat", heat.kind, "fetch", #fetch, "borrowed", record.borrowed)
+    if #fetch == 0 then
+        record.stage = "ready"
+        write(player, record)
+        return Kitchen.place(player, state, now, record, object)
+    end
+    sources[player] = fetch
+    return Kitchen.fetchStep(player, state, now, record)
+end
+
+-- One place per batch: what is still to fetch, from wherever the survivor
+-- stands now. Then to the heat with it.
+function Kitchen.fetchStep(player, state, now, entry)
+    local inventory = player:getInventory()
+    local list = sources[player]
+    if not list then
+        -- After a reload: go on if everything is here, otherwise give it up.
+        for _, id in ipairs(entry.need or ids(entry)) do
+            if not inventory:getItemById(id) then write(player, nil); return false end
+        end
+        entry.stage = "ready"
+        write(player, entry)
+        return false
+    end
+    local missing = {}
+    for _, found in ipairs(list) do
+        if found.item:getContainer() ~= inventory then
+            if not Fetch.present(found) then
+                -- Someone took it: this plan is over.
+                Log.event(player, "kitchen.lost", "item", Snap.item(found.item))
+                skip(state)[found.item:getID()] = now + Kitchen.policy.retryMs
+                sources[player] = nil
+                write(player, nil)
+                return false
+            end
+            missing[#missing + 1] = found
+        end
+    end
+    if #missing == 0 then
+        sources[player] = nil
+        entry.stage = "ready"
+        write(player, entry)
+        return Kitchen.place(player, state, now, entry, stoveAt(entry))
+    end
+    local first = missing[1]
+    local queued = P.ownBatch(player, state, "kitchen", "Getting what it takes to cook " .. entry.name .. ".", function()
+        local square = Fetch.square(first)
+        if square and not adjacent(player, square) and not luautils.walkAdj(player, square, true) then return end
+        for _, found in ipairs(missing) do
+            if found.from == first.from then Fetch.queue(player, found) end
         end
     end)
     if not queued then
+        sources[player] = nil
         write(player, nil)
-        skip(state)[item:getID()] = now + Kitchen.policy.retryMs
+        skip(state)[entry.item] = now + Kitchen.policy.retryMs
         state.pending = nil
     end
     return queued
@@ -683,7 +802,8 @@ function Kitchen.place(player, state, now, entry, object)
     item = item and Kitchen.cookable(item) and item or carried[1]
     if item then entry.item = item:getID() end
     local container = object and object:getContainer()
-    if not item or not container or isOn(object) or not canHeat(object)
+    local heat = heatOf(object)
+    if not item or not container or not heat or (isOn(object) and not heat.shared) or not canHeat(object)
             or others(container, entry) then
         write(player, nil)
         if item then skip(state)[item:getID()] = now + Kitchen.policy.retryMs end
@@ -701,13 +821,17 @@ function Kitchen.place(player, state, now, entry, object)
             local valid = into.isValid
             function into:isValid()
                 -- Someone else may have started cooking here in the meantime.
-                return (not valid or valid(self)) and not isOn(object) and canHeat(object) and not others(container, entry)
+                return (not valid or valid(self)) and (heat.shared or not isOn(object)) and canHeat(object) and not others(container, entry)
             end
         end
         -- As long as the slowest dish still needs.
         local minutes = 0
         for _, dish in ipairs(carried) do minutes = math.max(minutes, dish:getMinutesToCook() - dish:getCookingTime()) end
-        toggle(player, object, true, item, minutes)
+        -- A fire is ours only once our own light caught.
+        toggle(player, object, true, item, minutes, entry, function()
+            local current = Kitchen.ledger(player)
+            if current then current.litHere = true; write(player, current) end
+        end)
     end)
     if not queued then
         write(player, nil)
@@ -726,10 +850,14 @@ function Kitchen.settle(player, state, now, cut)
     local stove = stoveAt(entry)
     local dish = dishIn(stove, entry)
     if entry.stage == "fetching" then
-        local fetched = false
-        for _, id in ipairs(ids(entry)) do fetched = fetched or player:getInventory():getItemById(id) ~= nil end
-        if fetched then
-            entry.stage = "ready"
+        -- Progress is anything more in hand than before; the next step goes on from there.
+        local count = 0
+        for _, id in ipairs(entry.need or ids(entry)) do
+            if player:getInventory():getItemById(id) then count = count + 1 end
+        end
+        if count > (entry.fetchCount or 0) then
+            entry.fetchCount = count
+            if state.placeFails then state.placeFails[entry.item] = nil end
             write(player, entry)
         else
             -- Practice is never worth a second try at the same food soon; a meal may be.
@@ -739,17 +867,25 @@ function Kitchen.settle(player, state, now, cut)
             if not cut or entry.reason == "practice" or fails >= Kitchen.policy.attempts then
                 skip(state)[entry.item] = now + Kitchen.policy.retryMs
                 state.placeFails[entry.item] = nil
+                sources[player] = nil
+                write(player, nil)
             end
-            write(player, nil)
         end
     elseif entry.stage == "starting" then
         local on = stove and isOn(stove)
         if dish then
             -- In the stove. Lit by us, or about to be taken out again.
             -- A timed appliance answers late in multiplayer: once its command went, it is ours.
-            local timed = heatOf(stove) and heatOf(stove).timed
-            entry.stage, entry.lit = "cooking", (on or timed) and true or nil
-            if timed and not on then entry.grace = now + Kitchen.policy.graceMs end
+            local heat = heatOf(stove)
+            local timed = heat and heat.timed
+            if heat and heat.fueled then
+                -- Ours only if our own light caught; in multiplayer the fire's state may come late.
+                entry.stage, entry.lit = "cooking", entry.litHere or nil
+                if not on and entry.litHere then entry.grace = now + Kitchen.policy.graceMs end
+            else
+                entry.stage, entry.lit = "cooking", (on or timed) and true or nil
+                if timed and not on then entry.grace = now + Kitchen.policy.graceMs end
+            end
             write(player, entry)
         else
             -- Never reached the stove, or someone else lit it first: nothing of ours to clean up.

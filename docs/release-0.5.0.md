@@ -8,3 +8,4 @@
 - **Time to the next level:** under each trained skill's bar, the window estimates the time to the next level at this session's pace.
 - **Food from anywhere:** the kitchen finds food in any container, in bags, and lying on the floor, and fetches it with the game's own pick-up.
 - **Microwaves:** cook on a timer and switch themselves off; nothing metal ever goes in (so never a soup pot).
+- **Fires:** fireplaces, antique stoves, charcoal grills and campfires cook too. Autopilot gathers wood, tinder (newspaper, paper scraps) and a lighter or matches from any container, the floor or a woodpile in the yard, adds enough fuel for the cooking, lights it and puts it out afterwards. A fire someone else lit is borrowed and left burning. Books worth reading, favourites and worn items are never burned.

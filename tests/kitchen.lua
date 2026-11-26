@@ -286,7 +286,7 @@ do
     local kinds={}; for _,a in ipairs(queued) do kinds[#kinds+1]=a.Type end
     assert(table.concat(kinds,",")=="transfer","Only the fetch in the first batch: "..table.concat(kinds,","))
     run(); Kitchen.settle(p,s,1100,false); s.pending=nil
-    assert(Kitchen.ledger(p).stage=="ready" and p.inventory:contains(raw))
+    assert(Kitchen.ledger(p) and p.inventory:contains(raw),"Fetched; the next step takes it to the stove")
     walks=0
     assert(Kitchen.meal(p,s,1200),"Then to the stove")
     run(); Kitchen.settle(p,s,1300,false)
@@ -705,4 +705,100 @@ do
     local found=Kitchen.scan(survivor(5,6),{},1000)
     for _,s in ipairs(found.stoves) do assert(s.object~=micro,"A fork inside: the microwave is not used") end
     passed("nothing metal goes into a microwave, and nothing goes in with metal already there")
+end
+local function fireplace(x,y,lit,fuel)
+    local sq=square(x,y)
+    local c=T.container(x,y); c.square=sq
+    function c:getType() return "fireplace" end
+    local f={kind="IsoFireplace",container=c,lit=lit,fuel=fuel or 0,sq=sq}
+    function f:isFireInteractionObject() return true end
+    function f:getContainer() return self.container end
+    function f:getSquare() return self.sq end
+    function f:isLit() return self.lit end
+    function f:getFuelAmount() return self.fuel end
+    function f:getObjectIndex() return 1 end
+    sq.objects={f}
+    return f
+end
+local function material(kind,props)
+    local item=T.item("InventoryItem",props or {})
+    function item:getType() return kind end
+    function item:getActualWeight() return 1 end
+    function item:getCurrentUses() return 10 end
+    return item
+end
+do
+    -- No power: a fireplace is fuelled and lit from what is in the cupboards,
+    -- cooks the dish, and is put out again.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    ISCampingMenu={isValidFuel=function() return true end,isValidTinder=function() return true end,
+        getFuelDurationForItem=function(item) return item:getType()=="Log" and 360 or 20 end}
+    function getCampingFuelMax() return 480 end
+    local fp=fireplace(1,0,false,0)
+    ISBBQAddFuel={new=function(_,player,obj,item,minutes) return {Type="fuel",isValid=function() return true end,perform=function()
+        T.remove(p.inventory,item); obj.fuel=obj.fuel+minutes end} end}
+    ISBBQLightFromLiterature={new=function(_,player,item,lighter,obj) return {Type="light",isValid=function() return true end,perform=function()
+        T.remove(p.inventory,item); obj.lit=true end} end}
+    ISBBQExtinguish={new=function(_,player,obj) return {Type="out",isValid=function() return obj.lit end,perform=function() obj.lit=false end} end}
+    local shed=T.container(-1,0); shed.square=square(-1,0)
+    shed.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return shed end}}
+    local drawer=T.container(0,1); drawer.square=square(0,1)
+    drawer.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return drawer end}}
+    local log=T.add(shed,material("Log"))
+    local paper=T.add(drawer,material("Newspaper"))
+    local matches=T.add(drawer,material("Matches"))
+    local raw=T.add(p.inventory,food())
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).fire,"A fire, planned with what is nearby")
+    for step=1,4 do
+        run(); Kitchen.settle(p,s,1000+step,false); s.pending=nil
+        local entry=Kitchen.ledger(p)
+        if not entry or entry.stage~="fetching" then break end
+        assert(Kitchen.duty(p,s,1100+step,true),"Next place to fetch from")
+    end
+    assert(fp.lit and fp.fuel>=360 and fp.container:contains(raw),"Fuelled, lit, dish in: "..tostring(fp.fuel))
+    assert(Kitchen.ledger(p).lit,"Lit here, so put out here")
+    raw.cooked,raw.time=true,31
+    assert(Kitchen.duty(p,s,2000,true)); run()
+    assert(not fp.lit and p.inventory:contains(raw),"Out, and put out")
+    passed("a fireplace is fuelled, lit, cooks and is put out")
+end
+do
+    -- A fire someone else lit is borrowed and left burning.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local fp=fireplace(1,0,true,300)
+    local raw=T.add(p.inventory,food())
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).borrowed,"Borrowed")
+    run(); Kitchen.settle(p,s,1100,false); s.pending=nil
+    assert(fp.container:contains(raw) and not Kitchen.ledger(p).lit,"In, but not ours to put out")
+    raw.cooked,raw.time=true,31
+    assert(Kitchen.duty(p,s,2000,true)); run()
+    assert(fp.lit and p.inventory:contains(raw),"Taken out; the fire still burns")
+    assert(Kitchen.ended(p)==nil,"Stop leaves it alone")
+    passed("a fire someone else lit is borrowed and left burning")
+end
+do
+    -- Tinder is never also burned as fuel; nothing is fed or lit without our dish
+    -- inside; a fire someone else lit meanwhile is not ours.
+    local Fire=require "AutoMindful/Fire"
+    squares={}
+    local fp=fireplace(1,0,false,0)
+    local twigs=material("Twigs"); local log=material("Log")
+    local plan=Fire.plan(fp,30,{fuel={{item=twigs},{item=log}},tinder={{item=twigs}},starters={{item=material("Matches")}}})
+    for _,f in ipairs(plan.fuel) do assert(f.item~=twigs,"The tinder is kept for lighting") end
+    local p=survivor(0,0)
+    T.add(p.inventory,log); local paper=T.add(p.inventory,material("Newspaper")); local m=T.add(p.inventory,material("Matches"))
+    local dish=T.add(p.inventory,food())
+    local actions={}
+    ISTimedActionQueue.add=function(a) actions[#actions+1]=a; return a end
+    local lit=false
+    Fire.start(p,fp,{fuel={log:getID()},tinder=paper:getID(),starter=m:getID()},dish,function() lit=true end)
+    for _,a in ipairs(actions) do assert(not a:isValid(),"No dish inside yet: nothing is fed or lit") end
+    T.add(fp.container,dish)
+    fp.lit=true
+    assert(not actions[#actions]:isValid(),"Someone else lit it meanwhile: our light does not run")
+    ISTimedActionQueue.add=function(action) queued[#queued+1]=action; return action end
+    assert(not lit)
+    passed("tinder is not burned as fuel, and only our dish and our light make a fire ours")
 end

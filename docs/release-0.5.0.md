@@ -4,3 +4,5 @@
 - **Soups and stews:** with a pot, water from a sink or tap and two or more ingredients from the same place, Autopilot makes a soup (a stew with meat) using the game's own recipe and cooks it. Option: **Make soups and stews**.
 - **Cooks before eating raw:** while only mildly hungry and not thirsty, Autopilot cooks what can be cooked instead of eating it raw.
 - **Propane grills:** when there is no powered stove (a power cut), Autopilot cooks on a propane barbecue in the yard and turns it off; a stove indoors is still preferred. Microwaves are not used.
+- **Enough food for AFK:** the outlook counts raw food the kitchen can cook (with a stove or grill nearby) and says how much of the known food needs cooking.
+- **Time to the next level:** under each trained skill's bar, the window estimates the time to the next level at this session's pace.

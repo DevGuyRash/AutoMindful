@@ -68,6 +68,15 @@ local function skillBars(rows, status)
                 right=progress.capped and "Max" or string.format("%s / %s XP", Progress.number(progress.current), Progress.number(progress.required)),
                 fraction=progress.capped and 1 or progress.fraction, color=colors[kind] or colors.warn,
                 gain=gain and ((change.positive and "+" or "") .. gain), loss=change and not change.positive}
+            -- At this session's pace, how long to the next level (real time).
+            local elapsed = status.elapsed
+            if change and change.amount and change.amount > 0 and elapsed and elapsed >= 120000 and not progress.capped then
+                local minutes = math.ceil((progress.required - progress.current) / (change.amount / elapsed) / 60000)
+                local text = minutes > 7 * 1440 and "over a week" or minutes < 60 and (minutes .. " min")
+                    or minutes < 1440 and (math.floor(minutes / 60) .. " h " .. (minutes % 60) .. " min")
+                    or (math.floor(minutes / 1440) .. " d " .. math.floor(minutes % 1440 / 60) .. " h")
+                rows[#rows + 1] = {kind="text", text="About " .. text .. " to level " .. (progress.level + 1) .. " at this pace.", color=colors.muted}
+            end
         end
     end
 end
@@ -120,6 +129,9 @@ local function outlookRows(rows, player, status)
     rows[#rows + 1] = {kind="columns", label="Lasts up to", color=colors.muted, cells={{text="Carried"}, {text="Known"}}}
     rows[#rows + 1] = {kind="columns", label="Food", cells={{text=outlook.carriedFood, color=tone(outlook.carriedFoodHours)},
         {text=outlook.food, color=tone(outlook.foodHours)}}}
+    if outlook.cook then
+        rows[#rows + 1] = {kind="text", text="Known food includes about " .. outlook.cook .. " that needs cooking.", color=colors.muted}
+    end
     rows[#rows + 1] = {kind="columns", label="Drink", cells={{text=outlook.carriedWater, color=tone(outlook.carriedWaterHours)},
         outlook.endlessWater and {text="Running tap", color=colors.good} or {text=outlook.water, color=tone(outlook.waterHours)}}}
     local shown, said = 0, {farewell=true}

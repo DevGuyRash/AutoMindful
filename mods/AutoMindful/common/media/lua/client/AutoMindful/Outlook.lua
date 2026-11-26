@@ -112,7 +112,11 @@ local function stock(player, range, boxedIn, skip)
         local found = ok and type(Kitchen) == "table" and Kitchen.scan(player, skip, getTimestampMs()) or nil
         if found and found.heats > 0 then
             result.cookFood = 0
-            for _, entry in ipairs(found.food) do
+            -- Raw food to cook, and frozen food once it has thawed.
+            local both = {}
+            for _, entry in ipairs(found.food) do both[#both + 1] = entry end
+            for _, entry in ipairs(found.frozen or {}) do both[#both + 1] = entry end
+            for _, entry in ipairs(both) do
                 local id = entry.item
                 if not Fluids.safeFood(id) and not counted["food" .. tostring(id)] then
                     counted["food" .. tostring(id)] = true

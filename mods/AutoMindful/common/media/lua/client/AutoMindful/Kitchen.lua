@@ -17,7 +17,7 @@ local Fire = require "AutoMindful/Fire"
 local Alerts = require "AutoMindful/Alerts"
 
 local Kitchen = {policy = {radius = 10, lookMs = 30000, retryMs = 600000, attempts = 3, burnShare = 0.8, againMs = 120000,
-    batch = 4, soonHours = 72, practiceMs = 60000, tired = 0.5, graceMs = 5000,
+    batch = 4, soonHours = 72, practiceMs = 60000, tired = 0.5, graceMs = 5000, thawMs = 600000, thawCount = 2,
     unwatchedMs = 15000, warnMs = 60000}}
 local watched, warned = {}, {}
 local P
@@ -40,9 +40,10 @@ end
 
 -- Raw now, safe to eat once cooked. Never rotten, burnt, frozen or poisoned:
 -- cooking does not make those safe.
-function Kitchen.cookable(item)
+-- frozenOk: would be worth cooking once thawed.
+function Kitchen.cookable(item, frozenOk)
     if not item or not instanceof(item, "Food") or not item:isCookable() or item:isCooked() or item:isBurnt() then return false end
-    if item:isFrozen() or not Fluids.harmless(item) or Grid.favorite(item) then return false end
+    if (item:isFrozen() and not frozenOk) or not Fluids.harmless(item) or Grid.favorite(item) then return false end
     -- Stricter than eating: any eating effect at all, even the stock wild-food one, is left raw.
     local effect = item:getOnEat()
     if effect and effect ~= "" then return false end
@@ -55,6 +56,14 @@ function Kitchen.cookable(item)
 end
 
 local function relief(item) return -item:getHungerChange() end
+
+-- Frozen food worth thawing: raw food to cook, or cooked leftovers to eat.
+local function thawable(item)
+    if not instanceof(item, "Food") or not item:isFrozen() then return false end
+    if Kitchen.cookable(item, true) then return true end
+    return item:isCooked() and not item:isBurnt() and not item:isRotten() and item:getHungerChange() <= -0.05
+        and Fluids.harmless(item) and not Grid.favorite(item)
+end
 
 
 -- ----------------------------------------------------------------- the stove
@@ -202,7 +211,7 @@ end
 function Kitchen.scan(player, rejected, now, fridgesOnly)
     -- heats: every stove or grill seen, on or off, busy or not.
     local result = {stoves = {}, food = {}, fridges = {}, pots = {}, taps = {}, ready = 0, heats = 0,
-        fuel = {}, tinder = {}, starters = {}}
+        fuel = {}, tinder = {}, starters = {}, frozen = {}, freezers = {}}
     if not player:getSquare() then return result end
     local seen, take = {}, nil
     -- One item, wherever it is: in a container, a bag, or on the floor.
@@ -219,6 +228,9 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             result.ready = result.ready + 1
         elseif Soup.isPot(item) then
             result.pots[#result.pots + 1] = Fetch.entry(item, container, world, carried, holder)
+        elseif (carried or container and container:getType() == "freezer" and container:isPowered()) and thawable(item) then
+            -- Frozen in a running freezer, or carried and thawing already.
+            result.frozen[#result.frozen + 1] = Fetch.entry(item, container, world, carried, holder)
         elseif carried and instanceof(item, "InventoryContainer") then
             take(item:getInventory(), true)
         end
@@ -273,6 +285,8 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
                         take(container, false)
                         if container:getType() == "fridge" and container:isPowered() then
                             result.fridges[#result.fridges + 1] = {container = container, square = square, distance = distance}
+                        elseif container:getType() == "freezer" and container:isPowered() then
+                            result.freezers[#result.freezers + 1] = {container = container, square = square, distance = distance}
                         end
                     end
                 end
@@ -293,6 +307,7 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
         return a.distance < b.distance
     end)
     table.sort(result.fridges, function(a, b) return a.distance < b.distance end)
+    table.sort(result.freezers, function(a, b) return a.distance < b.distance end)
     table.sort(result.taps, function(a, b) return a.distance < b.distance end)
     -- A pot already carried first.
     table.sort(result.pots, function(a, b) return (a.carried and 1 or 0) > (b.carried and 1 or 0) end)
@@ -914,6 +929,42 @@ function Kitchen.settle(player, state, now, cut)
     end
 end
 
+-- Nothing ready and nothing raw left, but food in the freezer: take a little
+-- out so it thaws for a later meal. The thawing itself is the game's.
+function Kitchen.thaw(player, state, now)
+    if not Options.cookMeals() or Kitchen.ledger(player) then return false end
+    if state.thawNext and now < state.thawNext and state.thawNext - now <= Kitchen.policy.thawMs then return false end
+    state.thawNext = now + Kitchen.policy.thawMs
+    local found = Kitchen.scan(player, skip(state), now)
+    if #found.food > 0 or found.ready > 0 then return false end
+    local waiting = {}
+    for _, entry in ipairs(found.frozen) do
+        -- One meal out at a time: what is thawing in a pocket comes first.
+        if entry.carried then return false end
+        -- Raw food only with something to cook it on.
+        if entry.item:isCooked() or found.heats > 0 then waiting[#waiting + 1] = entry end
+    end
+    if #waiting == 0 then return false end
+    local first = Kitchen.choose(waiting, player)
+    local take, weight = {}, 0
+    for _, entry in ipairs(waiting) do
+        if #take >= Kitchen.policy.thawCount then break end
+        if entry.container == first.container then
+            weight = weight + entry.item:getActualWeight()
+            if player:getInventory():hasRoomFor(player, weight) then take[#take + 1] = entry end
+        end
+    end
+    if #take == 0 then return false end
+    Log.event(player, "kitchen.thaw", "count", #take, "first", Snap.item(take[1].item))
+    local queued = P.ownBatch(player, state, "kitchen", "Taking " .. take[1].item:getDisplayName() .. " out of the freezer to thaw.", function()
+        local square = Fetch.square(take[1])
+        if square and not adjacent(player, square) and not luautils.walkAdj(player, square, true) then return end
+        for _, entry in ipairs(take) do Fetch.queue(player, entry) end
+    end)
+    if not queued then state.pending = nil end
+    return queued
+end
+
 -- Cooked food that was not eaten goes into a powered fridge nearby, where it
 -- keeps, instead of spoiling in a pocket.
 function Kitchen.store(player, state, now)
@@ -929,9 +980,14 @@ function Kitchen.store(player, state, now)
     if #items == 0 then Saved.set(player, "AutoMindfulLeftovers", nil); return false end
     if state.storeNext and now < state.storeNext and state.storeNext - now <= Kitchen.policy.lookMs then return false end
     state.storeNext = now + Kitchen.policy.lookMs
-    local fridge
-    for _, candidate in ipairs(Kitchen.scan(player, nil, now, true).fridges) do
-        if candidate.container:hasRoomFor(player, items[1]) then fridge = candidate; break end
+    -- A fridge with room for all of it, otherwise a freezer: cooked food keeps there too.
+    local fridge, weight = nil, 0
+    for _, item in ipairs(items) do weight = weight + item:getActualWeight() end
+    local cold = Kitchen.scan(player, nil, now, true)
+    for _, list in ipairs({cold.fridges, cold.freezers}) do
+        for _, candidate in ipairs(list) do
+            if not fridge and candidate.container:hasRoomFor(player, weight) then fridge = candidate end
+        end
     end
     if not fridge then return false end
     local square = fridge.square

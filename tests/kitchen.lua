@@ -802,3 +802,58 @@ do
     assert(not lit)
     passed("tinder is not burned as fuel, and only our dish and our light make a fire ours")
 end
+do
+    -- Nothing ready, nothing raw, but the freezer is full: two come out to thaw,
+    -- and no more while those are still thawing. Leftovers go to the freezer
+    -- when no fridge has room for all of them.
+    local function cold(x,kind,powered)
+        local c=T.container(x,0); c.square=square(x,0)
+        function c:getType() return kind end
+        function c:isPowered() return powered end
+        c.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return c end}}
+        return c
+    end
+    local function calm(p)
+        p.values.HUNGER=0
+        function p:getStats() return {get=function() return 0 end} end
+        function p:getMoodles() return {getMoodleLevel=function() return 0 end} end
+    end
+    -- No stove or fire: only cooked leftovers come out, raw meat stays frozen.
+    squares={}
+    local p=survivor(0,0); local s=state(); calm(p)
+    local fz=cold(-1,"freezer",true)
+    local raw=T.add(fz,food({name="Frozen chicken",frozen=true}))
+    local stew=T.add(fz,food({name="Frozen stew",frozen=true,cooked=true}))
+    assert(Kitchen.thaw(p,s,1000),"Leftovers come out without a stove"); run()
+    assert(p.inventory:contains(stew) and fz:contains(raw),"Raw meat waits for a heat source")
+    assert(not Kitchen.thaw(p,s,1000+Kitchen.policy.thawMs+1),"Not while the stew is still thawing")
+    -- With a stove: two of three, and not more while those thaw.
+    squares={}
+    p=survivor(0,0); s=state(); calm(p)
+    stove(1,0)
+    fz=cold(-1,"freezer",true)
+    local a=T.add(fz,food({name="Frozen chicken",frozen=true}))
+    local b=T.add(fz,food({name="Frozen steak",frozen=true}))
+    local c=T.add(fz,food({name="Frozen pork",frozen=true}))
+    -- Frozen food in a fridge or a dead freezer is not a freezer's.
+    local fridge=cold(-2,"fridge",true)
+    local warm=T.add(fridge,food({name="Pork in the fridge",frozen=true}))
+    local dead=T.add(cold(-3,"freezer",false),food({name="Pork in a dead freezer",frozen=true}))
+    assert(Kitchen.thaw(p,s,1000),"Taken out to thaw")
+    run()
+    local out=0
+    for _,item in ipairs({a,b,c}) do if p.inventory:contains(item) then out=out+1 end end
+    assert(out==2,"Two at a time: "..out)
+    assert(not p.inventory:contains(warm) and not p.inventory:contains(dead))
+    assert(not Kitchen.thaw(p,s,2000),"Not again straight away")
+    assert(not Kitchen.thaw(p,s,1000+Kitchen.policy.thawMs+1),"Not while two are thawing in the pocket")
+    -- Leftovers: the fridge has room for one, so both go to the freezer.
+    for _,item in ipairs({a,b}) do T.remove(p.inventory,item) end
+    function fridge:hasRoomFor(_,what) return type(what)~="number" or what<=0.3 end
+    local one=T.add(p.inventory,food({name="Cooked chicken",cooked=true}))
+    local two=T.add(p.inventory,food({name="Cooked steak",cooked=true}))
+    p:getModData().AutoMindfulLeftovers={one:getID(),two:getID()}
+    assert(Kitchen.store(p,s,3000)); run()
+    assert(fz:contains(one) and fz:contains(two),"Kept together in the freezer")
+    passed("frozen food comes out to thaw only when nothing else is left, one meal at a time, and leftovers can go in the freezer")
+end

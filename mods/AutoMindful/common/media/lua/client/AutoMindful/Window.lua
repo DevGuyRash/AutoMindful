@@ -4,6 +4,7 @@ require "ISUI/ISButton"
 require "ISUI/ISContextMenu"
 local Controller = require "AutoMindful/Controller"
 local Jobs = require "AutoMindful/Jobs"
+local Kitchen = require "AutoMindful/Kitchen"
 local Log = require "AutoMindful/Log"
 local Options = require "AutoMindful/Options"
 local Preferences = require "AutoMindful/Preferences"
@@ -97,8 +98,11 @@ local function clamp(value, low, high) return math.max(low, math.min(value, high
 function Window:metrics()
     local core, line = getCore(), Theme.line()
     local screenW, screenH = core:getScreenWidth(), core:getScreenHeight()
+    -- Never narrower than the tabs: Settings stays inside the window.
+    local tabs = 12
+    for _, view in ipairs(Views.order) do tabs = tabs + Theme.width(view.title) + line + 2 end
     return {screenW=screenW, screenH=screenH, line=line,
-        minWidth=math.min(line * 15, screenW - 16), width=math.min(line * 21, screenW - 16),
+        minWidth=math.min(math.max(line * 15, tabs), screenW - 16), width=math.min(math.max(line * 21, tabs + line * 2), screenW - 16),
         minHeight=math.min(line * 9, screenH - 30), maxHeight=math.floor(screenH * 0.82)}
 end
 
@@ -437,6 +441,7 @@ function Window:show(id)
     if self.capturing then self:beginCapture() end
     self.body:setYScroll(0)
     self.forceSupplies = id == "supplies"
+    self.kitchen, self.kitchenAt = nil, nil
     self:invalidate(true)
 end
 
@@ -465,6 +470,12 @@ function Window:refresh()
             and (self.forceSupplies or not self.reportAt or now < self.reportAt or now - self.reportAt >= (self.view == "supplies" and 1000 or 5000)) then
         self.report = Controller.prepare(player, Preferences.collectNearby(player), true, self.forceSupplies)
         self.reportAt, self.forceSupplies = now, nil
+    end
+    -- The kitchen is looked over only while its tab is open, every two seconds.
+    if self.view == "kitchen" and not mini and (not self.kitchenAt or now < self.kitchenAt or now - self.kitchenAt >= 2000) then
+        local ok, summary = pcall(Kitchen.summary, player, now)
+        if not ok then Log.detail(player, "ui.kitchen", "error", tostring(summary)) end
+        self.kitchen, self.kitchenAt = ok and summary or nil, now
     end
     if self.wasRunning ~= running then self.wasRunning, self.resetFit = running, true end
     if running then self.startError = nil end
@@ -520,7 +531,7 @@ function Window.open(player)
     window:addToUIManager()
     window:setVisible(true)
     window:bringToTop()
-    window.forceSupplies, window.resetFit = true, true
+    window.forceSupplies, window.resetFit, window.kitchenAt = true, true, nil
     window:refresh()
     Log.event(player, "ui.open", "view", window.view, "mode", window.status.mode, "active", window.status.active)
     return window

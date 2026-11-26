@@ -317,20 +317,85 @@ function Views.guide(window)
     return rows
 end
 
+local function toggle(window, rows, id)
+    local option, text = Options.option(id), Options.windowText[id]
+    rows[#rows + 1] = {kind="setting", label=text[1], tip=text[2], toggle=option:getValue() == true,
+        onClick=function() Options.set(id, option:getValue() ~= true); window:invalidate() end}
+end
+
+local function choice(window, rows, id)
+    local entry, text = Options.choice(id), Options.windowText[id]
+    rows[#rows + 1] = {kind="setting", label=text[1], value=entry.short or entry.label, menu=true,
+        tip=entry.help or text[2], onClick=function() window:openChoiceMenu(id) end}
+end
+
+local tones = {good=colors.good, warn=colors.warn, bad=colors.bad, muted=colors.muted}
+
+local function count(rows, label, value, color)
+    local some = (value or 0) > 0
+    rows[#rows + 1] = {kind="columns", label=label, color=some and colors.text or colors.muted,
+        cells={{text=""}, {text=tostring(value or 0), color=some and (color or colors.text) or colors.faint}}}
+end
+
+local function capital(text) return (text:gsub("^%l", string.upper)) end
+
+-- The kitchen at a glance: what can cook, what there is to cook, where it keeps.
+function Views.kitchen(window)
+    local player, status, summary, rows = window.player, window.status or {}, window.kitchen, {}
+    local cooking = Perks and Perks.Cooking and Progress.perk(player, Perks.Cooking)
+    if cooking then
+        rows[#rows + 1] = {kind="bar", label="Cooking " .. cooking.level, color=colors.cooking or colors.warn,
+            right=cooking.capped and "Max" or string.format("%s / %s XP", Progress.number(cooking.current), Progress.number(cooking.required)),
+            fraction=cooking.capped and 1 or cooking.fraction}
+    end
+    local dish = status.kitchen
+    if dish and dish.progress and dish.on then
+        rows[#rows + 1] = {kind="bar", label="On the stove: " .. (Theme.plain(dish.dish) or "food"),
+            right=math.floor(dish.progress * 100) .. "%", fraction=dish.progress, color=colors.warn}
+    end
+    if not Options.cookMeals() then
+        rows[#rows + 1] = {kind="text", text="Autopilot does not cook while " .. Options.windowText.recoveryCook[1] .. " is off.", color=colors.warn}
+    end
+    if not summary then
+        rows[#rows + 1] = {kind="text", text="Looking around the kitchen...", color=colors.muted}
+        return rows
+    end
+    head(rows, "Heat", "within " .. summary.radius .. " tiles")
+    if #summary.heats == 0 then
+        rows[#rows + 1] = {kind="text", text="No stove, microwave, grill, fireplace or campfire nearby.", color=colors.muted}
+    end
+    local fires = false
+    for _, heat in ipairs(summary.heats) do
+        fires = fires or heat.fueled
+        rows[#rows + 1] = {kind="text", bullet=true, color=tones[heat.tone] or colors.text,
+            text=capital(heat.name) .. ", " .. heat.tiles .. (heat.tiles == 1 and " tile" or " tiles") .. ": " .. heat.state}
+    end
+    head(rows, "Food")
+    count(rows, "Raw, to cook", summary.raw)
+    if summary.soon > 0 then count(rows, "Rots within " .. summary.soonDays .. " days", summary.soon, colors.warn) end
+    count(rows, "Ready to eat", summary.ready)
+    count(rows, "In the freezer", summary.frozen)
+    head(rows, "Keeping cold")
+    count(rows, "Powered fridges", summary.fridges)
+    count(rows, "Powered freezers", summary.freezers)
+    if fires then
+        head(rows, "For a fire")
+        count(rows, "Wood", summary.wood)
+        count(rows, "Paper and twigs", summary.tinder)
+        count(rows, "Lighters and matches", summary.starters)
+    end
+    head(rows, "Settings")
+    toggle(window, rows, "recoveryCook")
+    toggle(window, rows, "recoverySoup")
+    choice(window, rows, "cookTraining")
+    choice(window, rows, "dietGoal")
+    return rows
+end
+
 function Views.settings(window)
     local player, rows = window.player, {}
-    local function toggle(id)
-        local option, text = Options.option(id), Options.windowText[id]
-        rows[#rows + 1] = {kind="setting", label=text[1], tip=text[2], toggle=option:getValue() == true,
-            onClick=function() Options.set(id, option:getValue() ~= true); window:invalidate() end}
-    end
-    local function choice(id)
-        local entry, text = Options.choice(id), Options.windowText[id]
-        rows[#rows + 1] = {kind="setting", label=text[1], value=entry.short or entry.label, menu=true,
-            tip=entry.help or text[2], onClick=function() window:openChoiceMenu(id) end}
-    end
     head(rows, "Training")
-    choice("cyclePolicy")
+    choice(window, rows, "cyclePolicy")
     for _, group in ipairs(Options.minimumGroups()) do
         rows[#rows + 1] = {kind="setting", label=group.label, value=group.summary, menu=true, tip=group.help,
             onClick=function() window:openMinimumMenu(group.id) end}
@@ -343,28 +408,28 @@ function Views.settings(window)
         rows[#rows + 1] = {kind="setting", label="Search radius", value=Options.searchRadius() .. " tiles", menu=true,
             onClick=function() window:openRadiusMenu() end}
     end
-    toggle("practiceCare")
+    toggle(window, rows, "practiceCare")
     head(rows, "Autopilot")
-    choice("dietGoal")
-    choice("recoveryAway")
+    choice(window, rows, "dietGoal")
+    choice(window, rows, "recoveryAway")
     for _, id in ipairs(Options.autopilotToggles) do
-        toggle(id)
-        if id == "recoveryCook" then choice("cookTraining") end
+        toggle(window, rows, id)
+        if id == "recoveryCook" then choice(window, rows, "cookTraining") end
     end
     head(rows, "Window and menu")
     rows[#rows + 1] = {kind="setting", label="Open and close key", value=window.capturing and (window.keyTaken and (window.keyTaken .. " is in use. Try another") or "Press a key, Esc to cancel")
         or Options.windowKeyLabel(),
         valueColor=window.capturing and colors.warn or nil, onClick=function() window:beginCapture() end,
         tip="Right click menus keep working without a key."}
-    toggle("defaultWindowKey")
-    toggle("generalContextMenu")
+    toggle(window, rows, "defaultWindowKey")
+    toggle(window, rows, "generalContextMenu")
     head(rows, "Diagnostics")
-    choice("logLevel")
+    choice(window, rows, "logLevel")
     return rows
 end
 
 Views.order = {
-    {id="now", title="Now"}, {id="supplies", title="Supplies"}, {id="log", title="Log"},
+    {id="now", title="Now"}, {id="supplies", title="Supplies"}, {id="kitchen", title="Kitchen"}, {id="log", title="Log"},
     {id="guide", title="Guide"}, {id="settings", title="Settings"},
 }
 

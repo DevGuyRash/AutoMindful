@@ -251,6 +251,10 @@ local zenWatched = false
 package.loaded["AutoMindful/ZenMoodle"] = {install=function() end, watch=function() zenWatched = true end, onPlayerReady=function() end}
 Clipboard = {setClipboard=function(text) Clipboard.text = text end}
 
+local summaries = 0
+local kitchenSummary = {radius=10, soonDays=3, raw=3, ready=1, frozen=2, soon=1, fridges=1, freezers=0, wood=4, tinder=1, starters=0,
+    heats={{name="stove", state="No power", tone="bad", tiles=2}, {name="fireplace", state="Not lit: needs a lighter or matches", tone="warn", tiles=5, fueled=true}}}
+package.loaded["AutoMindful/Kitchen"] = {summary=function() summaries = summaries + 1; return kitchenSummary end}
 require "AutoMindful_Main"
 assert(zenWatched, "The Zen hover watch starts when the file loads, not only when a player is created")
 if not AutoMindful.UI then error("window did not load") end
@@ -412,6 +416,26 @@ click(window, button(window, "Copy report"))
 assert(Clipboard.text:find("Second Nature report", 1, true) and Clipboard.text:find("08:41 Drinking", 1, true))
 passed("supplies, log and report show live facts and scan only when looked at")
 
+window:show("kitchen")
+local kitchen = text(window)
+assert(kitchen:find("Stove, 2 tiles: No power", 1, true) and kitchen:find("Fireplace, 5 tiles: Not lit: needs a lighter or matches", 1, true), kitchen)
+for _, row in ipairs(rows(window, "columns")) do
+    if row.label == "Raw, to cook" then assert(row.cells[2].text == "3") end
+    if row.label == "Powered freezers" then assert(row.cells[2].text == "0") end
+end
+assert(kitchen:find("Lighters and matches", 1, true), "What a fire needs, when there is a fire")
+assert(setting(window, Options.windowText.recoveryCook[1]) and setting(window, Options.windowText.cookTraining[1]), "Its settings are here too")
+local looked = summaries
+for _ = 1, 8 do now = now + 500; window:update() end
+assert(summaries - looked <= 2, "Looked over every two seconds, not twice a second: " .. (summaries - looked))
+window:show("log"); looked = summaries
+for _ = 1, 8 do now = now + 500; window:update() end
+assert(summaries == looked, "Not at all while another tab is open")
+kitchenSummary.heats = {}
+window:show("kitchen")
+assert(text(window):find("No stove, microwave, grill, fireplace or campfire nearby.", 1, true) and not text(window):find("Lighters", 1, true))
+passed("the Kitchen tab shows each heat source and what it needs, the food and the cold, and looks only while open")
+
 window:show("supplies")
 click(window, setting(window, "Look for supplies"))
 assert(#lastMenu.options == 3 and named(lastMenu, "Walk to nearby supplies").checkMark)
@@ -546,7 +570,7 @@ for _, font in ipairs({{5, 13}, {7, 16}, {10, 22}, {14, 30}}) do
     for _, mode in ipairs({"none", "both", "recovery"}) do
         local active = mode ~= "none"
         state.active, state.mode = active, active and mode or nil
-        for _, view in ipairs({"now", "supplies", "log", "guide", "settings"}) do
+        for _, view in ipairs({"now", "supplies", "kitchen", "log", "guide", "settings"}) do
             window.view = view; window:invalidate(true)
             drawn = {}
             window.body.pointer = nil
@@ -556,6 +580,8 @@ for _, font in ipairs({{5, 13}, {7, 16}, {10, 22}, {14, 30}}) do
             end
             assert(#drawn > 0)
             drawn = nil
+            local last = window.tabs.slots[#window.tabs.slots]
+            assert(last.id == "settings" and last.x + last.w <= window.width, "Every tab fits at font " .. font[2] .. ": " .. (last.x + last.w) .. " of " .. window.width)
         end
     end
 end

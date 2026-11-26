@@ -13,12 +13,22 @@ local function weight(player)
     return ok and type(value) == "number" and value or nil
 end
 
+-- Read lazily, once: food choice is also used where the options page is not loaded.
+local options
+function Diet.options()
+    -- Remembered once found; until then, asked again.
+    if not options then
+        local ok, module = pcall(require, "AutoMindful/Options")
+        options = ok and type(module) == "table" and module or nil
+    end
+    return options
+end
+
 -- The goal in force: Auto steers back toward a healthy weight and is
 -- Balanced inside it.
 function Diet.goal(player)
-    -- Read lazily: food choice is also used where the options page is not loaded.
-    local ok, Options = pcall(require, "AutoMindful/Options")
-    local goal = ok and type(Options) == "table" and Options.dietGoal and Options.dietGoal() or "auto"
+    local Options = Diet.options()
+    local goal = Options and Options.dietGoal and Options.dietGoal() or "auto"
     if goal ~= "auto" then return goal end
     local kilograms = player and weight(player)
     if not kilograms then return "balanced" end

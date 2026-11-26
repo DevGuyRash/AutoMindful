@@ -1,6 +1,7 @@
 -- Lifestyle 0.4.0.3 client adapter. Scouting is read-only; ONLY dispatch builds
 -- an option for the exact fixture/current player. Never write needs or apply effects.
 local Storage = require "AutoMindful/Storage"
+local Grid = require "AutoMindful/Grid"
 local Restroom = {}
 AutoMindful = AutoMindful or {}
 AutoMindful.RestroomCare = Restroom
@@ -149,7 +150,7 @@ end
 local expendable = {["Base.ToiletPaper"]=true, ["Base.Tissue"]=true, ["Base.PaperNapkins"]=true}
 
 local function wipeAllowed(player, item)
-    if not expendable[item:getFullType()] or (item.isFavorite and item:isFavorite()) then return false end
+    if not expendable[item:getFullType()] or Grid.favorite(item) then return false end
     local container = item:getContainer()
     if not container or not container:contains(item) then return false end
     if container:isInCharacterInventory(player) then return true end

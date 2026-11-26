@@ -5,11 +5,12 @@
 local Log = require "AutoMindful/Log"
 local Options = require "AutoMindful/Options"
 local Snap = require "AutoMindful/Snapshot"
-local Storage = require "AutoMindful/Storage"
+local Grid = require "AutoMindful/Grid"
+local Saved = require "AutoMindful/Saved"
 local Needs = require "AutoMindful/SurvivalNeeds"
+local Fluids = require "AutoMindful/Fluids"
 local Diet = require "AutoMindful/Diet"
 local Alerts = require "AutoMindful/Alerts"
-local HUD = require "AutoMindful/CompletionHUD"
 
 local Kitchen = {policy = {radius = 10, lookMs = 30000, retryMs = 600000, attempts = 3, burnShare = 0.8, againMs = 120000,
     batch = 4, soonHours = 72,
@@ -25,11 +26,7 @@ function Kitchen.bind(parts) P = parts end
 -- cooking does not make those safe.
 function Kitchen.cookable(item)
     if not item or not instanceof(item, "Food") or not item:isCookable() or item:isCooked() or item:isBurnt() then return false end
-    if item:isFrozen() or item:isRotten() or item:isTainted() or item:isPoison() or item:getPoisonPower() > 0 then return false end
-    if item:getAge() >= item:getOffAgeMax() or item:isAlcoholic() or item:getFoodSicknessChange() > 0 then return false end
-    local effect = item:getOnEat()
-    if effect and effect ~= "" then return false end
-    if item.isFavorite and item:isFavorite() then return false end
+    if item:isFrozen() or not Fluids.harmless(item) or Grid.favorite(item) then return false end
     -- Bread that turns into toast becomes a new item, which could not be followed in the stove.
     local replaced = item.getReplaceOnCooked and item:getReplaceOnCooked()
     if replaced and (type(replaced) == "string" and replaced ~= "" or type(replaced) ~= "string" and replaced.size and replaced:size() > 0) then
@@ -40,13 +37,6 @@ end
 
 local function relief(item) return -item:getHungerChange() end
 
-local function squareOf(container)
-    local square = container:getSourceGrid()
-    if square then return square end
-    local holder = container:getContainingItem()
-    local world = holder and holder:getWorldItem()
-    return world and world:getSquare()
-end
 
 -- ----------------------------------------------------------------- the stove
 
@@ -58,10 +48,7 @@ function Kitchen.isStove(object)
     return container ~= nil and container:getType() == "stove"
 end
 
-local function stoveKey(object)
-    local square = object:getSquare()
-    return square:getX() .. ":" .. square:getY() .. ":" .. square:getZ()
-end
+local function stoveKey(object) return Grid.key(object:getSquare()) end
 Kitchen.key = stoveKey
 
 -- Nothing of anyone else's is cooking in it.
@@ -73,25 +60,14 @@ local function free(container)
     return true
 end
 
-local function within(here, square, radius)
-    if not square or square:getZ() ~= here:getZ() then return false end
-    local dx, dy = square:getX() - here:getX(), square:getY() - here:getY()
-    if dx * dx + dy * dy > radius * radius then return false end
-    -- Indoors, the same building: nobody crosses the street to cook.
-    local building = here.getBuilding and here:getBuilding()
-    return building == nil or (square.getBuilding and square:getBuilding()) == building
-end
-
--- One pass over the squares nearby: stoves that could cook now, and raw food
--- in the containers around them.
-function Kitchen.scan(player, rejected, now)
-    local here = player:getSquare()
+-- One pass over the squares nearby: stoves that could cook now, raw food in the
+-- containers around them, and powered fridges. fridgesOnly skips the food.
+function Kitchen.scan(player, rejected, now, fridgesOnly)
     local result = {stoves = {}, food = {}, fridges = {}}
-    if not here then return result end
-    local radius = Kitchen.policy.radius
+    if not player:getSquare() then return result end
     local seen = {}
     local function take(container, carried)
-        if not container or seen[container] then return end
+        if fridgesOnly or not container or seen[container] then return end
         seen[container] = true
         local items = container:getItems()
         for index = 0, items:size() - 1 do
@@ -104,38 +80,31 @@ function Kitchen.scan(player, rejected, now)
         end
     end
     take(player:getInventory(), true)
-    local x0, y0, z = here:getX(), here:getY(), here:getZ()
-    for x = x0 - radius, x0 + radius do
-        for y = y0 - radius, y0 + radius do
-            local square = getCell():getGridSquare(x, y, z)
-            if square and within(here, square, radius) and Storage.permitted(player, square) then
-                local objects = square:getObjects()
-                for index = 0, objects:size() - 1 do
-                    local object = objects:get(index)
-                    if Kitchen.isStove(object) then
-                        local container = object:getContainer()
-                        local waiting = rejected and rejected["stove:" .. stoveKey(object)]
-                        if container:isPowered() and not object:Activated() and free(container)
-                                and not (waiting and now < waiting) then
-                            result.stoves[#result.stoves + 1] = {object = object, square = square,
-                                distance = (x - x0) ^ 2 + (y - y0) ^ 2}
-                        end
-                    elseif object.getContainerCount then
-                        for c = 0, object:getContainerCount() - 1 do
-                            local container = object:getContainerByIndex(c)
-                            if container and container:getType() ~= "stove" then
-                                take(container, false)
-                                if container:getType() == "fridge" and container:isPowered() then
-                                    result.fridges[#result.fridges + 1] = {container = container, square = square,
-                                        distance = (x - x0) ^ 2 + (y - y0) ^ 2}
-                                end
-                            end
+    Grid.around(player, Kitchen.policy.radius, function(square, dx, dy)
+        local distance = dx * dx + dy * dy
+        local objects = square:getObjects()
+        for index = 0, objects:size() - 1 do
+            local object = objects:get(index)
+            if Kitchen.isStove(object) then
+                local container = object:getContainer()
+                local waiting = rejected and rejected["stove:" .. stoveKey(object)]
+                if not fridgesOnly and container:isPowered() and not object:Activated() and free(container)
+                        and not (waiting and now < waiting) then
+                    result.stoves[#result.stoves + 1] = {object = object, square = square, distance = distance}
+                end
+            elseif object.getContainerCount then
+                for c = 0, object:getContainerCount() - 1 do
+                    local container = object:getContainerByIndex(c)
+                    if container and container:getType() ~= "stove" then
+                        take(container, false)
+                        if container:getType() == "fridge" and container:isPowered() then
+                            result.fridges[#result.fridges + 1] = {container = container, square = square, distance = distance}
                         end
                     end
                 end
             end
         end
-    end
+    end)
     table.sort(result.stoves, function(a, b) return a.distance < b.distance end)
     table.sort(result.fridges, function(a, b) return a.distance < b.distance end)
     return result
@@ -179,10 +148,7 @@ end
 -- The stove a survivor lit and what is in it, kept across saves and Stop.
 function Kitchen.ledger(player) return player:getModData().AutoMindfulKitchen end
 
-local function write(player, entry)
-    player:getModData().AutoMindfulKitchen = entry
-    if isClient() and player.transmitModData then pcall(player.transmitModData, player) end
-end
+local function write(player, entry) Saved.set(player, "AutoMindfulKitchen", entry) end
 
 local function stoveAt(entry)
     local square = entry and getCell():getGridSquare(entry.x, entry.y, entry.z)
@@ -223,11 +189,7 @@ local function others(container, entry)
     return false
 end
 
-local function adjacent(player, square)
-    local here = player:getSquare()
-    return here and square and here:getZ() == square:getZ() and math.abs(here:getX() - square:getX()) <= 1
-        and math.abs(here:getY() - square:getY()) <= 1
-end
+local function adjacent(player, square) return Grid.adjacent(player:getSquare(), square) end
 
 -- A toggle that only ever moves the stove the way it was meant to: someone
 -- else may have switched it in the meantime.
@@ -454,7 +416,7 @@ function Kitchen.meal(player, state, now)
     if entry.carried then return Kitchen.place(player, state, now, record, object) end
     -- First the fridge, then, from wherever that leaves the survivor, the stove.
     local queued = P.ownBatch(player, state, "kitchen", "Getting " .. record.name .. " to cook.", function()
-        local from = squareOf(entry.container)
+        local from = Grid.containerSquare(entry.container)
         if from and not adjacent(player, from) and not luautils.walkAdj(player, from, true) then return end
         for _, chosen in ipairs(batch) do
             if not chosen.carried then transfer(player, chosen.item, chosen.container, inventory) end
@@ -565,13 +527,13 @@ function Kitchen.store(player, state, now)
     for _, id in ipairs(list) do
         local item = inventory:getItemById(id)
         if item and instanceof(item, "Food") and item:isCooked() and not item:isRotten() and not item:isBurnt()
-                and not (item.isFavorite and item:isFavorite()) then items[#items + 1] = item end
+                and not Grid.favorite(item) then items[#items + 1] = item end
     end
     if #items == 0 then data.AutoMindfulLeftovers = nil; return false end
     if state.storeNext and now < state.storeNext and state.storeNext - now <= Kitchen.policy.lookMs then return false end
     state.storeNext = now + Kitchen.policy.lookMs
     local fridge
-    for _, candidate in ipairs(Kitchen.scan(player, nil, now).fridges) do
+    for _, candidate in ipairs(Kitchen.scan(player, nil, now, true).fridges) do
         if candidate.container:hasRoomFor(player, items[1]) then fridge = candidate; break end
     end
     if not fridge then return false end
@@ -621,7 +583,7 @@ function Kitchen.watchdog(player, now)
         or ("The stove is on" .. (entry.name and (" with " .. entry.name .. " inside") or "") .. " and nothing is watching it.")
     warned[player] = now
     Log.headline(player, "kitchen.unwatched", "detail", detail)
-    HUD.show(player:getPlayerNum(), {brand="Second Nature", theme="mindful", status="stopped", title="Kitchen", detail=detail})
+    Alerts.notice(player, "Kitchen", detail)
 end
 
 if Events and Events.EveryOneMinute then

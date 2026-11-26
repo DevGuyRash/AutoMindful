@@ -1,6 +1,9 @@
 -- Colors, icons and measured text. Neutral charcoal like the stock panels; one
 -- accent per kind of work so a glance says what is running.
 local Theme = {}
+-- The mod's name wherever a player reads it. The mod ID stays AutoMindful.
+Theme.brand = "Second Nature"
+Theme.brandMark = string.upper(Theme.brand)
 
 local function rgb(r, g, b, a) return {r=r, g=g, b=b, a=a or 1} end
 

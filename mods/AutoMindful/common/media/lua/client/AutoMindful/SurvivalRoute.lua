@@ -1,5 +1,6 @@
 -- Admission and negative evidence for care supply routes. The engine
 -- still owns every movement, collision, stop and actual interaction.
+local Grid = require "AutoMindful/Grid"
 local Route = {}
 local scopeKey,roomsKey={},{}
 
@@ -117,10 +118,7 @@ function Route.tileState(square,vehicle)
     return string.sub("ABCDEFGHIJKLMNOP",n+1,n+1)
 end
 
-local function adjacent(here,square)
-    return here and square and square:getZ()==here:getZ()
-        and math.abs(square:getX()-here:getX())<=1 and math.abs(square:getY()-here:getY())<=1
-end
+local adjacent=Grid.adjacent
 
 function Route.waterInReach(point,here,partSquare)
     -- The adjacent scanner first visits physical parts within one square,

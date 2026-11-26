@@ -24,7 +24,7 @@ function Jobs.title(status)
     if status.mode == "meditateTo" or status.mode == "yogaTo" then
         return "Reach " .. (goal and Tiers.label(goal.kind, goal.target) or "a moodle tier")
     end
-    local name = names[status.mode] or "Second Nature"
+    local name = names[status.mode] or Theme.brand
     return status.backgroundPractice and (name .. " practice") or name
 end
 

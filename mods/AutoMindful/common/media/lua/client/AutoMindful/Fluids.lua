@@ -14,18 +14,26 @@ function Fluids.container(item)
     return (world and world:getFluidContainer()) or item:getFluidContainer()
 end
 
-function Fluids.safeFood(item)
-    if not instanceof(item, "Food") then return true end
+-- Nothing in the food itself would harm the survivor: not rotten, poisoned,
+-- tainted, sickening or alcoholic, with no unknown eating effect. Cooking does
+-- not change any of this, so eating and cooking share it.
+function Fluids.harmless(item)
     -- BodyDamage.JustAteFood applies age >= offAgeMax even when isRotten()
     -- masks it (fertilized eggs). Stale food is below this threshold; vanilla
     -- nonperishables use a very large offAgeMax, not a freshness requirement.
     -- The stock wild-food callback only reads poison power, checked below.
     local effect = item:getOnEat()
     return (not effect or effect == "" or effect == "RecipeCodeOnEat.consumeWildFoodGeneric")
-        and not item:isRotten() and item:getAge() < item:getOffAgeMax()
-        and not item:isBurnt() and not item:isFrozen() and not item:isTainted()
+        and not item:isRotten() and item:getAge() < item:getOffAgeMax() and not item:isTainted()
         and not item:isPoison() and item:getPoisonPower() <= 0 and item:getFoodSicknessChange() <= 0
-        and not item:isAlcoholic() and (not item:isbDangerousUncooked() or item:isCooked())
+        and not item:isAlcoholic()
+end
+
+-- Safe to eat now: harmless, and not burnt, frozen or dangerous raw.
+function Fluids.safeFood(item)
+    if not instanceof(item, "Food") then return true end
+    return Fluids.harmless(item) and not item:isBurnt() and not item:isFrozen()
+        and (not item:isbDangerousUncooked() or item:isCooked())
 end
 
 local function safeOwner(container)

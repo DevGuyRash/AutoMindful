@@ -4,6 +4,7 @@ local Consumables = require "AutoMindful/Consumables"
 local Supplies = require "AutoMindful/Supplies"
 local Fluids = require "AutoMindful/Fluids"
 local Storage = require "AutoMindful/Storage"
+local Grid = require "AutoMindful/Grid"
 local PainCare = require "AutoMindful/PainCare"
 local ScoutMemory = require "AutoMindful/ScoutMemory"
 local SurvivalRoute = require "AutoMindful/SurvivalRoute"
@@ -11,14 +12,9 @@ local Nearby = {}
 local Needs = require "AutoMindful/SurvivalNeeds"
 local snapshots = {}
 
-local function key(square)
-    return tostring(square:getX()) .. ":" .. tostring(square:getY()) .. ":" .. tostring(square:getZ())
-end
+local key = Grid.key
 
-local function permitted(player, square, loot)
-    return not isClient() or (SafeHouse.isSafehouseAllowInteract(square, player)
-        and (not loot or SafeHouse.isSafehouseAllowLoot(square, player)))
-end
+local function permitted(player, square, loot) return Storage.permitted(player, square, not loot) end
 
 local function normalizedRadius(radius)
     radius = tonumber(radius) or 10

@@ -35,6 +35,7 @@ function Diet.fit(goal, item)
     local share = function(value) return math.max(-1, math.min(1, value)) end
     if goal == "protein" then return share(number(item, "getProteins") / relief / 100 - 0.2) end
     if goal == "lowcarb" then return share(0.3 - number(item, "getCarbohydrates") / relief / 250) end
+    if goal == "lowfat" then return share(0.3 - number(item, "getLipids") / relief / 150) end
     -- About 2000 calories per full hunger bar is ordinary food.
     if goal == "more" then return share(calories / 2000 - 1) end
     if goal == "fewer" then return share(1 - calories / 2000) end

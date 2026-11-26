@@ -413,7 +413,8 @@ function Kitchen.meal(player, state, now)
     if P.available(player, state, "food") then return false end
     local found = Kitchen.scan(player, state.rejected, now)
     local entry, stove = Kitchen.choose(found.food, player), found.stoves[1]
-    Log.event(player, "kitchen.look", "raw", #found.food, "stoves", #found.stoves, "chosen", entry and Snap.item(entry.item))
+    Log.event(player, "kitchen.look", "raw", #found.food, "stoves", #found.stoves, "diet", Diet.goal(player),
+        "chosen", entry and Snap.item(entry.item))
     if not entry then
         state.kitchenNotice = nil
         return false

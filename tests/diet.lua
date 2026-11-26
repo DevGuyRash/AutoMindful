@@ -36,10 +36,12 @@ goal="protein"; assert(Diet.score(survivor(80),steak)>Diet.score(survivor(80),br
 goal="more"; assert(Diet.score(survivor(80),bread)>Diet.score(survivor(80),salad))
 goal="fewer"; assert(Diet.score(survivor(80),salad)>Diet.score(survivor(80),bread))
 goal="lowcarb"; assert(Diet.score(survivor(80),steak)>Diet.score(survivor(80),bread))
+local fatty=food({hunger=-.4,fat=60}); function fatty:getLipids() return self.fat end
+goal="lowfat"; assert(Diet.score(survivor(80),salad)>Diet.score(survivor(80),fatty))
 goal="balanced"; assert(Diet.score(survivor(80),steak)==0 and Diet.adjust(survivor(80),0.5,steak)==0.5)
 passed("each goal prefers the food it should")
 
-for _,g in ipairs({"protein","more","fewer","lowcarb"}) do
+for _,g in ipairs({"protein","more","fewer","lowcarb","lowfat"}) do
     goal=g
     for _,item in ipairs({steak,bread,salad,food({hunger=-.01,protein=999,calories=99999,carbs=999})}) do
         local u=Diet.adjust(survivor(80),1,item)

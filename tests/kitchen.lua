@@ -88,6 +88,7 @@ local parts={available=function() return false end, stat=function(p,k) return p.
     end}
 Kitchen.bind(parts)
 Options.cookMeals=function() return true end
+Options.makeSoup=function() return false end
 local function run() for _,action in ipairs(queued) do action:perform() end; queued={} end
 local function state() return {active=true,rejected={}} end
 
@@ -148,7 +149,7 @@ do
     Kitchen.meal(p,s,1000); run(); Kitchen.settle(p,s,1100)
     oven.container.off=true
     assert(Kitchen.duty(p,s,2000,true) and s.message:find("power went off",1,true))
-    assert(s.rejected["stove:1:0:0"],"A stove without power is not tried again for a while")
+    assert(s.kitchenSkip["stove:1:0:0"],"A stove without power is not tried again for a while")
     run()
     assert(not oven.on and p.inventory:contains(raw),"Switched off and the dish taken out")
     passed("a power cut ends the dish safely")
@@ -216,7 +217,7 @@ do
     Kitchen.meal(p,s,1000)
     queued={} -- the walk failed; nothing reached the stove
     Kitchen.settle(p,s,1100)
-    assert(Kitchen.ledger(p)==nil and s.rejected[raw:getID()],"Nothing to clean up, and the dish waits before another try")
+    assert(Kitchen.ledger(p)==nil and s.kitchenSkip[raw:getID()],"Nothing to clean up, and the dish waits before another try")
     passed("a batch that never reached the stove leaves nothing behind")
 end
 
@@ -478,4 +479,92 @@ do
     assert(Kitchen.practice(p,s,2000),"Below 10 it practises")
     Perks.Cooking=nil
     passed("cooking practice stops at level 10")
+end
+do
+    -- Soup: an empty pot, the sink, two ingredients from the fridge. The pot
+    -- becomes a new item when the first goes in, then it cooks like any dish.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local oven=stove(1,0)
+    local fridge=T.container(-1,0); fridge.square=square(-1,0)
+    function fridge:getType() return "fridge" end
+    function fridge:isPowered() return true end
+    fridge.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return fridge end}}
+    local sink={water=10000,sq=square(0,2)}
+    function sink:hasWater() return true end
+    function sink:isTaintedWater() return false end
+    function sink:getFluidAmount() return self.water end
+    function sink:getSquare() return self.sq end
+    sink.sq.objects={sink}
+    Fluid={Water="Water"}
+    local fluid={amount=0}
+    function fluid:getAmount() return self.amount end
+    function fluid:isEmpty() return self.amount<=0 end
+    function fluid:isPureFluid() return true end
+    local pot=T.add(p.inventory,T.item("InventoryItem",{fullType="Base.Pot",fluid=fluid}))
+    function pot:getActualWeight() return 1 end
+    local potato=T.add(fridge,food({name="Potato"}))
+    local carrot=T.add(fridge,food({name="Carrots"}))
+    local soupItem
+    local recipe={}
+    function recipe:getUntranslatedName() return "Soup" end
+    function recipe:getItemsCanBeUse(_,base,containers)
+        local list={}
+        for _,item in ipairs(p.inventory.items) do if item.kind=="Food" and item~=base then list[#list+1]=item end end
+        return T.list(list)
+    end
+    RecipeManager={getEvolvedRecipe=function(base) return T.list(base.fullType=="Base.Pot" and fluid.amount<.9 and {} or {recipe}) end}
+    ArrayList={new=function() local l={items={}}; function l:add(x) self.items[#self.items+1]=x end; return l end}
+    ISTakeWaterAction={new=function(_,player,item) return {Type="fill",isValid=function() return true end,perform=function() item.fluid.amount=1.5 end} end}
+    ISAddItemInRecipe={new=function(_,player,r,base,item) return {Type="add",isValid=function() return true end,perform=function()
+        -- Meat goes in a part at a time: the first add takes half of it.
+        if item.name=="Potato" and not item.halved then item.halved=true; item.hunger=(item.hunger or -.5)/2
+        else T.remove(p.inventory,item) end
+        if base==pot then
+            T.remove(p.inventory,pot)
+            soupItem=T.add(p.inventory,food({name="Pot of Soup",fullType="Base.PotOfSoupRecipe",minutes=50,hunger=-.2}))
+            function soupItem:getMinutesToBurn() return 100 end
+        end
+    end} end}
+    Options.makeSoup=function() return true end
+    local function batch() run(); Kitchen.settle(p,s,T.now or 0,false); s.pending=nil end
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).stage:find("^soup"),"A soup starts instead of cooking one by one")
+    assert(s.rejected[potato:getID()] and s.rejected[carrot:getID()],"The ingredients are kept out of ordinary eating")
+    assert(s.rejected[pot:getID()],"The pot is kept for the soup too")
+    batch() -- fetched from the fridge
+    assert(p.inventory:contains(potato) and p.inventory:contains(carrot))
+    for _=1,6 do
+        local entry=Kitchen.ledger(p)
+        if not entry or entry.stage=="cooking" then break end
+        assert(Kitchen.duty(p,s,2000,true),"Each soup step queues something: "..tostring(entry.stage))
+        batch()
+    end
+    local entry=Kitchen.ledger(p)
+    assert(entry and entry.stage=="cooking" and oven.on and oven.container:contains(soupItem),"The soup is on the stove: "..tostring(entry and entry.stage))
+    assert(fluid.amount>=.9,"Filled at the sink")
+    assert(not p.inventory:contains(potato) and not p.inventory:contains(carrot),"Both went in")
+    soupItem.cooked,soupItem.time=true,51
+    assert(Kitchen.duty(p,s,3000,true)); batch()
+    assert(not oven.on and p.inventory:contains(soupItem),"Cooked, out, stove off")
+    assert(not s.rejected[soupItem:getID()],"Once cooked, the soup may be eaten")
+    Options.makeSoup=function() return false end
+    passed("a soup is made from a pot, the sink and the fridge, then cooked, even when an ingredient goes in by parts")
+end
+do
+    -- Mildly hungry: cook rather than eat raw, but leftovers come first.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    p.values.HUNGER=.2
+    function p:getMoodles() return {getMoodleLevel=function(_,kind) return kind==MoodleType.HUNGRY and 1 or 0 end} end
+    stove(1,0)
+    local raw=T.add(p.inventory,food({name="Potato"}))
+    assert(Kitchen.prefer(p,s,1000) and Kitchen.ledger(p),"Cooks the potato instead of eating it raw")
+    queued={}; Kitchen.settle(p,s,1100,true); s.pending=nil
+    squares={}; p=survivor(0,0); s=state(); p.values.HUNGER=.2
+    function p:getMoodles() return {getMoodleLevel=function(_,kind) return kind==MoodleType.HUNGRY and 1 or 0 end} end
+    stove(1,0); T.add(p.inventory,food({name="Potato"}))
+    T.add(p.inventory,food({name="Leftover stew",cooked=true}))
+    assert(not Kitchen.prefer(p,s,1000) and not Kitchen.ledger(p),"Leftovers are eaten first")
+    function p:getMoodles() return {getMoodleLevel=function(_,kind) return kind==MoodleType.HUNGRY and 2 or 0 end} end
+    passed("cooking comes before eating raw, after leftovers")
 end

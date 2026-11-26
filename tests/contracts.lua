@@ -15,7 +15,7 @@ local roaming = {enabled=false, radius=10}
 -- prompt so a journey shows what it does rather than when.
 local on = function() return true end
 package.loaded["AutoMindful/Options"] = {awayMs=function() return 180000 end,careBetween=function() return false end,firstAid=on,refill=function() return false end,
-    useBeds=function() return false end,lastResort=function() return false end,alertSound=on,resumeRecovery=on,cyclePolicy=function() return "alternate" end,searchNearby=function() return roaming.enabled end,
+    useBeds=function() return false end,cookMeals=function() return false end,lastResort=function() return false end,alertSound=on,resumeRecovery=on,cyclePolicy=function() return "alternate" end,searchNearby=function() return roaming.enabled end,
     searchRadius=function() return roaming.radius end}
 local nearbyTarget, nearbyArea
 package.loaded["AutoMindful/Nearby"] = {find=function(_, _, _, _, rejected)
@@ -50,7 +50,7 @@ package.preload["AutoMindful/CompletionHUD"] = function()
         show=function(slot, card)
             assert(slot == T.player:getPlayerNum(), "Completion card must use the survivor's local slot")
             -- A request for help is not the end of a session.
-            local list = card.title == "Recovery needs you" and "alerts" or "cards"
+            local list = card.title == "Autopilot needs you" and "alerts" or "cards"
             T.player[list][#T.player[list]+1] = card
         end,
         duration=function(seconds) return string.format("%ds", math.floor(seconds)) end,
@@ -482,11 +482,11 @@ if AutoMindfulContractHarnessOnly then return end
 test("one terminal meditation card uses observed XP, elapsed time, and the local survivor slot",function()
     local p=T.playerNew(); p.slot=1; p.meditation=9; p.xp=912; p.sitting=true
     assert(C.start(p,"meditation",false)); T.tick(p)
-    assert(#p.cards==0 and C.status(p).active, "A finished native action is not a finished AutoMindful session")
+    assert(#p.cards==0 and C.status(p).active, "A finished native action is not a finished Second Nature session")
     T.tick(p)
     assert(C.status(p).mode=="recovery" and C.status(p).active and #p.cards==1 and #p.halos==0)
     local card=p.cards[1]
-    assert(card.brand=="AUTOMINDFUL" and card.theme=="mindful")
+    assert(card.brand=="SECOND NATURE" and card.theme=="mindful")
     assert(card.title=="Meditation session complete" and card.detail=="2s | +1 Meditation XP")
     C.update(p); C.stop(p)
     assert(#p.cards==1, "Repeated terminal events must not generate another card")
@@ -531,7 +531,7 @@ test("both targets reach 10 with model provisions and native boundary actions",f
     assert(#p.cards==1 and p.cards[1].title=="Training session complete")
     assert(hasHistory(p,"read") and hasHistory(p,"eat") and hasHistory(p,"drink"))
 end)
-test("single targets switch to Recovery at 10 and leave the other skill unchanged",function()
+test("single targets switch to Autopilot at 10 and leave the other skill unchanged",function()
     for _, mode in ipairs({"yoga","meditation"}) do
         local p=T.playerNew(); for i=1,20 do T.add(p.inventory,T.item("Literature")) end
         assert(C.start(p,mode,false)); local s=T.run(p)

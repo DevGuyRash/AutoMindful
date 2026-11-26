@@ -50,7 +50,7 @@ local function foreign(p,a)
         and a.adds==1 and a.begins==1 and not a.removes,
         "This same native foreign head should run in order, with no requeue")
     assert(not a.autoMindfulOwner and not a.stopped and not a.forceStopped and not a.cancelled,
-        "AutoMindful must neither own nor cancel foreign work")
+        "Second Nature must neither own nor cancel foreign work")
 end
 local function walk(p,yes)
     p.moving,p.movementInput=yes,yes
@@ -98,7 +98,7 @@ test("ordinary several-tile walking pauses and then resumes the selected trainin
     end
 end)
 
-test("persistent Recovery pauses care during walking and drinks once after stopping at the new square",function()
+test("persistent Autopilot pauses care during walking and drinks once after stopping at the new square",function()
     local p=T.playerNew()
     p.meditation,p.xp,p.yoga=10,10000,{10,0,0}
     local bottle=T.add(p.inventory,T.water({thirst=-0.8}))
@@ -196,7 +196,7 @@ test("walking out of a planned care excursion cancels our old route and never wa
     getGameSpeed,luautils,ISWalkToTimedAction=priorSpeed,priorUtils,priorWalk
 end)
 
-test("active training still stops for combat or running; Recovery only steps back",function()
+test("active training still stops for combat or running; Autopilot only steps back",function()
     local controls={
         function(p) p.running,p.rawMovementInput=true,true end,
         function(p) p.sprinting,p.rawMovementInput=true,true end,

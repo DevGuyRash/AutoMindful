@@ -55,7 +55,7 @@ do
     local p=new(10,10)
     p.sitting,p.values.ENDURANCE=false,.82
     start(p); steps(p,18)
-    assert(p.sitting and p.postureEvents==1 and C.status(p).phase=="resting","Recovery should sit at an ordinary meaningful deficit")
+    assert(p.sitting and p.postureEvents==1 and C.status(p).phase=="resting","Autopilot should sit at an ordinary meaningful deficit")
     for _,value in ipairs({.88,.96,.9999,1}) do
         p.values.ENDURANCE=value; p.hours=p.hours+1; steps(p,12)
         assert(C.status(p).phase==(value==1 and "recovery-idle" or "resting"))
@@ -75,7 +75,7 @@ do
     assert(not tiny.postureEvents and not head(tiny) and C.status(tiny).phase=="resting")
     C.stop(tiny)
 end
-print("PASS persistent Recovery leaves native endurance to reach exact full with one posture request or no churn near full")
+print("PASS persistent Autopilot leaves native endurance to reach exact full with one posture request or no churn near full")
 
 do
     local p=new()

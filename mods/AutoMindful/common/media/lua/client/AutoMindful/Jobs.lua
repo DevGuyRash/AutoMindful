@@ -10,7 +10,7 @@ local Theme = require "AutoMindful/Theme"
 local Log = require "AutoMindful/Log"
 
 local Jobs = {}
-local names = {meditation="Meditation", yoga="Yoga", both="Yoga and Meditation", recovery="Recovery"}
+local names = {meditation="Meditation", yoga="Yoga", both="Yoga and Meditation", recovery="Autopilot"}
 local policyText = {alternate="Switches after each session", lowest="Trains whichever is behind", closest="Finishes whichever is ahead"}
 local tierModes = {meditation="meditateTo", yoga="yogaTo"}
 local tierFamily = {meditation="Mindfulness", yoga="Zen"}
@@ -24,7 +24,7 @@ function Jobs.title(status)
     if status.mode == "meditateTo" or status.mode == "yogaTo" then
         return "Reach " .. (goal and Tiers.label(goal.kind, goal.target) or "a moodle tier")
     end
-    local name = names[status.mode] or "AutoMindful"
+    local name = names[status.mode] or "Second Nature"
     return status.backgroundPractice and (name .. " practice") or name
 end
 
@@ -93,7 +93,8 @@ function Jobs.list(player, status)
         local recovery, missing = Controller.check(player, "recovery")
         local _, wellness = Controller.check(player, "both")
         if recovery then Jobs.addRecovery(list, player, status) end
-        return list, Theme.plain(missing or wellness)
+        local notice = wellness and missing and missing ~= wellness and (wellness .. " " .. missing) or wellness or missing
+        return list, Theme.plain(notice)
     end
     for _, kind in ipairs({"yoga", "meditation"}) do
         local gate = gates[kind]
@@ -140,7 +141,7 @@ end
 
 function Jobs.stop(player, source)
     Log.event(player, "ui.stop", "source", source)
-    Controller.stop(player, "You stopped AutoMindful.")
+    Controller.stop(player, "You stopped Second Nature.")
     local window = AutoMindful.UI and AutoMindful.UI.windows[player:getPlayerNum()]
     if window then window.startError = nil; window:invalidate() end
 end

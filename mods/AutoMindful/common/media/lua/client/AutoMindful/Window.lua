@@ -325,9 +325,10 @@ function Window:chooseJob(job)
 end
 
 function Window:openSwitchMenu()
-    local menu = self:menu()
+    local menu, offered = self:menu(), 0
     for _, job in ipairs((Jobs.list(self.player, self.status))) do
         if not job.running then
+            offered = offered + 1
             local option = menu:addOption(job.title, self, Window.chooseJob, job)
             if option then
                 option.iconTexture = Theme.icon(job.icon)
@@ -340,6 +341,10 @@ function Window:openSwitchMenu()
                 end
             end
         end
+    end
+    if offered == 0 then
+        local option = menu:addOption("Nothing else is available now")
+        if option then option.notAvailable = true end
     end
 end
 
@@ -476,7 +481,7 @@ function Window:refresh()
     if self.wasRunning ~= running then self.wasRunning, self.resetFit = running, true end
     if running then self.startError = nil end
     self.accent = running and Jobs.colors[self.status.mode] or "recovery"
-    self.title = self.geometry.mini and running and Jobs.title(self.status) or "AutoMindful"
+    self.title = self.geometry.mini and running and Jobs.title(self.status) or "Second Nature"
     self.body:setRows(Views[self.view](self))
     local reset = self.resetFit
     self.resetFit = nil
@@ -517,7 +522,7 @@ function Window.open(player)
     if window and window.player ~= player then window:close(); window = nil end
     if not window then
         window = Window:new(70, 70, 400, 300)
-        window.player, window.title, window.view = player, "AutoMindful", "now"
+        window.player, window.title, window.view = player, "Second Nature", "now"
         window.backgroundColor, window.borderColor = colors.window, colors.border
         window.geometry = Preferences.geometry(player)
         window.resizable, window.nextRefresh, window.grown = true, 0, 0

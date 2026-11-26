@@ -30,7 +30,7 @@ local function started(p, mode, nearby)
     assert(ok, reason)
     local status = C.status(p)
     assert(status.active and status.mode == mode)
-    assert(status.cycle == nil, "Recovery must not create a training ledger")
+    assert(status.cycle == nil, "Autopilot must not create a training ledger")
 end
 local function survivor(rank)
     local p = T.playerNew()
@@ -111,7 +111,7 @@ local function test(name, run)
     print("PASS " .. name)
 end
 
-test("persistent Recovery stays armed at both caps without practicing at low or full endurance", function()
+test("persistent Autopilot stays armed at both caps without practicing at low or full endurance", function()
     local p = survivor(10)
     p.values.ENDURANCE = 0.24
     started(p, "recovery")
@@ -149,7 +149,7 @@ test("lifesaving drinking and ordinary meals run at rank zero and both caps with
     end
 end)
 
-test("missing critical water keeps persistent Recovery waiting and uses water that becomes available", function()
+test("missing critical water keeps persistent Autopilot waiting and uses water that becomes available", function()
     local p = survivor(0)
     p.values.THIRST,p.thirstMoodle=0.46,4
     started(p,"recovery")
@@ -191,7 +191,7 @@ test("nearby literature is borrowed, used, and returned before optional Yoga", f
     C.stop(p)
 end)
 
-test("native painkiller receipt happens only once during Recovery", function()
+test("native painkiller receipt happens only once during Autopilot", function()
     local p = survivor(0)
     local item = T.add(p.inventory, T.item("DrainableComboItem", {fullType="Base.Pills",uses=4}))
     function item:getCurrentUses() return self.uses end
@@ -305,7 +305,7 @@ test("Stop All disarms without clearing unrelated native work", function()
     end
 end)
 
-test("Recovery leaves sequential chopping, walks, and short empty gaps alone", function()
+test("Autopilot leaves sequential chopping, walks, and short empty gaps alone", function()
     local p=survivor(10)
     started(p,"recovery")
     local first=T.action(p,"ISChopTreeAction")
@@ -354,7 +354,7 @@ test("Recovery leaves sequential chopping, walks, and short empty gaps alone", f
     C.stop(p)
 end)
 
-test("temporary danger pauses Recovery, but a dead survivor stays disarmed", function()
+test("temporary danger pauses Autopilot, but a dead survivor stays disarmed", function()
     local p=survivor(10)
     local originalSquare=p.getSquare
     function p:getSquare() if not self.unloaded then return originalSquare(self) end end
@@ -393,7 +393,7 @@ test("temporary danger pauses Recovery, but a dead survivor stays disarmed", fun
         and bottle.fluid:getAmount()==1)
 end)
 
-test("arming Recovery with controls held and dismissing a context menu never queue over the player",function()
+test("arming Autopilot with controls held and dismissing a context menu never queue over the player",function()
     local p=survivor(10)
     p.running,p.rawMovementInput,p.aiming=true,true,true
     p.values.THIRST,p.thirstMoodle=.46,4
@@ -431,7 +431,7 @@ test("eligible Yoga is allowed at rank zero or cap, but relief is not credited a
     end
 end)
 
-test("urgent water interrupts only owned optional Yoga, then Recovery remains available", function()
+test("urgent water interrupts only owned optional Yoga, then Autopilot remains available", function()
     local p = survivor(10)
     local bottle=water(p)
     p.values.BOREDOM=43
@@ -692,4 +692,4 @@ end)
 
 for kind, fn in pairs(menus) do ZenWellnessContextMenu.Options[kind].onAction=fn end
 getModInfoByID, Options.practiceCare=previousInfo, previousCare
-print("PASS "..cases.." Recovery mode integration cases (explicit game-boundary doubles)")
+print("PASS "..cases.." Autopilot mode integration cases (explicit game-boundary doubles)")

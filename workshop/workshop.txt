@@ -1,19 +1,16 @@
 version=1
-title=AutoMindful - Yoga and Meditation [B42]
-description=Automate Lifestyle: Hobbies meditation and yoga using the mod's normal training actions and XP.
+title=Second Nature - Autopilot and Training [B42]
+description=Second Nature (formerly AutoMindful) looks after your survivor while you play or are away, and trains skills for you.
 description=
 description=[h2]Features[/h2]
-description=Train meditation, yoga, or both toward level 10. Take normal reading, food, water, rest and sleep breaks, then resume. Recovery can handle needs without training, or stop when endurance is full. Optional collection takes needed supplies from reachable adjacent ground and storage inventories.
+description=Autopilot keeps the survivor fed, watered, rested and bandaged, watches supplies and warns before they run out. With Lifestyle: Hobbies it also trains Yoga and Meditation toward level 10 using Lifestyle's own actions and XP.
 description=
 description=[h2]How to use[/h2]
-description=Enable Lifestyle: Hobbies and AutoMindful. Open AutoMindful from the Wellness menu, check supplies, then choose a training or Recovery mode. Ordinary walking pauses and resumes the mode; Stop All stops only AutoMindful. Scout nearby for supplies is on by default and can be changed in the training window or Options > Mods > AutoMindful. Saved choices are kept.
-description=Prepare ready-to-eat safe food, clean water, and unread leisure books, comics or magazines. Choose a safe, quiet, lit spot. Stand on a complete deployed yoga mat if the sandbox requires one.
+description=Right-click your survivor (or open Lifestyle's Wellness menu) and choose Second Nature. Ordinary walking pauses and resumes the job; Stop All stops only Second Nature. Settings are in the window or Options > Mods > Second Nature.
 description=
 description=[h2]Requirements and multiplayer[/h2]
-description=Project Zomboid Build 42.22+ and Lifestyle: Hobbies with yoga support. Tested on 42.22.2 with official Lifestyle 0.4.0.3.
-description=All AutoMindful executable code is client-side. Once loaded on the client, AutoMindful does not need a server-side component. Server rules and Lifestyle's normal requirements still apply.
-description=
-description=Requires [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858]Lifestyle: Hobbies by Angry[/url]. No Lifestyle files are bundled.
+description=Project Zomboid Build 42.22+. Lifestyle: Hobbies is optional and needed only for Yoga and Meditation. Tested on 42.22.2 with official Lifestyle 0.4.0.3.
+description=All executable code is client-side. Once loaded on the client, Second Nature does not need a server-side component. Server rules still apply.
 description=Mod ID: AutoMindful
 tags=Build 42
 visibility=private

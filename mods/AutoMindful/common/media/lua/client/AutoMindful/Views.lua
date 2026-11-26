@@ -79,6 +79,7 @@ local function notices(player, status, report, startError, said)
     if status.active then
         for _, alert in ipairs(status.alerts or {}) do if not (said and said[alert.id]) then add(alert.text, colors.bad) end end
         add(status.aidNotice, colors.bad)
+        add(status.kitchen and status.kitchen.notice, colors.warn)
         if not (said and (said.food or said.water)) then add(status.careNotice) end
         add(status.painNotice)
     end
@@ -167,7 +168,7 @@ function Views.now(window)
         gap(rows, 4)
         rows[#rows + 1] = {kind="buttons", buttons={
             {text="Stop", color=colors.bad, onClick=function() Jobs.stop(player, "window") end,
-                tip="Stops AutoMindful and its own action only. Anything you or another mod queued keeps going."},
+                tip="Stops Second Nature and its own action only. Anything you or another mod queued keeps going."},
             {text="Switch", menu=true, color=colors.muted, onClick=function() window:openSwitchMenu() end,
                 tip="Change to another job without stopping first."},
         }}
@@ -271,7 +272,7 @@ function Views.guide(window)
     local sections = Wellness.guide(window.player, window.status and window.status.progress)
     local chosen = sections[1]
     for _, section in ipairs(sections) do if section.title == window.topic then chosen = section end end
-    if not chosen then return {{kind="text", text="No guide available for this Lifestyle version.", color=colors.muted}} end
+    if not chosen then return {{kind="text", text=Tiers.lifestylePresent() and "No guide available for this Lifestyle version." or "The guide covers Lifestyle: Hobbies Yoga and Meditation. Autopilot needs no setup.", color=colors.muted}} end
     window.topic = chosen.title
     local buttons = {}
     for _, section in ipairs(sections) do
@@ -316,16 +317,16 @@ function Views.settings(window)
             onClick=function() window:openRadiusMenu() end}
     end
     toggle("practiceCare", "Practise for relief", "Use Yoga or Meditation when it is the best way to ease a need.")
-    head(rows, "Recovery")
+    head(rows, "Autopilot")
     rows[#rows + 1] = {kind="setting", label="Away after", value=Options.awayMinutes[Options.awayIndex()] .. " min", menu=true,
-        tip="Without any input. While you are away, Recovery does everything it can.", onClick=function() window:openAwayMenu() end}
+        tip="Without any input. While you are away, Autopilot does everything it can.", onClick=function() window:openAwayMenu() end}
     toggle("recoveryFirstAid", "Bandage wounds", "Uses the best dressing carried or within reach. Also during training.")
     toggle("recoveryBetween", "Eat and drink between actions", "While you or another mod keep the queue busy, a carried bite or sip goes between two actions.")
     toggle("recoveryRefill", "Keep carried bottles full", "The game drinks from carried bottles by itself, so a full one keeps the survivor going when nothing else works.")
     toggle("recoveryBeds", "Sleep in a nearby bed", "Walks there and back. Off: sleeps on the spot.")
     toggle("recoveryLastResort", "Unsafe water rather than death", "Only after a minute of Dying of Thirst with nothing clean left.")
     toggle("recoverySound", "Sound when it needs you", "Heard only by you, not by zombies.")
-    toggle("recoveryResume", "Carry on after loading", "If Recovery was on when you left, it starts again.")
+    toggle("recoveryResume", "Carry on after loading", "If Autopilot was on when you left, it starts again.")
     toggle("strictRecoveryTier", "Finish its moodle tier", "Keep working toward the minimum even if the need that started it clears.")
     head(rows, "Window and menu")
     rows[#rows + 1] = {kind="setting", label="Open and close key", value=window.capturing and (window.keyTaken and (window.keyTaken .. " is in use. Try another") or "Press a key, Esc to cancel")
@@ -347,7 +348,7 @@ Views.order = {
 -- A report a player can paste: what it is, what it is doing, what it did.
 function Views.report(player, status)
     local Snap = require "AutoMindful/Snapshot"
-    local lines = {"AutoMindful report", "mode=" .. tostring(status.mode) .. " active=" .. tostring(status.active)
+    local lines = {"Second Nature report", "mode=" .. tostring(status.mode) .. " active=" .. tostring(status.active)
         .. " phase=" .. tostring(status.phase) .. " message=" .. tostring(status.message), Snap.player(player)}
     for _, entry in ipairs(Controller.recentDecisions(player)) do
         lines[#lines + 1] = (entry.clock or "") .. " " .. entry.label .. (entry.reason and (" - " .. entry.reason) or "")

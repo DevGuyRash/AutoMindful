@@ -91,7 +91,7 @@ def stage(archive: Path, manifest_path: Path, tag: str, output: Path, notes: str
         destination.write_bytes(data)
     (output / "release.json").write_text(json.dumps({
         "tag": tag, "version": current, "archiveSha256": manifest["archiveSha256"],
-        "changeNote": "AutoMindful " + tag + ("\n\n" + notes.strip() if notes.strip() else ""),
+        "changeNote": "Second Nature " + tag + ("\n\n" + notes.strip() if notes.strip() else ""),
         "files": {name: sha256(data) for name, data in content.items()},
     }, indent=2) + "\n", encoding="utf-8")
     print(f"Staged {tag} from the verified archive at {output}")

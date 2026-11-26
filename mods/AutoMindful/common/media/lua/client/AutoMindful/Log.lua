@@ -236,7 +236,7 @@ end
 
 function Log.start(version, lifestyle)
     Log.flush()
-    header = string.format("AutoMindful %s | Lifestyle %s | game %s | %s", tostring(version or "?"), tostring(lifestyle or "?"),
+    header = string.format("Second Nature %s | Lifestyle %s | game %s | %s", tostring(version or "?"), tostring(lifestyle or "none"),
         getCore and getCore().getVersionNumber and tostring(getCore():getVersionNumber()) or "?",
         isClient and isClient() and "multiplayer client" or "singleplayer")
     contexts, rates, ring, slot = {}, {}, {}, nil

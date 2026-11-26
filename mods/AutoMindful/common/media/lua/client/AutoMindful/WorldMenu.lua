@@ -68,10 +68,10 @@ local function stop(player) Jobs.stop(player, "menu") end
 
 local function fillRunning(menu, player, status)
     local option = menu:addOption("Stop", player, stop)
-    if option then tip(menu, option, "Stop AutoMindful", "Your own actions and other mods' actions keep going.") end
+    if option then tip(menu, option, "Stop Second Nature", "Your own actions and other mods' actions keep going.") end
     if status.mode == "recovery" then
         local away = menu:addOption(status.away and "I am back" or "I am going AFK", player, Controller.setAway, not status.away)
-        if away then tip(menu, away, "Recovery", status.away and "Back to small help only." or "Full care from now on, and a warning if something would go wrong.") end
+        if away then tip(menu, away, "Autopilot", status.away and "Back to small help only." or "Full care from now on, and a warning if something would go wrong.") end
     end
     local switch = menu:addOption("Switch to", nil, nil)
     local offered = switch and fillJobs(submenu(menu, switch), player, status) or ""
@@ -81,7 +81,7 @@ end
 
 local function root(context, player, status)
     for _, option in ipairs(context.options) do if option.autoMindful then return nil end end
-    local label = status.active and ("AutoMindful: " .. Jobs.title(status)) or "AutoMindful"
+    local label = status.active and ("Second Nature: " .. Jobs.title(status)) or "Second Nature"
     local option = context:addOption(label, nil, nil)
     if not option then return nil end
     option.autoMindful = true
@@ -116,7 +116,7 @@ function Menu.attach(context, player)
     local wellness = find(context, {})
     if not wellness then return end
     for _, option in ipairs(wellness.options) do if option.autoMindful then return end end
-    local option = wellness:addOption("AutoMindful", nil, nil)
+    local option = wellness:addOption("Second Nature", nil, nil)
     if not option then return end
     option.autoMindful = true
     option.iconTexture = Theme.icon("Mindful")
@@ -127,6 +127,7 @@ function Menu.attach(context, player)
 end
 
 function Menu.install()
+    if not ZenWellnessContextMenu or type(ZenWellnessContextMenu.doBuildMenu) ~= "function" then return end
     if ZenWellnessContextMenu.doBuildMenu == Menu.wrapper then return end
     local original = ZenWellnessContextMenu.doBuildMenu
     Menu.wrapper = function(playerIndex, menu, ...)
@@ -218,7 +219,8 @@ function Menu.fill(playerIndex, context, worldobjects, test)
         end
         return
     end
-    if not Options.generalMenu() then return end
+    -- Without Lifestyle there is no Wellness menu to sit beside; stand on our own.
+    if not Options.generalMenu() and (ZenWellnessContextMenu or not onSurvivor(player, worldobjects)) then return end
     local menu = root(context, player, status)
     if menu then
         Log.detail(player, "ui.menu", "place", "general", "offered", fillJobs(menu, player, status))

@@ -38,7 +38,7 @@ local Controller = {}
 AutoMindful.Controller = Controller
 local states = {}
 local modeTitles = {both = "Training", meditation = "Meditation", yoga = "Yoga",
-    recovery = "Recovery", meditateTo = "Meditation", yogaTo = "Yoga"}
+    recovery = "Autopilot", meditateTo = "Meditation", yogaTo = "Yoga"}
 local tierModes = {meditateTo="meditation", yogaTo="yoga"}
 local tierAttempts, tierWorkMs, tierWaitingMs = 4, 480000, 480000
 local recoveryTierMs = {[1]=90000, [2]=240000, [3]=420000}
@@ -346,7 +346,7 @@ local function showSessionEnd(player, state)
     end
     local stopped = state.endPhase == "stopped"
     hud.show(player:getPlayerNum(), {
-        brand="AUTOMINDFUL", theme="mindful",
+        brand="SECOND NATURE", theme="mindful",
         title=modeTitles[state.mode] .. (stopped and " session stopped" or " session complete"),
         detail=table.concat(detail, " | "),
         status=state.endPhase, note=stopped and state.endMessage or nil,
@@ -766,7 +766,7 @@ function Controller.restoreMask(player, state, now)
         status="manual"
     end
     state.maskRestore=nil
-    if status=="manual" then state.maskNotice="AutoMindful could not safely restore the mask. Check your equipment." end
+    if status=="manual" then state.maskNotice="Second Nature could not safely restore the mask. Check your equipment." end
     return false
 end
 
@@ -842,12 +842,13 @@ local function sleepAdmitted(reason)
 end
 
 local function excursionMotion(player, state)
-    if not state or not state.excursion then return false end
+    -- The kitchen walks to the stove and back without a trip of its own.
+    if not state or not (state.excursion or state.phase == "kitchen") then return false end
     if player:pressedMovement(false) or player:pressedCancelAction() then return false end
     local current = queueFor(player)[1]
     if current then return current.autoMindfulOwner == state and routeAction(current) end
     -- Native motion can outlive the queued walk by a frame at completion or path failure.
-    if state.phase == "travelling" or state.phase == "bed" then
+    if state.phase == "travelling" or state.phase == "bed" or state.phase == "kitchen" then
         for _, action in ipairs(state.pending or {}) do
             if routeAction(action) and (action.autoMindfulFinished or action.autoMindfulStopped) then return true end
         end
@@ -952,7 +953,7 @@ function Controller.recoveryInterruption(player,state,queue)
         if priorContext or state.contextVisible then state.uiCancelHeld=true end
         -- Escape also opens the game's own menu. It means "not now", never
         -- "stop looking after this survivor".
-        if not state.uiCancelHeld then return "Cancelled by your input. Recovery stays on.","manual-input" end
+        if not state.uiCancelHeld then return "Cancelled by your input. Autopilot stays on.","manual-input" end
     end
 
     local square=player:getSquare()
@@ -975,15 +976,15 @@ function Controller.recoveryInterruption(player,state,queue)
     else level,unsafe=Recovery.readGuard(player,state) end
     if level=="engaged" or state.guard and Recovery.optionalWork(player,state) then
         Recovery.parkTrip(state)
-        return "Recovery paused: "..unsafe..".", "recovery-danger"
+        return "Autopilot paused: "..unsafe..".", "recovery-danger"
     end
-    if walking then return "Recovery is waiting for your movement to settle.","walking" end
+    if walking then return "Autopilot is waiting for your movement to settle.","walking" end
     if player:isAiming() or (player:pressedAim() and not state.contextVisible and not state.inspectingUI) then
-        return "Recovery is waiting for you to stop aiming.","manual-input"
+        return "Autopilot is waiting for you to stop aiming.","manual-input"
     end
-    if player:isAttacking() then return "Recovery is waiting for your attacks to finish.","manual-input" end
-    if player:isDraggingCorpse() then return "Recovery is waiting for you to finish moving the corpse.","manual-input" end
-    if state.uiCancelHeld then return "Recovery is waiting for your game window to close.","inspection-open" end
+    if player:isAttacking() then return "Autopilot is waiting for your attacks to finish.","manual-input" end
+    if player:isDraggingCorpse() then return "Autopilot is waiting for you to finish moving the corpse.","manual-input" end
+    if state.uiCancelHeld then return "Autopilot is waiting for your game window to close.","inspection-open" end
 end
 
 function Controller.recoveryNativeStop(player,state,queue,action,original,...)
@@ -1004,7 +1005,7 @@ function Controller.recoveryNativeStop(player,state,queue,action,original,...)
                 -- No known path failure or intentional Stop. Do not restart a
                 -- walk we can't account for, but keep Recovery available.
                 state.excursion=nil
-                state.recoveryInterrupted={reason="Recovery is waiting for the interrupted walk to settle.",cause="settling-action"}
+                state.recoveryInterrupted={reason="Autopilot is waiting for the interrupted walk to settle.",cause="settling-action"}
             end
         end
     end
@@ -1015,6 +1016,8 @@ end
 
 local wellnessDisabled = "Lifestyle Wellness is disabled in this world."
 local function available(player, mode)
+    -- Autopilot needs nothing from Lifestyle; without it there is nothing more to wait for.
+    if mode == "recovery" and not Tiers.lifestylePresent() then return true end
     if not Tiers.wellnessEnabled() and mode ~= "recovery" then
         return false, wellnessDisabled
     end
@@ -1023,7 +1026,7 @@ local function available(player, mode)
     if not options or not options.Meditation or not options.Meditation.canPerform or not options.Meditation.onAction
             or not options.Yoga or not options.Yoga.canPerform or not options.Yoga.onAction
             or not HiddenSkills or not HiddenSkills.getSkill or not Perks or not Perks.Meditation then
-        return false, "Enable Lifestyle: Hobbies with yoga support before starting AutoMindful."
+        return false, "Yoga and Meditation need Lifestyle: Hobbies with Wellness enabled."
     end
     if not data.LSMoodles or not data.LSMoodles.Embarrassed or not data.LSMoodles.MindfulState
             or not data.LSMoodles.WasTaughtSkill or not data.LSMoodles.Zen then
@@ -1032,13 +1035,16 @@ local function available(player, mode)
     return true
 end
 
+local lifestyleMissing = "Yoga and Meditation need Lifestyle: Hobbies."
 local function yogaGate(player)
+    if not Tiers.lifestylePresent() then return false, lifestyleMissing end
     if not Tiers.wellnessEnabled() then return false, wellnessDisabled end
     local blocked, message = ZenWellnessContextMenu.Options.Yoga.canPerform(player, "", nil)
     return not blocked, message
 end
 
 local function meditationGate(player)
+    if not Tiers.lifestylePresent() then return {ready=false, kind="blocked", reason=lifestyleMissing} end
     if not Tiers.wellnessEnabled() then return {ready=false, kind="blocked", reason=wellnessDisabled} end
     local blocked, message = ZenWellnessContextMenu.Options.Meditation.canPerform(player, "", nil)
     if not blocked then return {ready=true, kind="ready"} end
@@ -1094,7 +1100,7 @@ function Controller.postureFailed(player,state,message)
     local now=getTimestampMs()
     state.practiceCare,state.practiceCareNext,state.postureRetryAt=nil,now+120000,now+60000
     state.recoveryTier=nil
-    setPhase(state,"recovery-idle","Could not change posture here. Recovery keeps watching.")
+    setPhase(state,"recovery-idle","Could not change posture here. Autopilot keeps watching.")
 end
 
 local function stand(player, state, message)
@@ -1226,7 +1232,7 @@ local function yieldToPlayer(player, state, unexplained, walking, settling, paus
         if state.active then
             if state.recovery then
                 setPhase(state,cause=="recovery-danger" and "recovery-paused" or "manual",
-                    pauseReason or "Waiting for your action. Recovery stays on in the background.",cause)
+                    pauseReason or "Waiting for your action. Autopilot stays on in the background.",cause)
             else
                 setPhase(state, cause=="recovery-danger" and "recovery-paused" or "manual", pauseReason
                     or unexplained and "Training was interrupted. Checking before resuming."
@@ -1235,7 +1241,7 @@ local function yieldToPlayer(player, state, unexplained, walking, settling, paus
         end
     elseif state.active and (pauseReason or state.phase=="recovery-paused" or state.recovery and state.pauseNotice) then
         setPhase(state,cause=="recovery-danger" and "recovery-paused" or "manual", pauseReason
-            or state.recovery and "Waiting for your action. Recovery stays on in the background."
+            or state.recovery and "Waiting for your action. Autopilot stays on in the background."
             or "Waiting for your action. Training will resume when you are ready.",cause)
     elseif state.active and state.phase=="manual" then
         Decisions.transition(state,"manual",cause)
@@ -2336,7 +2342,7 @@ local function train(player, state, kind, bridge, course)
             or kind == "yoga" and "Practicing yoga. Poses may fail normally; completed sessions restart automatically."
             or bridge == yogaEnduranceBridge and "Meditating only while Lifestyle blocks Yoga for low endurance."
             or bridge and "Meditating briefly while waiting for Yoga's native recovery requirement."
-            or "Meditating. AutoMindful will take care breaks and resume.", function()
+            or "Meditating. Second Nature will take care breaks and resume.", function()
         option.onAction({}, option, player)
     end)
     if course then return queued end
@@ -3135,8 +3141,8 @@ function Controller.missRecoveryTier(state,goal,now,finished)
     goal[key]=(goal[key] or 0)+1
     if goal[key]>=tierAttempts then
         Controller.endRecoveryTier(state,goal,now,"failed",finished
-            and "Lifestyle did not reach the Recovery tier after four completed practices."
-            or "Lifestyle repeatedly could not start or finish the Recovery practice.")
+            and "Lifestyle did not reach the Autopilot tier after four completed practices."
+            or "Lifestyle repeatedly could not start or finish the Autopilot practice.")
     else
         goal.nextAt=now+ActionYield.cooperativeWindowMs
     end
@@ -3163,7 +3169,7 @@ function Controller.resumeRecoveryTier(player,state,now,med,yoga)
     local gate=goal.kind=="meditation" and meditationGate(player) or yogaAdmission(player)
     if not gate.ready or player:isSittingOnFurniture() or player:getModData().IsSittingOnSeat
             or not careGearSafe(player,goal.kind,rank) then
-        goal.waiting="Recovery tier pending: "..(Tiers.label(goal.kind,goal.target) or "selected tier")
+        goal.waiting="Autopilot tier pending: "..(Tiers.label(goal.kind,goal.target) or "selected tier")
             ..". Waiting for Lifestyle's requirements or safe equipment."
         -- Normal care may remove the blocker, including a different useful
         -- practice. It cannot create another strict objective while this waits.
@@ -3181,7 +3187,7 @@ function Controller.observeRecoveryTier(player,state,queue,now,paused)
     if not goal and not state.recoveryTierSuppressed then return end
     if not Controller.strictRecoveryEnabled(state) then
         state.recoveryTierSuppressed=nil
-        if goal then Controller.endRecoveryTier(state,goal,now,"cancelled","Strict Recovery tier target was turned off.") end
+        if goal then Controller.endRecoveryTier(state,goal,now,"cancelled","Strict Autopilot tier target was turned off.") end
         return
     end
     if state.recoveryTierSuppressed then
@@ -3202,7 +3208,7 @@ function Controller.observeRecoveryTier(player,state,queue,now,paused)
     local reachable=selected==goal.selected and goal.target or Tiers.clamp(goal.kind,selected,rank)
     local target=math.max(reachable,goal.floor)
     if current==nil or reachable==0 or Tiers.clamp(goal.kind,target,rank)~=target then
-        Controller.endRecoveryTier(state,goal,now,"cancelled","The Recovery tier is no longer selected, unlocked, or available.")
+        Controller.endRecoveryTier(state,goal,now,"cancelled","The Autopilot tier is no longer selected, unlocked, or available.")
         return
     end
     if selected~=goal.selected then
@@ -3220,7 +3226,7 @@ function Controller.observeRecoveryTier(player,state,queue,now,paused)
         -- Stock Yoga's early stop can remove Zen. If it might, use the
         -- genuine post-action Value instead of paying a penalty for success.
         Controller.endRecoveryTier(state,goal,now,"met",(Tiers.label(goal.kind,goal.target) or "The selected tier")
-            .." is active. Recovery will continue watching for needs.")
+            .." is active. Autopilot will continue watching for needs.")
         return
     end
     if paused or not running then goal.sampleAt,goal.launchAt=nil,nil end
@@ -3383,7 +3389,7 @@ local function advance(player, state)
         state.mode, state.recovery, state.cycle, state.trainingKind = "recovery", true, nil, nil
         state.recoveryHandoffArmed = nil
         Recovery.remember(player,true)
-        setPhase(state, "recovering", "Selected skills reached level 10. Recovery stays on.")
+        setPhase(state, "recovering", "Selected skills reached level 10. Autopilot stays on.")
         return
     end
     local policy=state.backgroundPractice and "alternate" or currentCyclePolicy(player)
@@ -3517,6 +3523,11 @@ local function advance(player, state)
 end
 
 local function finishPending(player, state, now)
+    if state.phase=="kitchen" then
+        Recovery.kitchenSettled(player, state, now)
+        state.pending=nil
+        return false
+    end
     if state.phase=="firstaid" or state.phase=="refilling" then
         -- Judged by what changed on the survivor, not by how the action ended.
         if state.aidTry then
@@ -3999,10 +4010,10 @@ function Controller.updateStrictRecoveryPractice(player,state,course,head,now,pr
             goal.launchAt=nil
             if reading and reading>goal.best then goal.best,goal.workMs,goal.sampleAt=reading,0,nil end
             if budget(goal,now,"sampleAt","workMs")>=tierWorkMs then
-                Controller.endRecoveryTier(state,goal,now,"failed","Lifestyle did not make Recovery tier progress during eight minutes of practice.")
+                Controller.endRecoveryTier(state,goal,now,"failed","Lifestyle did not make Autopilot tier progress during eight minutes of practice.")
             end
         elseif budget(goal,now,"launchAt","launchMs")>=30000 then
-            Controller.endRecoveryTier(state,goal,now,"failed","Lifestyle did not start the queued Recovery tier practice.")
+            Controller.endRecoveryTier(state,goal,now,"failed","Lifestyle did not start the queued Autopilot tier practice.")
         end
     end
     if not priority and not goal.result then return end
@@ -4015,9 +4026,9 @@ function Controller.updateStrictRecoveryPractice(player,state,course,head,now,pr
     end
     state.practiceCare=nil
     state.practiceCareNext=now+120000
-    breakForCare(player,state,priority and (state.recoveryTier and "Prioritizing care. The Recovery tier will resume when safe."
-        or "Prioritizing a more urgent need.") or goal.result=="met" and "Recovery tier reached. Leaving room for other actions."
-        or "Ending the Recovery tier practice and checking other needs.")
+    breakForCare(player,state,priority and (state.recoveryTier and "Prioritizing care. The Autopilot tier will resume when safe."
+        or "Prioritizing a more urgent need.") or goal.result=="met" and "Autopilot tier reached. Leaving room for other actions."
+        or "Ending the Autopilot tier practice and checking other needs.")
     state.cooperativePending={}
 end
 
@@ -4222,7 +4233,7 @@ function Controller.update(player)
     end
     if state.active and nativeDrainStuck(player, state, queue, now) then
         if state.recovery then
-            Controller.pauseRecovery(player,state,"Recovery is waiting for its canceled action to settle.","settling-action")
+            Controller.pauseRecovery(player,state,"Autopilot is waiting for its canceled action to settle.","settling-action")
         else
             Controller.giveUp(player, "Training stopped because its canceled action did not settle. No other action was interrupted.")
         end
@@ -4321,7 +4332,7 @@ function Controller.update(player)
             if orphaned then
                 if not state.careReleaseSince or now < state.careReleaseSince then state.careReleaseSince = now end
                 if now - state.careReleaseSince >= unconfirmedSettleTimeout then
-                    Controller.giveUp(player, "Care stopped: AutoMindful could not release its previous action. Start again when ready.")
+                    Controller.giveUp(player, "Care stopped: Second Nature could not release its previous action. Start again when ready.")
                 end
             else
                 state.careReleaseSince = nil
@@ -4746,7 +4757,7 @@ local function begin(player, mode, collectNearby, tier, switching)
     if not ready then return false, message end
     local tierKind=tierModes[mode]
     local recovery=mode=="recovery"
-    local yoga = HiddenSkills.getSkill(player, "Yoga")
+    local medLevel, yogaLevel = levels(player)
     local state = {player = player, active = true, startedAt = getTimestampMs(), mode = mode, collectNearby = collectNearby == true, phase = "starting",
         message = "Checking supplies and training requirements.", rejected = {}, careNeeds = {}, failures = 0}
     if player:getSquare() then ActionYield.rememberPosition(state, player) end
@@ -4768,7 +4779,7 @@ local function begin(player, mode, collectNearby, tier, switching)
         end
     end
     if state.tierGoal or (not state.recovery
-            and ((mode ~= "yoga" and player:getPerkLevel(Perks.Meditation) < 10) or (mode ~= "meditation" and yoga[1] < 10))) then
+            and ((mode ~= "yoga" and medLevel < 10) or (mode ~= "meditation" and yogaLevel < 10))) then
         state.session = {startedAt=getTimestampMs(), progress=Progress.snapshot(player)}
     end
     state.loans, state.returnNotice = old.loans or {}, old.returnNotice
@@ -4849,7 +4860,7 @@ function Controller.status(player)
         elapsed = state.active and state.startedAt and getTimestampMs()-state.startedAt or nil, startProgress=state.startProgress,
         switching = state.switchTo ~= nil,
         away = state.active and state.recovery and Recovery.away(player,getTimestampMs()) or false, guard = state.active and state.guard or nil,
-        alerts = state.active and state.recovery and Recovery.alerts(player) or nil, aidNotice = state.active and state.aidNotice or nil, boxedIn = state.active and state.boxedIn or nil,
+        alerts = state.active and state.recovery and Recovery.alerts(player) or nil, aidNotice = state.active and state.aidNotice or nil, kitchen = state.active and Recovery.kitchen(player, state) or nil, boxedIn = state.active and state.boxedIn or nil,
         returnNotice = state.maskNotice or state.returnNotice or state.fluidNotice, careNotice = (state.practiceCareNoticeUntil and getTimestampMs()<state.practiceCareNoticeUntil and state.practiceCareNotice) or tierNotice or state.careNotice or state.lifestyleNotice, painNotice = state.painNotice, pendingReturns = #state.loans}
 end
 
@@ -4929,7 +4940,7 @@ local function onPlayerUpdate(player)
         Log.error(player,"Controller.update",message,trace)
         local now=getTimestampMs()
         if not state.recovery or player:isDead() then
-            Controller.stop(player,"AutoMindful stopped after an error. Use Copy report in the Log tab, or see console.txt.")
+            Controller.stop(player,"Second Nature stopped after an error. Use Copy report in the Log tab, or see console.txt.")
             return
         end
         -- A survivor left in our hands is not dropped over a bug. Wait longer

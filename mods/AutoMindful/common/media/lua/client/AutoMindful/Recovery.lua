@@ -3,6 +3,8 @@
 -- is, what may be done about which need, and when to ask for help. The survival
 -- parts (danger, first aid, last resort) also stand behind every training job.
 local Alerts = require "AutoMindful/Alerts"
+local Kitchen = require "AutoMindful/Kitchen"
+local HUD = require "AutoMindful/CompletionHUD"
 local Beds = require "AutoMindful/Beds"
 local Danger = require "AutoMindful/Danger"
 local FirstAid = require "AutoMindful/FirstAid"
@@ -27,7 +29,7 @@ local aidRetryMs, aidConfirmMs, bedRetryMs, refillRetryMs = 5000, 4000, 900000, 
 local lastResortMs, stalledMs, boxedAfter = 60000, 120000, 4
 local bedtimeTopUp = 0.05
 
-function Recovery.bind(parts) P = parts end
+function Recovery.bind(parts) P = parts; Kitchen.bind(parts) end
 
 -- ---------------------------------------------------------------- presence
 
@@ -120,7 +122,15 @@ function Recovery.ended(player)
     Fluids.allowTainted = false
     Alerts.forget(player)
     Presence.forget(player)
+    local stove = Kitchen.ended(player)
+    if stove then
+        Log.headline(player, "kitchen.ended", "result", stove)
+        HUD.show(player:getPlayerNum(), {brand="Second Nature", theme="mindful", status="stopped", title="Kitchen", detail=stove})
+    end
 end
+
+function Recovery.kitchenSettled(player, state, now) Kitchen.settle(player, state, now) end
+function Recovery.kitchen(player, state) return Kitchen.status(player, state) end
 
 function Recovery.alerts(player) return Alerts.list(player) end
 
@@ -279,7 +289,7 @@ function Recovery.unready(player, state, reason, now)
 end
 
 function Recovery.errorAlert(player, now, count)
-    if count >= 3 then Alerts.raise(player, "error", "AutoMindful hit an error and keeps retrying. Copy report in the Log tab helps fix it.", now, true) end
+    if count >= 3 then Alerts.raise(player, "error", "Second Nature hit an error and keeps retrying. Copy report in the Log tab helps fix it.", now, true) end
 end
 
 function Recovery.ready(player, state)
@@ -302,6 +312,14 @@ end
 -- Returns true when something was started instead of lying down right here.
 function Recovery.beforeSleep(player, state, now)
     if not state.recovery then return false end
+    -- Nobody goes to bed with the stove on.
+    if Kitchen.ledger(player) then
+        if Kitchen.duty(player, state, now, true) then return true end
+        if Kitchen.lit(player) then
+            P.setPhase(state, "recovery-idle", "Not going to sleep: the stove is still on.")
+            return true
+        end
+    end
     if topUpBeforeBed(player, state) then return true end
     state.bedTry = nil
     if state.lowHealth or state.excursion or not Options.useBeds() or not Options.searchNearby() then return false end
@@ -436,7 +454,7 @@ function Recovery.setback(player, state, reason, cause)
         "noTripsForS", math.floor((state.tripsAt - now) / 1000), "phase", state.phase, "trip", state.excursion and state.excursion.stage)
     state.excursion, state.travelScan, state.failures = nil, nil, 0
     state.stalledSkill, state.unknownPauses, state.lostWithoutAction, state.unconfirmedSince = nil, nil, nil, nil
-    P.pause(player, state, (reason or "Something went wrong.") .. " Recovery stays on and tries again.", "setback")
+    P.pause(player, state, (reason or "Something went wrong.") .. " Autopilot stays on and tries again.", "setback")
 end
 
 function Recovery.notePath(state, target, failed)
@@ -556,6 +574,7 @@ function Recovery.guarded(player, state, now)
     P.sampleIdle(state, now)
     Recovery.parkTrip(state)
     if Recovery.firstAid(player, state, now) then return end
+    if Kitchen.ledger(player) and Kitchen.duty(player, state, now, false) then return end
     if state.guardAt and now >= state.guardAt and now - state.guardAt < guardMs then return end
     state.guardAt = now
     Recovery.prepareCare(player, state, now)
@@ -582,7 +601,10 @@ function Recovery.advance(player, state, now)
     local policy = P.policy
     local endurance = P.endurance(player)
     P.sampleIdle(state, now)
+    -- A cooked or burning dish comes before anything else; watching it does not.
+    if Kitchen.urgent(player) and Kitchen.duty(player, state, now, true) then return end
     if P.care(player, state) or not state.active then return end
+    if Kitchen.meal(player, state, now) or not state.active then return end
     local away = Presence.away(player, now)
     local calm = Recovery.permit(player, state, "posture", now)
     if P.lifestyleCare(player, state, P.lifestyleReady(player, state, now), now) then return end

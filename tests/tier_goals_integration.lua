@@ -298,7 +298,7 @@ test("a newly impossible optional native gate or corrupt tier does not disarm tr
     C.stop(p)
 end)
 
-test("Recovery minimum never starts idle buff work or continues after need resolves",function()
+test("Autopilot minimum never starts idle buff work or continues after need resolves",function()
     local p=new(10,10)
     config.utility,config.recovery.meditation=true,2
     p.data.AutoMindfulLastCompleted="yoga"

@@ -2,6 +2,11 @@ local Facts = require "AutoMindful/WellnessFacts"
 
 local Tiers = {}
 
+-- Yoga, Meditation and their tiers come from Lifestyle: Hobbies, which is optional.
+function Tiers.lifestylePresent()
+    return ZenWellnessContextMenu ~= nil and HiddenSkills ~= nil and Perks ~= nil and Perks.Meditation ~= nil
+end
+
 function Tiers.wellnessEnabled()
     return not (SandboxVars and SandboxVars.Text and SandboxVars.Text.DividerMeditationNew == false)
 end

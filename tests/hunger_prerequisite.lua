@@ -78,7 +78,7 @@ for _,mode in ipairs({"recovery","both"}) do
     assert(count(p,"read")==1 and count(p,"Yoga")==0)
     C.stop(p)
 end
-print("PASS owned eligible book unlocks native starvation Meditation in Recovery and training")
+print("PASS owned eligible book unlocks native starvation Meditation in Autopilot and training")
 
 do
     local p=player("both")

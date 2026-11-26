@@ -513,7 +513,7 @@ for _,mode in ipairs({"meditation","recovery"}) do
     assert(p.filth==0 and p.values.THIRST<.42 and C.status(p).active)
     C.stop(p)
 end
-print("PASS restroom, urgent carried drink, in-bounds wash, one exact return in training and Recovery")
+print("PASS restroom, urgent carried drink, in-bounds wash, one exact return in training and Autopilot")
 
 do
     local p,home,toilet=toiletTrip("meditation")
@@ -579,7 +579,7 @@ do
     for _=1,6 do T.tick(p,false) end
     walks(p,toilet.front,home)
     assert(p.filth==1 and p.values.THIRST==.49 and not q(p)[1] and C.status(p).active,
-        "Unavailable urgent supplies return promptly; Recovery waits at home without substituting optional care")
+        "Unavailable urgent supplies return promptly; Autopilot waits at home without substituting optional care")
     C.stop(p)
 end
 do

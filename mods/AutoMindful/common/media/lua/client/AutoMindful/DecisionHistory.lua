@@ -11,7 +11,7 @@ local labels = {
     transferring="Preparing a drink", preparing="Opening a supply", collecting="Collecting a supply",
     sitting="Sitting down", standing="Standing up", between="Leaving an opening for other actions",
     ["restoring-mask"]="Putting the mask back on", ["return-wait"]="Waiting to retry the way back", care="Taking a care break",
-    resuming="Rechecking after a pause", stopped="AutoMindful stopped", complete="Mode complete",
+    resuming="Rechecking after a pause", stopped="Second Nature stopped", complete="Mode complete",
     ["current-action"]="Waiting for your current action", walking="Waiting for movement to settle",
     ["manual-input"]="Waiting for your controls to settle", ["recovery-danger"]="Careful: not safe here",
     ["inspection-open"]="Waiting for the map or dialog to close", interrupted="Checking an interrupted action",
@@ -25,11 +25,11 @@ local labels = {
 }
 
 local liveDetails = {
-    ["current-action"]="AutoMindful will resume once it finishes.",
-    walking="AutoMindful will resume when movement stops.",
+    ["current-action"]="Second Nature will resume once it finishes.",
+    walking="Second Nature will resume when movement stops.",
     ["inspection-open"]="Close the window to continue. Your mode stays on.",
-    interrupted="AutoMindful will check before trying the action again.",
-    ["settling-action"]="AutoMindful will resume when the queue is clear.",
+    interrupted="Second Nature will check before trying the action again.",
+    ["settling-action"]="Second Nature will resume when the queue is clear.",
     ["manual-input"]="It resumes when you are idle.",
     ["recovery-danger"]="The job stays on and continues when it is safe.",
     setback="It stays on and tries again in a while.",

@@ -320,13 +320,13 @@ do
     local p=survivor(); begin(p)
     for n=1,4 do
         C.giveUp(p,"The return walk did not settle.")
-        assert(C.status(p).active,"Only Stop ends Recovery")
+        assert(C.status(p).active,"Only Stop ends Autopilot")
         seconds(p,6)
     end
     assert(alerted(p,"did not settle"),"Trouble that keeps coming back is announced")
     local bottle=T.add(p.inventory,T.water({thirst=-.8})); p.values.THIRST,p.thirstMoodle=.3,2
     seconds(p,6); assert(queue(p)[1] and queue(p)[1].Type=="drink" and bottle,"Care at hand goes on meanwhile")
-    C.stop(p,"You stopped AutoMindful.")
+    C.stop(p,"You stopped Second Nature.")
     assert(not C.status(p).active)
     assert(C.start(p,"meditation",false)); C.giveUp(p,"Training cannot go on.")
     assert(not C.status(p).active,"Training still says why and ends")

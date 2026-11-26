@@ -491,7 +491,7 @@ function Info.guide(player, progress)
         "Direct relief: Reduces stress and, for smokers, nicotine withdrawal while you meditate. It can also ease unhappiness. The rate varies with focus, mood, traits and settings.",
         "Trade-offs: Boredom and neck pain can build. Boredom above 30/100 blocks starting, and high boredom reduces Meditation XP.",
         "Focus and traits: Uninterrupted practice builds focus. Disciplined reaches Mindfulness sooner; Couch Potato makes Meditation less effective.",
-        "Endurance: Recovery makes room for normal rest when you are idle. Lifestyle meditation does not directly refill endurance.",
+        "Endurance: Autopilot makes room for normal rest when you are idle. Lifestyle meditation does not directly refill endurance.",
     }
     if meditationOptions.KeepBags then
         meditation[#meditation + 1] = "Bags: Your settings keep worn bags on at all ranks. Heavy items in your hands may still be put down."
@@ -555,7 +555,7 @@ function Info.guide(player, progress)
         "Relief: Each successful pose and the final rest reduce boredom by 5. Stress, pain and stiffness relief improve with Yoga pose tiers.",
         "XP: Successful poses can award Yoga, Fitness and Nimble XP. Failed poses earn no pose XP.",
         "Getting started: Stand before starting. Lifestyle checks your synced endurance, embarrassment and mat settings.",
-        "Waiting on endurance: In Yoga training, AutoMindful can use Meditation while Lifestyle blocks Yoga for low endurance. It gives Yoga back the turn as soon as it can start.",
+        "Waiting on endurance: In Yoga training, Second Nature can use Meditation while Lifestyle blocks Yoga for low endurance. It gives Yoga back the turn as soon as it can start.",
         "Pose pool: " .. table.concat(groups, ", ") .. ". Linked poses can extend a session; a fall can end it early.",
         "Early stops: Below rank 10, stopping after earning pose XP can remove Yoga XP and shorten an existing Zen.",
     }

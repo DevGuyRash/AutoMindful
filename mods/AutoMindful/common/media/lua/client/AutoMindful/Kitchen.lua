@@ -106,7 +106,8 @@ end
 -- One pass over the squares nearby: stoves that could cook now, raw food in the
 -- containers around them, and powered fridges. fridgesOnly skips the food.
 function Kitchen.scan(player, rejected, now, fridgesOnly)
-    local result = {stoves = {}, food = {}, fridges = {}, pots = {}, taps = {}, ready = 0}
+    -- heats: every stove or grill seen, on or off, busy or not.
+    local result = {stoves = {}, food = {}, fridges = {}, pots = {}, taps = {}, ready = 0, heats = 0}
     if not player:getSquare() then return result end
     local seen = {}
     local function take(container, carried)
@@ -141,6 +142,7 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             if not outside and not fridgesOnly and Soup.isTap(object) then
                 result.taps[#result.taps + 1] = {object = object, square = square, distance = distance}
             end
+            if heatOf(object) then result.heats = result.heats + 1 end
             if outside then
                 -- nothing but heat out there
             elseif Kitchen.isStove(object) then

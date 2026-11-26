@@ -523,4 +523,26 @@ do
     C.stop(p)
     passed("food on the stove is not reported as no food")
 end
+do
+    -- Raw food the kitchen can cook counts toward how long food lasts.
+    local p=survivor()
+    begin(p); seconds(p,2)
+    T.now=T.now+11000
+    local before=C.outlook(p).foodHours
+    local K=require "AutoMindful/Kitchen"
+    local scan=K.scan
+    local raw=T.item("Food",{hunger=-.4,rawDanger=true})
+    local cook=O.cookMeals
+    K.scan=function() return {stoves={},food={{item=raw}},fridges={},pots={},taps={},ready=0,heats=1} end
+    O.cookMeals=function() return true end
+    T.now=T.now+11000
+    local out=C.outlook(p)
+    assert(out.foodHours>before and out.cook,"Cookable raw food adds to the outlook: "..tostring(before).." -> "..tostring(out.foodHours))
+    K.scan=function() return {stoves={},food={{item=raw}},fridges={},pots={},taps={},ready=0,heats=0} end
+    T.now=T.now+11000
+    assert(not C.outlook(p).cook,"Without a stove or grill it is not food yet")
+    K.scan,O.cookMeals=scan,cook
+    C.stop(p)
+    passed("food that can be cooked counts toward how long food lasts")
+end
 print("RECOVERY STEWARD PASS")

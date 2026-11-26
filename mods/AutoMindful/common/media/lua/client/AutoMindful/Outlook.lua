@@ -6,6 +6,7 @@ local Needs = require "AutoMindful/SurvivalNeeds"
 local Nearby = require "AutoMindful/Nearby"
 local Options = require "AutoMindful/Options"
 local Supplies = require "AutoMindful/Supplies"
+local Fluids = require "AutoMindful/Fluids"
 
 local Outlook = {}
 local endlessLiters = 9999
@@ -62,7 +63,7 @@ local function add(total, entry, field)
     return total + math.max(0, d[field] or 0)
 end
 
-local function stock(player, range, boxedIn)
+local function stock(player, range, boxedIn, skip)
     local near = range ~= "carried"
     local scan = Supplies.scan(player, near, near)
     local result = {food=0, water=0, carriedWater=0, carriedFood=0, endless=false}
@@ -103,6 +104,24 @@ local function stock(player, range, boxedIn)
             result.unknown = #area.unknownTargets
         end
     end
+    -- Food the kitchen can make safe: raw meat and the like, with a stove or
+    -- grill to cook it on. Read lazily; the outlook works without a kitchen.
+    -- Not while boxed in, in danger or in a car: the stove is out of reach then.
+    if near and not boxedIn and Options.cookMeals and Options.cookMeals() then
+        local ok, Kitchen = pcall(require, "AutoMindful/Kitchen")
+        local found = ok and type(Kitchen) == "table" and Kitchen.scan(player, skip, getTimestampMs()) or nil
+        if found and found.heats > 0 then
+            result.cookFood = 0
+            for _, entry in ipairs(found.food) do
+                local id = entry.item
+                if not Fluids.safeFood(id) and not counted["food" .. tostring(id)] then
+                    counted["food" .. tostring(id)] = true
+                    result.cookFood = result.cookFood + math.max(0, -id:getHungerChange())
+                end
+            end
+            result.food = result.food + result.cookFood
+        end
+    end
     return result
 end
 
@@ -118,11 +137,12 @@ end
 -- severity 3: would likely kill an unattended survivor. 2: would cost a lot.
 -- 1: worth knowing. Only what is true right now is listed.
 function Outlook.read(player, range, state)
-    local held = stock(player, range, state and (state.boxedIn or state.guard) and true)
+    local held = stock(player, range, state and (state.boxedIn or state.guard) and true, state and state.kitchenSkip)
     local food, water = hoursLeft(player, "food", held.food), hoursLeft(player, "water", held.water)
     local result = {foodHours=food, waterHours=not held.endless and water or nil, endlessWater=held.endless,
         carriedFoodHours=hoursLeft(player, "food", held.carriedFood), carriedWaterHours=hoursLeft(player, "water", held.carriedWater),
-        unknown=held.unknown, issues={}}
+        unknown=held.unknown, issues={},
+        cookHours=held.cookFood and held.cookFood > 0 and held.cookFood / Outlook.rate(player, "food") or nil}
     local function issue(id, severity, text) result.issues[#result.issues + 1] = {id=id, severity=severity, text=text} end
     local danger, reason = Danger.read(player)
     if danger ~= "clear" then issue("danger", 3, "Not safe here: " .. reason .. ".") end
@@ -158,6 +178,7 @@ function Outlook.read(player, range, state)
     if moodle(player, "HEAVY_LOAD") >= 3 then issue("load", 3, "Carrying so much that it hurts. Put something down.") end
     if range == "carried" and held.carriedFood <= 0 then issue("range", 1, "Set to use only what is carried.") end
     result.food, result.carriedFood = Outlook.duration(food), Outlook.duration(result.carriedFoodHours)
+    result.cook = result.cookHours and Outlook.duration(result.cookHours) or nil
     result.water, result.carriedWater = Outlook.duration(water), Outlook.duration(result.carriedWaterHours)
     table.sort(result.issues, function(a, b) return a.severity > b.severity end)
     return result

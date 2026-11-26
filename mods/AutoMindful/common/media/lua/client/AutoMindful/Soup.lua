@@ -3,6 +3,7 @@
 -- its own batch, and the world, not how the actions ended, says what happened:
 -- the pot becomes a new item when the first ingredient goes in.
 local Grid = require "AutoMindful/Grid"
+local Fetch = require "AutoMindful/Fetch"
 local Log = require "AutoMindful/Log"
 local Snap = require "AutoMindful/Snapshot"
 local Options = require "AutoMindful/Options"
@@ -112,11 +113,11 @@ function Soup.start(player, state, now, main, pool, stove, found, reason)
     for _, candidate in ipairs(found.pots) do
         if reason ~= "practice" or not candidate.carried then pot = candidate; break end
     end
-    if not pot then return false end
+    if not pot or not K.accepts(stove.object, pot.item) then return false end
     local ingredients = {main}
     for _, entry in ipairs(pool) do
         if #ingredients >= Soup.policy.ingredients then break end
-        if entry.item ~= main.item and (entry.container == main.container or (entry.carried and main.carried)) then
+        if entry.item ~= main.item and entry.from == main.from then
             ingredients[#ingredients + 1] = entry
         end
     end
@@ -138,7 +139,7 @@ function Soup.start(player, state, now, main, pool, stove, found, reason)
     local entry = {x = square:getX(), y = square:getY(), z = square:getZ(), heat = K.heatKind(stove.object), stage = "soup-pot", pot = pot.item:getID(),
         base = pot.item:getID(), ingredients = ids, recipe = name, reason = reason, fetched = fetched, tries = 0,
         name = name, tap = tapSquare and {x = tapSquare:getX(), y = tapSquare:getY(), z = tapSquare:getZ()} or nil,
-        potFrom = not pot.carried and Grid.key(Grid.containerSquare(pot.container)) or nil}
+        potFrom = not pot.carried and pot.from or nil}
     -- Kept out of ordinary eating while they wait to go in.
     for _, id in ipairs(ids) do state.rejected[id] = now + 600000 end
     state.rejected[pot.item:getID()] = now + 600000
@@ -167,11 +168,11 @@ function Soup.step(player, state, now, entry, stove)
         local pot = inventory:getItemById(entry.pot)
         if pot then entry.stage = "soup-fetch"; K.write(player, entry); return Soup.step(player, state, now, entry, stove) end
         local from = sources and sources.pot
-        if not from or not from.container then return fail(player, state, now, entry, "pot-lost") end
+        if not from or not Fetch.present(from) then return fail(player, state, now, entry, "pot-lost") end
         return P.ownBatch(player, state, "kitchen", "Getting a pot for " .. string.lower(entry.name) .. ".", function()
-            local square = Grid.containerSquare(from.container)
+            local square = Fetch.square(from)
             if square and not Grid.adjacent(player:getSquare(), square) and not luautils.walkAdj(player, square, true) then return end
-            ISTimedActionQueue.add(ISInventoryTransferUtil.newInventoryTransferAction(player, from.item, from.container, inventory))
+            Fetch.queue(player, from)
         end)
     elseif entry.stage == "soup-fetch" then
         local missing = {}
@@ -179,7 +180,7 @@ function Soup.step(player, state, now, entry, stove)
             local id = ingredient.item:getID()
             if not ingredient.carried and not inventory:getItemById(id) then
                 -- Gone from where it was (someone took it): leave it out.
-                if ingredient.container:contains(ingredient.item) then missing[#missing + 1] = ingredient
+                if Fetch.present(ingredient) then missing[#missing + 1] = ingredient
                 else drop(entry, id); state.rejected[id] = nil end
             end
         end
@@ -190,10 +191,11 @@ function Soup.step(player, state, now, entry, stove)
             return Soup.step(player, state, now, entry, stove)
         end
         return P.ownBatch(player, state, "kitchen", "Getting the ingredients for " .. string.lower(entry.name) .. ".", function()
-            local square = Grid.containerSquare(missing[1].container)
+            -- One place per batch: the walk is decided from where the survivor stands now.
+            local square = Fetch.square(missing[1])
             if square and not Grid.adjacent(player:getSquare(), square) and not luautils.walkAdj(player, square, true) then return end
             for _, ingredient in ipairs(missing) do
-                ISTimedActionQueue.add(ISInventoryTransferUtil.newInventoryTransferAction(player, ingredient.item, ingredient.container, inventory))
+                if ingredient.from == missing[1].from then Fetch.queue(player, ingredient) end
             end
         end)
     elseif entry.stage == "soup-fill" then

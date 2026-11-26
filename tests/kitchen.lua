@@ -622,3 +622,87 @@ do
     assert(found.stoves[1].object==oven,"A stove indoors comes before the grill")
     passed("from indoors the yard is only for a grill, and a stove comes first")
 end
+do
+    -- A microwave: on a timer, never with metal, and food from the floor.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    local msq=square(1,0)
+    local mc=T.container(1,0); mc.square=msq
+    function mc:getType() return "microwave" end
+    function mc:isPowered() return true end
+    local micro={kind="IsoStove",container=mc,on=false,sq=msq}
+    function micro:getContainer() return self.container end
+    function micro:getSquare() return self.sq end
+    function micro:Activated() return self.on end
+    function micro:getObjectIndex() return 1 end
+    function micro:getX() return 1 end
+    function micro:getY() return 0 end
+    function micro:getZ() return 0 end
+    msq.objects={micro}
+    ISBaseTimedAction={derive=function(self,name) local c={Type=name}; c.__index=c; return setmetatable(c,{__index=self}) end,
+        new=function(class,character) return setmetatable({character=character},class) end, perform=function() end}
+    local commands={}
+    function sendClientCommand(_,module,command,args) commands[#commands+1]=args; micro.on=true end
+    -- On the floor two squares away.
+    local floor=square(-1,0)
+    local raw=food({name="Chicken"})
+    function raw:getMetalValue() return 0 end
+    local world={item=raw,sq=floor}
+    function world:getItem() return self.item end
+    function world:getSquare() return self.sq end
+    function floor:getWorldObjects() return T.list(world.item and {world} or {}) end
+    ISGrabItemAction={new=function(_,player,w) return {Type="grab",isValid=function() return true end,perform=function()
+        local item=w.item; w.item=nil; T.add(p.inventory,item) end} end}
+    local pot=T.add(p.inventory,T.item("InventoryItem",{fullType="Base.Pot"}))
+    function pot:getMetalValue() return 40 end
+    assert(not Kitchen.accepts(micro,pot) and Kitchen.accepts(micro,raw),"Nothing metal in a microwave")
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).stage=="fetching","Food on the floor is fetched")
+    run(); Kitchen.settle(p,s,1100,false); s.pending=nil
+    assert(p.inventory:contains(raw),"Picked up from the floor")
+    assert(Kitchen.meal(p,s,1200)); run(); Kitchen.settle(p,s,1300,false); s.pending=nil
+    assert(micro.on and mc:contains(raw) and commands[1] and commands[1].timer==(30+10)*60,"In, and the timer set for the cooking time and a little more")
+    raw.cooked,raw.time=true,31
+    assert(Kitchen.duty(p,s,2000,true)); run()
+    assert(not micro.on and p.inventory:contains(raw),"Out, and off")
+    passed("a microwave cooks on a timer, nothing metal goes in, and food is fetched from the floor")
+end
+do
+    -- A stove the survivor can never reach: three tries, then a rest.
+    squares={}
+    local p=survivor(0,0); local s=state()
+    stove(1,0)
+    local raw=T.add(p.inventory,food())
+    for attempt=1,3 do
+        s.kitchenNext=nil
+        assert(Kitchen.meal(p,s,1000*attempt),"Tries again: "..attempt)
+        queued={}; Kitchen.settle(p,s,1000*attempt+1,true); s.pending=nil
+    end
+    s.kitchenNext=nil
+    assert(not Kitchen.meal(p,s,5000) and s.kitchenSkip[raw:getID()],"Three refused walks: left alone for a while")
+    passed("an unreachable stove is not tried forever")
+end
+do
+    -- What the game counts as metal, and what is already inside.
+    ItemTag=ItemTag or {}; ItemTag.HAS_METAL=ItemTag.HAS_METAL or "HasMetal"
+    local metalTag=ItemTag.HAS_METAL
+    local squareM=square(5,5); local mc=T.container(5,5); mc.square=squareM
+    function mc:getType() return "microwave" end
+    function mc:isPowered() return true end
+    local micro={kind="IsoStove",container=mc,sq=squareM}
+    function micro:getContainer() return self.container end
+    function micro:getSquare() return self.sq end
+    function micro:Activated() return false end
+    squareM.objects={micro}
+    local tin=food({name="Open beans"}); function tin:getMetalValue() return 0 end
+    function tin:hasTag(tag) return tag==metalTag end
+    local fish=food({name="Fish"}); function fish:getMetalValue() return 0 end; function fish:isBadInMicrowave() return true end
+    local leg=food({name="Chicken"}); function leg:getMetalValue() return 0 end
+    assert(not Kitchen.accepts(micro,tin),"A tagged tin is metal")
+    local grillLike={object=micro}
+    assert(Kitchen.accepts(micro,fish),"Food that tastes bad from a microwave may still go in when nothing else can cook it")
+    assert(Kitchen.accepts(micro,leg))
+    local fork=T.add(mc,T.item("InventoryItem",{name="Fork"})); function fork:getMetalValue() return 10 end
+    local found=Kitchen.scan(survivor(5,6),{},1000)
+    for _,s in ipairs(found.stoves) do assert(s.object~=micro,"A fork inside: the microwave is not used") end
+    passed("nothing metal goes into a microwave, and nothing goes in with metal already there")
+end

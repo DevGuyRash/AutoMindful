@@ -50,17 +50,23 @@ local function chips(rows, player)
     if #list > 0 then rows[#rows + 1] = {kind="chips", chips=list} end
 end
 
+local skillNames = {yoga="Yoga ", meditation="Meditation ", cooking="Cooking "}
+
 local function skillBars(rows, status)
-    for _, kind in ipairs({"yoga", "meditation"}) do
-        local trained = status.mode == kind or status.mode == "both"
-            or kind == "yoga" and status.mode == "yogaTo" or kind == "meditation" and status.mode == "meditateTo"
+    for _, kind in ipairs({"yoga", "meditation", "cooking"}) do
+        local trained
+        if kind == "cooking" then trained = status.mode == "recovery" and Options.cookMeals() and Options.cookTraining() ~= "off"
+        else
+            trained = status.mode == kind or status.mode == "both"
+                or kind == "yoga" and status.mode == "yogaTo" or kind == "meditation" and status.mode == "meditateTo"
+        end
         local progress = status.progress and status.progress[kind]
         if trained and progress then
             local change = Progress.change(status.startProgress and status.startProgress[kind], progress)
             local gain = change and (change.amount and (Progress.number(change.amount) .. " XP") or (change.levels .. " level")) or nil
-            rows[#rows + 1] = {kind="bar", label=(kind == "yoga" and "Yoga " or "Meditation ") .. progress.level,
+            rows[#rows + 1] = {kind="bar", label=skillNames[kind] .. progress.level,
                 right=progress.capped and "Max" or string.format("%s / %s XP", Progress.number(progress.current), Progress.number(progress.required)),
-                fraction=progress.capped and 1 or progress.fraction, color=colors[kind],
+                fraction=progress.capped and 1 or progress.fraction, color=colors[kind] or colors.warn,
                 gain=gain and ((change.positive and "+" or "") .. gain), loss=change and not change.positive}
         end
     end
@@ -157,7 +163,7 @@ function Views.now(window)
         local said
         local kitchen = status.kitchen
         if kitchen and kitchen.progress and kitchen.on then
-            rows[#rows + 1] = {kind="bar", label="Cooking " .. (Theme.plain(kitchen.dish) or "on the stove"), right=math.floor(kitchen.progress * 100) .. "%",
+            rows[#rows + 1] = {kind="bar", label="On the stove: " .. (Theme.plain(kitchen.dish) or "food"), right=math.floor(kitchen.progress * 100) .. "%",
                 fraction=kitchen.progress, color=colors.warn}
         end
         if status.mode == "recovery" then
@@ -329,7 +335,10 @@ function Views.settings(window)
     head(rows, "Autopilot")
     choice("dietGoal")
     choice("recoveryAway")
-    for _, id in ipairs(Options.autopilotToggles) do toggle(id) end
+    for _, id in ipairs(Options.autopilotToggles) do
+        toggle(id)
+        if id == "recoveryCook" then choice("cookTraining") end
+    end
     head(rows, "Window and menu")
     rows[#rows + 1] = {kind="setting", label="Open and close key", value=window.capturing and (window.keyTaken and (window.keyTaken .. " is in use. Try another") or "Press a key, Esc to cancel")
         or Options.windowKeyLabel(),

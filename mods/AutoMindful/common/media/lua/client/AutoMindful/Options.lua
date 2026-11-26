@@ -19,6 +19,7 @@ Options.windowText = {
     recoveryAway = {"Away after", "Without any input. While you are away, Autopilot does everything it can."},
     cyclePolicy = {"Training both"},
     dietGoal = {"Diet goal"},
+    cookTraining = {"Cooking practice", "When nobody is hungry, cooks raw food from the cupboards for Cooking XP and puts it back cold. What you carry is left alone."},
     logLevel = {"Log detail"},
 }
 
@@ -109,6 +110,26 @@ Options.firstAid = ticked("recoveryFirstAid")
 Options.careBetween, Options.refill, Options.useBeds = ticked("recoveryBetween"), ticked("recoveryRefill"), ticked("recoveryBeds")
 Options.lastResort, Options.alertSound, Options.resumeRecovery = ticked("recoveryLastResort"), ticked("recoverySound"), ticked("recoveryResume")
 Options.cookMeals = ticked("recoveryCook")
+
+-- PZ stores the combo's index. Keep this order stable.
+local practiceChoices = {
+    {id="spoiling", label="Cook food that would spoil", short="Spoiling food", help="Raw food that would spoil within three days."},
+    {id="all", label="Cook all spare raw food", short="All spare food", help="Any raw food in the cupboards, to level Cooking faster."},
+    {id="off", label="Off", help="Cooks only when the survivor is hungry."},
+}
+local practiceOption = settings:getOption("cookTraining")
+if not practiceOption then
+    practiceOption = settings:addComboBox("cookTraining", "Autopilot: cooking practice",
+        "When nobody is hungry, cooks raw food from the cupboards for Cooking XP and puts it back cold.")
+    for _, entry in ipairs(practiceChoices) do practiceOption:addItem(entry.label) end
+    practiceOption:setValue(1)
+end
+function Options.cookTrainingIndex()
+    local index = tonumber(practiceOption:getValue())
+    return index and practiceChoices[index] and index or 1
+end
+function Options.cookTraining() return practiceChoices[Options.cookTrainingIndex()].id end
+choices("cookTraining", practiceChoices, Options.cookTrainingIndex)
 
 -- PZ stores the stock combo's selected index. Keep this order stable.
 local cycles = {

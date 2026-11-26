@@ -104,6 +104,11 @@ function Recovery.optionalWork(player, state)
         return not ((trip.kind == "food" or trip.kind == "water") and trip.stage == "outbound" and Needs.critical(player, trip.kind))
     end
     if not state.pending or #state.pending == 0 then return false end
+    -- Fetching food for practice can wait; taking a dish out cannot.
+    if state.phase == "kitchen" then
+        local entry = Kitchen.ledger(player)
+        return entry ~= nil and entry.reason == "practice" and (entry.stage == "fetching" or entry.stage == "starting")
+    end
     if state.phase == "collecting" then return state.supplyKind == "literature" or state.lifestylePickup ~= nil end
     return not essential[state.phase]
 end
@@ -642,6 +647,8 @@ function Recovery.advance(player, state, now)
     if Recovery.permit(player, state, "explore", now) and P.lookInside(player, state, boredom) then return end
     if calm and Recovery.refill(player, state, now) then return end
     if away and Recovery.fetchWater(player, state, now) then return end
+    -- Practice walks to the cupboards: the same permission as any other look around.
+    if Options.searchNearby() and Recovery.permit(player, state, "explore", now) and Kitchen.practice(player, state, now) then return end
     if not (calm and P.restNaturally(player, state, endurance)) then
         local strict = state.recoveryTier
         P.setPhase(state, "recovery-idle", strict and strict.waiting

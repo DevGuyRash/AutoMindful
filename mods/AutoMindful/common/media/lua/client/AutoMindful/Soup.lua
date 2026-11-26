@@ -135,7 +135,7 @@ function Soup.start(player, state, now, main, pool, stove, found, reason)
     local square = stove.object:getSquare()
     local tapSquare = tap and tap.square
     local name = stew and "Stew" or "Soup"
-    local entry = {x = square:getX(), y = square:getY(), z = square:getZ(), stage = "soup-pot", pot = pot.item:getID(),
+    local entry = {x = square:getX(), y = square:getY(), z = square:getZ(), heat = K.heatKind(stove.object), stage = "soup-pot", pot = pot.item:getID(),
         base = pot.item:getID(), ingredients = ids, recipe = name, reason = reason, fetched = fetched, tries = 0,
         name = name, tap = tapSquare and {x = tapSquare:getX(), y = tapSquare:getY(), z = tapSquare:getZ()} or nil,
         potFrom = not pot.carried and Grid.key(Grid.containerSquare(pot.container)) or nil}

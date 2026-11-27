@@ -481,16 +481,75 @@ do
     Perks.Cooking=nil
     passed("cooking practice stops at level 10")
 end
+-- The game's evolved recipes, as the game would list them.
+local Dish=require "AutoMindful/Dish"
+local recipes={}
+local function evolved(def)
+    local r={def=def}
+    function r:getUntranslatedName() return def.name end
+    function r:getBaseItem() return def.base end
+    function r:getFullResultItem() return def.result end
+    function r:isCookable() return def.cookable end
+    function r:getMinimumWater() return def.water or 0 end
+    function r:getMaxItems() return def.max or 6 end
+    function r:isHidden() return false end
+    function r:isAllowFrozenItem() return false end
+    function r:getPossibleItems()
+        local l={}
+        for kind in pairs(def.takes) do l[#l+1]={getFullType=function() return kind end} end
+        return T.list(l)
+    end
+    function r:getItemRecipe(item) return def.takes[item:getFullType()] and {getUse=function() return 15 end} or nil end
+    -- The game's own check, simplified: what it takes, in the inventory.
+    function r:getItemsCanBeUse(player,base)
+        local l={}
+        for _,item in ipairs(player:getInventory().items) do if item~=base and def.takes[item:getFullType()] then l[#l+1]=item end end
+        return T.list(l)
+    end
+    recipes[#recipes+1]=r
+    return r
+end
+function getEvolvedRecipes() return T.list(recipes) end
+RecipeManager={getEvolvedRecipe=function(base)
+    local l={}
+    for _,r in ipairs(recipes) do if r.def.base==base:getFullType() or r.def.result==base:getFullType() then l[#l+1]=r end end
+    return T.list(l)
+end}
+ArrayList={new=function() local l={items={}}; function l:add(x) self.items[#self.items+1]=x end; return l end}
+local soupTakes={["Base.Potato"]=true,["Base.Carrots"]=true,["Base.Salt"]=true,["Base.Pepper"]=true}
+evolved({name="Soup",base="Base.Pot",result="Base.PotOfSoupRecipe",cookable=true,water=.9,takes=soupTakes})
+evolved({name="Salad",base="Base.Bowl",result="Base.Salad",cookable=false,takes={["Base.Lettuce"]=true,["Base.Tomato"]=true,["Base.Wine"]=true}})
+evolved({name="HotDrink",base="Base.Mugl",result="Base.HotDrink",cookable=true,water=1,takes={["Base.Coffee2"]=true}})
+-- Adding: the first ingredient turns the base into the dish.
+local made
+local function adding(p,turns)
+    made=nil
+    ISAddItemInRecipe={new=function(_,player,r,base,item) return {Type="add",isValid=function() return true end,perform=function()
+        if item.name=="Potato" and not item.halved then item.halved=true; item.hunger=(item.hunger or -.5)/2
+        else T.remove(p.inventory,item) end
+        if turns[base:getFullType()] then
+            T.remove(p.inventory,base)
+            made=T.add(p.inventory,food({name=turns[base:getFullType()].name,fullType=turns[base:getFullType()].type,minutes=50,hunger=-.2,
+                cookable=r.def.cookable}))
+            function made:getMinutesToBurn() return 100 end
+            turns[base:getFullType()]=nil
+        end
+    end} end}
+end
+local function cupboard(x,y,kind)
+    local c=T.container(x,y); c.square=square(x,y)
+    function c:getType() return kind or "counter" end
+    function c:isPowered() return true end
+    c.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return c end}}
+    return c
+end
 do
     -- Soup: an empty pot, the sink, two ingredients from the fridge. The pot
     -- becomes a new item when the first goes in, then it cooks like any dish.
-    squares={}
+    squares={}; Dish.reset()
     local p=survivor(0,0); local s=state()
     local oven=stove(1,0)
-    local fridge=T.container(-1,0); fridge.square=square(-1,0)
-    function fridge:getType() return "fridge" end
-    function fridge:isPowered() return true end
-    fridge.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return fridge end}}
+    local fridge=cupboard(-1,0,"fridge")
     local sink={water=10000,sq=square(0,2)}
     function sink:hasWater() return true end
     function sink:isTaintedWater() return false end
@@ -504,52 +563,173 @@ do
     function fluid:isPureFluid() return true end
     local pot=T.add(p.inventory,T.item("InventoryItem",{fullType="Base.Pot",fluid=fluid}))
     function pot:getActualWeight() return 1 end
-    local potato=T.add(fridge,food({name="Potato"}))
-    local carrot=T.add(fridge,food({name="Carrots"}))
-    local soupItem
-    local recipe={}
-    function recipe:getUntranslatedName() return "Soup" end
-    function recipe:getItemsCanBeUse(_,base,containers)
-        local list={}
-        for _,item in ipairs(p.inventory.items) do if item.kind=="Food" and item~=base then list[#list+1]=item end end
-        return T.list(list)
-    end
-    RecipeManager={getEvolvedRecipe=function(base) return T.list(base.fullType=="Base.Pot" and fluid.amount<.9 and {} or {recipe}) end}
-    ArrayList={new=function() local l={items={}}; function l:add(x) self.items[#self.items+1]=x end; return l end}
+    local potato=T.add(fridge,food({name="Potato",fullType="Base.Potato"}))
+    local carrot=T.add(fridge,food({name="Carrots",fullType="Base.Carrots"}))
+    local salt=T.add(fridge,food({name="Salt",fullType="Base.Salt",cookable=false,hunger=0}))
+    local pepper=T.add(fridge,food({name="Pepper",fullType="Base.Pepper",cookable=false,hunger=0}))
+    for _,spice in ipairs({salt,pepper}) do function spice:isSpice() return true end end
+    for _,item in ipairs({potato,carrot}) do function item:isSpice() return false end end
     ISTakeWaterAction={new=function(_,player,item) return {Type="fill",isValid=function() return true end,perform=function() item.fluid.amount=1.5 end} end}
-    ISAddItemInRecipe={new=function(_,player,r,base,item) return {Type="add",isValid=function() return true end,perform=function()
-        -- Meat goes in a part at a time: the first add takes half of it.
-        if item.name=="Potato" and not item.halved then item.halved=true; item.hunger=(item.hunger or -.5)/2
-        else T.remove(p.inventory,item) end
-        if base==pot then
-            T.remove(p.inventory,pot)
-            soupItem=T.add(p.inventory,food({name="Pot of Soup",fullType="Base.PotOfSoupRecipe",minutes=50,hunger=-.2}))
-            function soupItem:getMinutesToBurn() return 100 end
-        end
-    end} end}
+    adding(p,{["Base.Pot"]={name="Pot of Soup",type="Base.PotOfSoupRecipe"}})
     Options.makeSoup=function() return true end
     local function batch() run(); Kitchen.settle(p,s,T.now or 0,false); s.pending=nil end
-    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).stage:find("^soup"),"A soup starts instead of cooking one by one")
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).stage:find("^dish"),"A soup starts instead of cooking one by one")
+    assert(Kitchen.ledger(p).recipe=="Soup")
     assert(s.rejected[potato:getID()] and s.rejected[carrot:getID()],"The ingredients are kept out of ordinary eating")
     assert(s.rejected[pot:getID()],"The pot is kept for the soup too")
+    local held=0
+    for _,spice in ipairs({salt,pepper}) do if s.rejected[spice:getID()] then held=held+1 end end
+    assert(held==1,"One spice for the soup, not both: "..held)
     batch() -- fetched from the fridge
     assert(p.inventory:contains(potato) and p.inventory:contains(carrot))
-    for _=1,6 do
+    for _=1,8 do
         local entry=Kitchen.ledger(p)
         if not entry or entry.stage=="cooking" then break end
-        assert(Kitchen.duty(p,s,2000,true),"Each soup step queues something: "..tostring(entry.stage))
+        assert(Kitchen.duty(p,s,2000,true),"Each dish step queues something: "..tostring(entry.stage))
         batch()
     end
     local entry=Kitchen.ledger(p)
+    local soupItem=made
     assert(entry and entry.stage=="cooking" and oven.on and oven.container:contains(soupItem),"The soup is on the stove: "..tostring(entry and entry.stage))
+    Kitchen.duty(p,s,2500,true)
+    assert(s.rejected[soupItem:getID()],"Not eaten out of the stove while it cooks")
     assert(fluid.amount>=.9,"Filled at the sink")
     assert(not p.inventory:contains(potato) and not p.inventory:contains(carrot),"Both went in")
     soupItem.cooked,soupItem.time=true,51
     assert(Kitchen.duty(p,s,3000,true)); batch()
     assert(not oven.on and p.inventory:contains(soupItem),"Cooked, out, stove off")
-    assert(not s.rejected[soupItem:getID()],"Once cooked, the soup may be eaten")
+    Kitchen.duty(p,s,3100,true)
+    assert(not Kitchen.ledger(p),"Done")
+    assert(not s.rejected[soupItem:getID()],"Once cooked and out, the soup may be eaten")
     Options.makeSoup=function() return false end
-    passed("a soup is made from a pot, the sink and the fridge, then cooked, even when an ingredient goes in by parts")
+    passed("a soup is made from a pot, the sink and the fridge with one spice, then cooked, even when an ingredient goes in by parts")
+end
+do
+    -- A salad needs no stove: a bowl from the cupboard, greens from the fridge.
+    -- Wine is never put in, and hot drinks are not dishes.
+    squares={}; Dish.reset()
+    local p=survivor(0,0); local s=state()
+    local shelf=cupboard(-1,0)
+    local fridge=cupboard(1,0,"fridge")
+    local bowl=T.add(shelf,T.item("InventoryItem",{fullType="Base.Bowl"}))
+    function bowl:getActualWeight() return .2 end
+    local lettuce=T.add(fridge,food({name="Lettuce",fullType="Base.Lettuce",cookable=false}))
+    local tomato=T.add(fridge,food({name="Tomato",fullType="Base.Tomato",cookable=false}))
+    local wine=T.add(fridge,food({name="Wine",fullType="Base.Wine",cookable=false,alcohol=true}))
+    for _,item in ipairs({lettuce,tomato,wine}) do function item:isSpice() return false end end
+    assert(not Dish.catalog().byBase["Base.Mugl"],"Hot drinks are not made")
+    adding(p,{["Base.Bowl"]={name="Salad",type="Base.Salad"}})
+    Options.makeSoup=function() return true end
+    local function batch() run(); Kitchen.settle(p,s,T.now or 0,false); s.pending=nil end
+    assert(Kitchen.meal(p,s,1000),"A salad, with no stove anywhere")
+    assert(Kitchen.ledger(p).recipe=="Salad" and not Kitchen.ledger(p).cookable)
+    assert(not s.rejected[wine:getID()],"Never wine")
+    for _=1,8 do
+        if not Kitchen.ledger(p) then break end
+        batch()
+        if Kitchen.ledger(p) then Kitchen.duty(p,s,2000,true) end
+    end
+    assert(not Kitchen.ledger(p) and made and p.inventory:contains(made),"Made and ready to eat")
+    assert(fridge:contains(wine) and not p.inventory:contains(lettuce) and not p.inventory:contains(tomato),"The greens went in")
+    assert(not s.rejected[made:getID()],"Free to be eaten")
+    -- Practice: what spoils soon becomes a salad, which goes on the list for the fridge.
+    squares={}; Dish.reset()
+    p=survivor(0,0); s=state(); p.values.HUNGER=0
+    function p:getStats() return {get=function() return 0 end} end
+    function p:getMoodles() return {getMoodleLevel=function() return 0 end} end
+    Options.cookTraining=function() return "spoiling" end
+    shelf=cupboard(-1,0); fridge=cupboard(1,0,"fridge")
+    bowl=T.add(shelf,T.item("InventoryItem",{fullType="Base.Bowl"}))
+    function bowl:getActualWeight() return .2 end
+    lettuce=T.add(fridge,food({name="Lettuce",fullType="Base.Lettuce",cookable=false,rotsAt=1}))
+    tomato=T.add(fridge,food({name="Tomato",fullType="Base.Tomato",cookable=false,rotsAt=2}))
+    local fresh=T.add(fridge,food({name="Tomato",fullType="Base.Tomato",cookable=false}))
+    for _,item in ipairs({lettuce,tomato,fresh}) do function item:isSpice() return false end end
+    adding(p,{["Base.Bowl"]={name="Salad",type="Base.Salad"}})
+    assert(Kitchen.practice(p,s,1000),"Practice makes a dish of what spoils")
+    assert(not s.rejected[fresh:getID()],"Food that keeps is left for later")
+    for _=1,8 do
+        if not Kitchen.ledger(p) then break end
+        batch()
+        if Kitchen.ledger(p) then Kitchen.duty(p,s,2000,true) end
+    end
+    local list=p:getModData().AutoMindfulLeftovers or {}
+    assert(made and list[#list]==made:getID(),"The practice salad is put away cold")
+    Options.makeSoup=function() return false end
+    Options.cookTraining=function() return "off" end
+    passed("a salad is made without a stove and never with wine, and practice dishes go to the fridge")
+end
+do
+    -- The game's rules, and ours: rotten only from Cooking 7 and when allowed,
+    -- never poison, burnt or sealed food, dangerous raw food only into a cooked dish.
+    Dish.reset()
+    local soup,salad=Dish.catalog().byBase["Base.Pot"][1],Dish.catalog().byBase["Base.Bowl"][1]
+    local base=T.item("InventoryItem",{fullType="Base.Pot"})
+    local bad=food({name="Potato",fullType="Base.Potato",rotten=true})
+    Options.rottenRecipes=function() return true end
+    assert(not Dish.usable(soup,bad,6,base),"Not below Cooking 7")
+    assert(Dish.usable(soup,bad,7,base),"From Cooking 7, as the game allows")
+    Options.rottenRecipes=function() return false end
+    assert(not Dish.usable(soup,bad,10,base),"Never when turned off")
+    assert(not Dish.usable(soup,food({fullType="Base.Potato",poison=true}),10,base),"Never poison")
+    assert(not Dish.usable(soup,food({fullType="Base.Potato",burnt=true}),10,base),"Never burnt")
+    local sealed=food({fullType="Base.Potato"}); function sealed:getOpeningRecipe() return "OpenCannedFood" end
+    assert(not Dish.usable(soup,sealed,10,base),"Sealed food is opened first")
+    local raw=food({fullType="Base.Lettuce",cookable=false,rawDanger=true})
+    assert(not Dish.usable(salad,raw,10,base),"Dangerous raw food never into a salad")
+    assert(Dish.usable(soup,food({fullType="Base.Potato",rawDanger=true}),0,base),"But into a soup that is cooked")
+    assert(not Dish.usable(soup,food({fullType="Base.Lettuce"}),10,base),"Only what the recipe takes")
+    passed("ingredients follow the game's rules for Cooking level, and never poison, burnt, sealed or raw-dangerous food uncooked")
+end
+do
+    -- Only dishes that feed: chum is bait. A bowl of water takes no salad; a full
+    -- burger takes nothing more; a frying pan in hand stays a weapon. A sandwich
+    -- is made cold, an omelette is cooked, bacon goes in a sandwich only cooked.
+    local saved=getScriptManager
+    function getScriptManager() return {FindItem=function(_,kind) return {getHungerChange=function() return kind=="Base.Chum" and 0 or -20 end} end} end
+    evolved({name="AddBaitToChum",base="Base.Chum",result="Base.Chum",cookable=false,takes={["Base.Bread"]=true}})
+    local sandwich=evolved({name="Sandwich",base="Base.BreadSlices",result="Base.Sandwich",cookable=true,takes={["Base.Cheese"]=true,["Base.Bacon"]=true}})
+    -- As the game answers: false when it must be cooked first and is not.
+    function sandwich:needToBeCooked(item) return item:getFullType()~="Base.Bacon" or item:isCooked() end
+    evolved({name="Omelette",base="Base.OmeletteRecipe",result="Base.OmeletteRecipe",cookable=false,takes={["Base.Cheese"]=true}})
+    evolved({name="Stir",base="Base.Pan",result="Base.PanFriedVegetables",cookable=true,takes={["Base.Carrots"]=true}})
+    Dish.reset()
+    local catalog=Dish.catalog()
+    assert(not catalog.byBase["Base.Chum"],"Chum is not a dish")
+    assert(not catalog.byBase["Base.BreadSlices"][1].cookable,"A sandwich is made cold")
+    local fluid={amount=.5}
+    function fluid:getAmount() return self.amount end
+    function fluid:isEmpty() return self.amount<=0 end
+    function fluid:isPureFluid() return true end
+    Fluid={Water="Water"}
+    local wetBowl=T.item("InventoryItem",{fullType="Base.Bowl",fluid=fluid})
+    assert(not Dish.recipesFor(wetBowl),"A bowl of water takes no salad")
+    local wetPot=T.item("InventoryItem",{fullType="Base.Pot",fluid=fluid})
+    assert(Dish.recipesFor(wetPot),"But a pot of water takes a soup")
+    local burger=food({fullType="Base.BreadSlices",cookable=false})
+    function burger:haveExtraItems() return true end
+    function burger:getExtraItems() return T.list({1,2,3,4,5,6}) end
+    assert(not Dish.recipesFor(burger),"A full one takes nothing more")
+    local pan=T.item("InventoryItem",{fullType="Base.Pan"})
+    function pan:isEquipped() return true end
+    assert(not Dish.recipesFor(pan),"The frying pan in hand stays a weapon")
+    local def=catalog.byBase["Base.BreadSlices"][1]
+    local slices=food({fullType="Base.BreadSlices",cookable=false})
+    assert(not Dish.usable(def,food({fullType="Base.Bacon",cookable=true}),10,slices),"Bacon goes in a sandwich cooked")
+    assert(Dish.usable(def,food({fullType="Base.Bacon",cookable=true,cooked=true}),10,slices))
+    -- An omelette is raw egg: planned only with a stove, and then cooked.
+    squares={}
+    local p=survivor(0,0)
+    local egg=T.add(p.inventory,food({name="Omelette",fullType="Base.OmeletteRecipe",rawDanger=true}))
+    local cheese=T.add(p.inventory,food({name="Cheese",fullType="Base.Cheese",cookable=false}))
+    for _,item in ipairs({egg,cheese}) do function item:isSpice() return false end end
+    local found={bases={{item=egg,carried=true}},ingredients={{item=cheese,carried=true}},taps={}}
+    assert(not Dish.plan(p,found,"meal",function() return nil end,{},1000),"No omelette without a stove")
+    local plan=Dish.plan(p,found,"meal",function() return {object={}} end,{},1000)
+    assert(plan and plan.def.name=="Omelette" and plan.cook,"With a stove it is cooked")
+    getScriptManager=saved
+    Dish.reset()
+    passed("only feeding dishes; a wet bowl, a full base and a pan in hand are left alone; sandwiches cold, omelettes and bacon cooked")
 end
 do
     -- Mildly hungry: cook rather than eat raw, but leftovers come first.

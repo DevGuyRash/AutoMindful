@@ -387,6 +387,7 @@ function Views.kitchen(window)
     head(rows, "Settings")
     toggle(window, rows, "recoveryCook")
     toggle(window, rows, "recoverySoup")
+    toggle(window, rows, "recoveryRotten")
     choice(window, rows, "cookTraining")
     choice(window, rows, "dietGoal")
     return rows

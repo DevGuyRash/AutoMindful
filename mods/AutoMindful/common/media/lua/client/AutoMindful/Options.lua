@@ -98,20 +98,23 @@ for _, row in ipairs({
         "Carry on after loading", "If Autopilot was on when you left, it starts again."},
     {"recoveryCook", "Autopilot: cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off.",
         "Cook raw food on a stove", "When only raw food is left, cooks it on a powered stove nearby, takes it out once cooked and turns the stove off."},
-    {"recoverySoup", "Autopilot: make soups and stews", "With a pot, water and two or more ingredients from one place, makes a soup or stew instead of cooking them one by one.",
-        "Make soups and stews", "With a pot, water and two or more ingredients from one place, makes a soup or stew."},
+    {"recoverySoup", "Autopilot: make dishes from recipes", "Soups, stews, stir fries, salads, sandwiches, burgers, pies, pasta and every other recipe the game has, from a base nearby (a pot of water, a pan, a bowl, bread) and the best ingredients for it.",
+        "Make dishes from recipes", "Soups, stews, stir fries, salads, sandwiches, pies and every other recipe the game has, from what is nearby."},
+    {"recoveryRotten", "Autopilot: use rotten food in recipes from Cooking 7", "The game takes rotten ingredients from Cooking 7, at a tenth to a twentieth of their value. Off: never.",
+        "Rotten food in recipes from Cooking 7", "The game's own rule: a sliver of its value, and only from Cooking 7."},
 }) do
     recoveryTicks[row[1]] = settings:getOption(row[1]) or settings:addTickBox(row[1], row[2], true, row[3])
     Options.windowText[row[1]] = {row[4], row[5]}
 end
 -- The window lists Autopilot's switches in this order.
-Options.autopilotToggles = {"recoveryFirstAid", "recoveryBetween", "recoveryRefill", "recoveryCook", "recoverySoup", "recoveryBeds",
+Options.autopilotToggles = {"recoveryFirstAid", "recoveryBetween", "recoveryRefill", "recoveryCook", "recoverySoup", "recoveryRotten", "recoveryBeds",
     "recoveryLastResort", "recoverySound", "recoveryResume", "strictRecoveryTier"}
 local function ticked(id) return function() return recoveryTicks[id]:getValue() == true end end
 Options.firstAid = ticked("recoveryFirstAid")
 Options.careBetween, Options.refill, Options.useBeds = ticked("recoveryBetween"), ticked("recoveryRefill"), ticked("recoveryBeds")
 Options.lastResort, Options.alertSound, Options.resumeRecovery = ticked("recoveryLastResort"), ticked("recoverySound"), ticked("recoveryResume")
 Options.cookMeals, Options.makeSoup = ticked("recoveryCook"), ticked("recoverySoup")
+Options.rottenRecipes = ticked("recoveryRotten")
 
 -- PZ stores the combo's index. Keep this order stable.
 local practiceChoices = {

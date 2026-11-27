@@ -33,6 +33,7 @@ local ScoutEgress = require "AutoMindful/ScoutEgress"
 local Log = require "AutoMindful/Log"
 local Snap = require "AutoMindful/Snapshot"
 local Recovery = require "AutoMindful/Recovery"
+local Coexist = require "AutoMindful/Coexist"
 require "TimedActions/WalkToTimedAction"
 
 AutoMindful = AutoMindful or {}
@@ -847,11 +848,17 @@ local function sleepAdmitted(reason)
     return reason=="ready" or reason=="confirm"
 end
 
+-- Lifestyle's toilet and washing routines step up to the fixture themselves.
+local fixtureCare = {restroom = true, hygiene = true}
+
 local function excursionMotion(player, state)
-    -- The kitchen walks to the stove and back without a trip of its own.
-    if not state or not (state.excursion or state.phase == "kitchen") then return false end
+    if not state then return false end
     if player:pressedMovement(false) or player:pressedCancelAction() then return false end
     local current = queueFor(player)[1]
+    -- Our own care action moving the survivor is not the player walking off.
+    if current and current.autoMindfulOwner == state and fixtureCare[state.phase] then return true end
+    -- The kitchen walks to the stove and back without a trip of its own.
+    if not (state.excursion or state.phase == "kitchen") then return false end
     if current then return current.autoMindfulOwner == state and routeAction(current) end
     -- Native motion can outlive the queued walk by a frame at completion or path failure.
     if state.phase == "travelling" or state.phase == "bed" or state.phase == "kitchen" then
@@ -4109,12 +4116,16 @@ function Controller.updateCarePractice(player,state,head,now,urgent,bedtime)
     local ordinaryCare=state.recovery or minimumActive or hungerCare or bedtime~=nil
     local priority=(urgent and (not hungerCare or criticalNeed(player,"water") and (not state.noEmergencyDrink
             or comfortSupplyAvailable(player,state,"water",true)))) and "critical-food-or-water"
+        -- Another automation took the survivor: a relief practice gives way, or its queue never empties.
+        or (state.recovery and not urgent and not hungerCare and Coexist.owner(player)) and "other-automation"
         or (not urgent and (sleepAdmitted(bedtime) and (not state.recovery or Recovery.permit(player,state,"sleep",now)))) and "sleep"
         or (not hungerCare and Controller.firstHungerCourse(player,state)) and "hunger-care"
         or (((hungerCare or state.recovery) and Needs.due(player,"food") or Needs.pressing(player,"food")) and comfortSupplyAvailable(player,state,"food",true)) and "food"
         or ((hungerCare or state.recovery) and Needs.due(player,"water") or Needs.pressing(player,"water")) and (comfortSupplyAvailable(player,state,"water",true)) and "water"
         or (ordinaryCare and not urgent and not state.contextVisible and (painAvailable(player,state,now) and "painkillers-available"
-            or (not hungerCare and stat(player,"BOREDOM")>=interruptBoredom and comfortSupplyAvailable(player,state,"literature",true,true)) and "boredom-reading"))
+            or (not hungerCare and stat(player,"BOREDOM")>=interruptBoredom and comfortSupplyAvailable(player,state,"literature",true,true)) and "boredom-reading"
+            -- A full bladder or a wash does not wait behind a relief practice.
+            or lifestyleReady(player,state,now) and "lifestyle-care"))
     local relief, drawback, acquired, readings, waitingForTier, careResolved
     if course.kind=="meditation" and head.autoMindfulOwner==state and isPractice(head,course.kind)
             and head:isStarted() and not head.autoMindfulStopped then

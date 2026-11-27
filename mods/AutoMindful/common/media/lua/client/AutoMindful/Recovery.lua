@@ -3,6 +3,7 @@
 -- is, what may be done about which need, and when to ask for help. The survival
 -- parts (danger, first aid, last resort) also stand behind every training job.
 local Alerts = require "AutoMindful/Alerts"
+local Coexist = require "AutoMindful/Coexist"
 local Kitchen = require "AutoMindful/Kitchen"
 local Grid = require "AutoMindful/Grid"
 local Saved = require "AutoMindful/Saved"
@@ -620,6 +621,21 @@ function Recovery.advance(player, state, now)
     if cooking then state.carriedOnly = nil end
     if cared or not state.active then return end
     if Kitchen.meal(player, state, now) or not state.active then return end
+    -- Another automation owns the survivor (Auto All's exercise, for one): only
+    -- what cannot wait from here on. Optional work would hold the queue it waits on.
+    local other = Coexist.owner(player)
+    if other then
+        if state.coexisting ~= other then Log.event(player, "coexist", "owner", other); state.coexisting = other end
+        -- Short and needed: the toilet, leftovers kept cold, frozen food thawed, pain, sleep.
+        if P.lifestyleCare(player, state, P.lifestyleReady(player, state, now), now) then return end
+        if Kitchen.store(player, state, now) or not state.active then return end
+        if Kitchen.thaw(player, state, now) or not state.active then return end
+        if P.painAvailable(player, state, now) and P.supply(player, state, "pain") then return end
+        if P.waitForSleep(player, state) then return end
+        P.setPhase(state, "recovery-idle", other .. " is running. Autopilot steps in only for urgent needs.")
+        return
+    end
+    if state.coexisting then Log.event(player, "coexist", "owner", "none"); state.coexisting = nil end
     if Kitchen.store(player, state, now) or not state.active then return end
     if Kitchen.thaw(player, state, now) or not state.active then return end
     local away = Presence.away(player, now)

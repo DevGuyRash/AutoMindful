@@ -454,7 +454,8 @@ end
 
 -- Lifestyle's Zen decay (LSPerTenMinutes): down by `step` every ten in-game
 -- minutes, gone below `floor`; the HUD tier at each value (LSMoodleManager).
-local zenDecay = {step = 0.02, floor = 0.2, levels = {0.15, 0.3, 0.5, 0.7}}
+-- Read from the pinned upstream source by tools/extract_wellness_facts.py.
+local zenDecay = Facts.zenDecay
 Info.zenDecay = zenDecay
 
 local function zenTier(value)

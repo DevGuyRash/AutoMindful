@@ -42,10 +42,14 @@ local function read(fn, fallback)
     return fallback
 end
 
--- Not made: hot drinks feed no one, buckets keep the survivor's water, and a
--- result that does not feed (fishing chum) is not a dish.
+-- Hot drinks: coffee, tea and the like in a mug of water, made when thirsty.
+local function drink(name) return name:find("^HotDrink") ~= nil end
+
+-- Not made: buckets keep the survivor's water, and a result that does not
+-- feed (fishing chum) is not a dish. Hot drinks are their own kind.
 local function excluded(name, base, result)
-    if name:find("^HotDrink") or base == "Base.Bucket" or base == "Base.BucketEmpty" then return true end
+    if base == "Base.Bucket" or base == "Base.BucketEmpty" then return true end
+    if drink(name) then return false end
     local script = result and read(function() return getScriptManager():FindItem(result) end)
     local hunger = script and read(function() return script:getHungerChange() end)
     return type(hunger) == "number" and hunger >= 0
@@ -69,8 +73,9 @@ function Dish.catalog()
             local def = {recipe = recipe, name = name, base = base, result = result,
                 cookable = read(function() return recipe:isCookable() end, false) == true and not cold[name],
                 water = read(function() return recipe:getMinimumWater() end, 0) or 0,
-                max = read(function() return recipe:getMaxItems() end, Dish.policy.ingredients)}
-            if result then built.results[result] = true end
+                max = read(function() return recipe:getMaxItems() end, Dish.policy.ingredients), drink = drink(name)}
+            -- A hot drink left over is not a meal waiting to be eaten.
+            if result and not def.drink then built.results[result] = true end
             built.byBase[base] = built.byBase[base] or {}
             table.insert(built.byBase[base], def)
             built.count = built.count + 1
@@ -96,7 +101,26 @@ end
 
 -- ---------------------------------------------------------------- the things
 
-local function water(item)
+local water
+
+-- Enough water for this recipe, as the game counts it: a mug wants to be full,
+-- a pot a measure. Falls back to litres when the game cannot say.
+local function wet(def, item)
+    if not def or (def.water or 0) <= 0 then return true end
+    local answer = read(function() return def.recipe:hasMinimumWater(item) end)
+    if type(answer) == "boolean" then return answer end
+    return water(item) >= def.water
+end
+
+-- The recipe a ledger entry is making, from the catalog.
+local function defFor(entry)
+    for _, def in ipairs(Dish.catalog().byBase[entry.vesselType or ""] or {}) do
+        if def.name == entry.recipe then return def end
+    end
+    return nil
+end
+
+water = function(item)
     local fluid = item.getFluidContainer and item:getFluidContainer()
     return fluid and fluid:getAmount() or 0
 end
@@ -263,7 +287,9 @@ function Dish.plan(player, found, reason, heatFor, skipped, now)
         -- Practice never borrows what the survivor carries.
         if not (reason == "practice" and base.carried) and not held(skipped, base.item, now) then
             for _, def in ipairs(Dish.recipesFor(base.item) or {}) do
-                local dry = def.water > 0 and water(base.item) < def.water
+              -- Drinks only when a drink is wanted, and only drinks then.
+              if (reason == "drink") == (def.drink == true) then
+                local dry = not wet(def, base.item)
                 local cook = needsHeat(def, base.item)
                 -- A finished dish is not cooked again to take more.
                 local done = not vessel and cook and base.item:isCooked()
@@ -273,15 +299,17 @@ function Dish.plan(player, found, reason, heatFor, skipped, now)
                 elseif cook and not heat then why.cold = why.cold + 1 end
                 if not (dry and not tap) and not done and (heat or not cook) then
                     local items, value, real = pick(player, def, base, found.ingredients or {}, reason, level, skipped, now, cook)
-                    -- A pot or pan wants two things in it; bread or a crust one.
-                    if real < (vessel and 2 or 1) then why.few = why.few + 1 end
-                    if real >= (vessel and 2 or 1) then
+                    -- A pot or pan wants two things in it; bread, a crust or a mug one.
+                    local least = (vessel and not def.drink) and 2 or 1
+                    if real < least then why.few = why.few + 1 end
+                    if real >= least then
                         local score = value + (vessel and 0 or 5)
                         local plan = {base = base, def = def, heat = heat, items = items, score = score, real = real, tap = dry and tap or nil, cook = cook}
                         if not best or score > best.score then best = plan end
                         if not each[def.name] or score > each[def.name].score then each[def.name] = plan end
                     end
                 end
+              end
             end
         end
     end
@@ -394,7 +422,8 @@ function Dish.start(player, state, now, plan, reason)
         ids[#ids + 1] = chosen.item:getID()
         fetched[tostring(chosen.item:getID())] = not chosen.carried or nil
     end
-    if not inventory:hasRoomFor(player, weight) then return false end
+    -- Too much to carry: the kitchen may set some carried things aside first.
+    if not inventory:hasRoomFor(player, weight) then return false, "room", weight end
     local heat = plan.heat and plan.heat.object
     local square = heat and heat:getSquare()
     local tapSquare = plan.tap and plan.tap.square
@@ -474,7 +503,7 @@ function Dish.step(player, state, now, entry, stove)
         if #entry.ingredients < 1 then return fail(player, state, now, entry, "ingredients-gone") end
         if #missing == 0 then
             local base = inventory:getItemById(entry.vessel)
-            entry.stage = (entry.water or 0) > 0 and base and water(base) < entry.water and "dish-fill" or "dish-add"
+            entry.stage = (entry.water or 0) > 0 and base and not wet(defFor(entry) or {water = entry.water}, base) and "dish-fill" or "dish-add"
             K.write(player, entry)
             return Dish.step(player, state, now, entry, stove)
         end
@@ -489,7 +518,7 @@ function Dish.step(player, state, now, entry, stove)
     elseif entry.stage == "dish-fill" then
         local vessel, tap = inventory:getItemById(entry.vessel), tapAt(entry.tap)
         if not vessel then return fail(player, state, now, entry, "base-lost") end
-        if water(vessel) >= entry.water then entry.stage = "dish-add"; K.write(player, entry); return Dish.step(player, state, now, entry, stove) end
+        if wet(defFor(entry) or {water = entry.water}, vessel) then entry.stage = "dish-add"; K.write(player, entry); return Dish.step(player, state, now, entry, stove) end
         if not tap then return fail(player, state, now, entry, "no-water") end
         return P.ownBatch(player, state, "kitchen", "Filling " .. vessel:getDisplayName() .. " with water.", function()
             local square = tap:getSquare()
@@ -569,7 +598,7 @@ function Dish.settle(player, state, now, cut)
         end
     elseif entry.stage == "dish-fill" then
         local vessel = inventory:getItemById(entry.vessel)
-        if (not vessel or water(vessel) < entry.water) and not cut then return fail(player, state, now, entry, "not-filled") end
+        if (not vessel or not wet(defFor(entry) or {water = entry.water}, vessel)) and not cut then return fail(player, state, now, entry, "not-filled") end
     elseif entry.stage == "dish-add" and entry.adding then
         local changedBase = false
         if not inventory:getItemById(entry.base) then

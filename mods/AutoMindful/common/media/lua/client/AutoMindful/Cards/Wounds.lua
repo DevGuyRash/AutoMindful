@@ -9,7 +9,8 @@ local Wounds = require "AutoMindful/Wounds"
 local colors = Theme.colors
 
 local Card = {id = "wounds", title = "Wounds", order = 10}
-local tones = {good = colors.good, warn = colors.warn, bad = colors.bad, muted = colors.muted}
+-- Tones (good, warn, bad, muted) are colours of the same name.
+local tones = colors
 
 function Card.read(player, window)
     local list = Wounds.read(player)

@@ -7,10 +7,11 @@ local function real(value) return type(value) == "number" and value == value and
 
 local function clock() return getGameTime and getGameTime() or nil end
 
--- Real minutes one in-game day takes at normal speed (the sandbox Day Length).
-function Clock.dayMinutes()
+-- Real minutes one in-game day takes at normal speed (the sandbox Day Length);
+-- fallback (60 unless given) when the game cannot say.
+function Clock.dayMinutes(fallback)
     local ok, minutes = pcall(function() return clock():getMinutesPerDay() end)
-    return ok and real(minutes) and minutes > 0 and minutes or 60
+    return ok and real(minutes) and minutes > 0 and minutes or fallback or 60
 end
 
 -- Real seconds for a span of in-game minutes.

@@ -56,7 +56,8 @@ local function addButton(panel)
     panel.secondNature = button
 end
 
-local tones = {good = colors.good, warn = colors.warn, bad = colors.bad, muted = colors.muted}
+-- Tones (good, warn, bad, muted) are colours of the same name.
+local tones = colors
 
 -- Each frame: the button right after Fitness (other mods line theirs up
 -- after the last button; following them back would chase them off the

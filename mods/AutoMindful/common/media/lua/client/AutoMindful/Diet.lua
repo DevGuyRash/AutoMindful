@@ -1,6 +1,7 @@
 -- What to eat when there is a choice: the survivor's diet goal nudges food
 -- choice by at most a sixth. It never overrides what the need itself calls for.
-local Diet = {nudge = 0.15, healthy = {low = 75, high = 85}}
+local Nutrition = require "AutoMindful/Nutrition"
+local Diet = {nudge = 0.15}
 
 local function number(item, method)
     local read = item[method]
@@ -32,8 +33,13 @@ function Diet.goal(player)
     if goal ~= "auto" then return goal end
     local kilograms = player and weight(player)
     if not kilograms then return "balanced" end
-    if kilograms < Diet.healthy.low then return "more" end
-    if kilograms > Diet.healthy.high then return "fewer" end
+    -- The game's own weight bands: below healthy, eat more; above, fewer.
+    local band = Nutrition.band(kilograms)
+    if band.tone ~= "good" then
+        for _, other in ipairs(Nutrition.bands) do
+            if other.tone == "good" then return kilograms < other.upTo and "more" or "fewer" end
+        end
+    end
     return "balanced"
 end
 

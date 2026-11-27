@@ -1,5 +1,6 @@
 -- Looks ahead: how long would this last, and what would go wrong first? Reads
 -- the same known stock the Supplies tab shows. Never searches or walks.
+local Clock = require "AutoMindful/Clock"
 local Danger = require "AutoMindful/Danger"
 local FirstAid = require "AutoMindful/FirstAid"
 local Needs = require "AutoMindful/SurvivalNeeds"
@@ -18,17 +19,9 @@ local rates = {}
 local defaults = {food=0.04, water=0.05}
 local minimumHours, smoothing = 1, 0.3
 
-local function worldHours()
-    local clock = getGameTime and getGameTime()
-    local hours = clock and clock.getWorldAgeHours and clock:getWorldAgeHours()
-    return type(hours) == "number" and hours or nil
-end
+local worldHours = Clock.worldHours
 
-function Outlook.realHours(gameHours)
-    local clock = getGameTime and getGameTime()
-    local minutes = clock and clock.getMinutesPerDay and clock:getMinutesPerDay()
-    return gameHours * ((type(minutes) == "number" and minutes > 0 and minutes) or 60) / 24 / 60
-end
+function Outlook.realHours(gameHours) return Clock.realSeconds(gameHours * 60) / 3600 end
 
 -- Every rise counts; a drop is a meal and starts the next span.
 function Outlook.sample(player, now)

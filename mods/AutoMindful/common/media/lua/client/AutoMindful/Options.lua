@@ -154,7 +154,7 @@ end
 
 -- PZ stores the combo's index. Keep this order stable.
 local diets = {
-    {id="auto", label="Auto: keep a healthy weight", help="Prefers calorie-dense food below 75 kg and lighter food above 85 kg; otherwise balanced."},
+    {id="auto", label="Auto: keep a healthy weight", help="Prefers calorie-dense food while underweight (75 kg or less) and lighter food while overweight (85 kg or more), as the game's own weight bands; otherwise balanced."},
     {id="balanced", label="Balanced", help="No preference beyond what the need calls for."},
     {id="protein", label="High protein", help="Prefers protein-rich food when choices are close."},
     {id="more", label="More calories (gain weight)", help="Prefers calorie-dense food when choices are close."},

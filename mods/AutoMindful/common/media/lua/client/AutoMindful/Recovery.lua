@@ -11,6 +11,7 @@ local Beds = require "AutoMindful/Beds"
 local Danger = require "AutoMindful/Danger"
 local FirstAid = require "AutoMindful/FirstAid"
 local Dressings = require "AutoMindful/Dressings"
+local Boil = require "AutoMindful/Boil"
 local Fetch = require "AutoMindful/Fetch"
 local Fluids = require "AutoMindful/Fluids"
 local IntakeGuard = require "AutoMindful/IntakeGuard"
@@ -473,6 +474,13 @@ function Recovery.dressings(player, state, now)
     if not job then
         releaseAid(state, nil, "dressLoans")
         state.dressNext = now + 30000
+        return false
+    end
+    -- Boiling is a kitchen plan of its own: started here, run by the kitchen.
+    if job.kind == "boil" then
+        state.dressBusy = nil
+        if not Kitchen.ledger(player) and Boil.start(player, state, now, job.count, job.pot) then return false end
+        state.dressNext = now + 60000
         return false
     end
     -- What the game would craft with from what is carried decides first: a

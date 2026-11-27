@@ -8,7 +8,7 @@ Theme.brandMark = string.upper(Theme.brand)
 local function rgb(r, g, b, a) return {r=r, g=g, b=b, a=a or 1} end
 
 Theme.colors = {
-    window = rgb(0.045, 0.047, 0.050, 0.94),
+    window = rgb(0.045, 0.047, 0.050, 0.97),
     raised = rgb(1, 1, 1, 0.045),
     hover = rgb(1, 1, 1, 0.10),
     line = rgb(1, 1, 1, 0.13),

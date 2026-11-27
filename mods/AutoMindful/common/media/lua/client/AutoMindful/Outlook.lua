@@ -151,7 +151,7 @@ function Outlook.read(player, range, state)
     local danger, reason = Danger.read(player)
     if danger ~= "clear" then issue("danger", 3, "Not safe here: " .. reason .. ".") end
     if Danger.bleeding(player) then
-        issue("bleeding", 3, FirstAid.bandagesWithin(player, range ~= "carried") and "Bleeding. It will be bandaged."
+        issue("bleeding", 3, FirstAid.bandagesWithin(player, range == "walk" and Options.searchRadius() or range ~= "carried" and 2 or 0) and "Bleeding. It will be bandaged."
             or "Bleeding, and there is no bandage within reach.")
     end
     -- A dish on the stove is food on the way, not none at all.

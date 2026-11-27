@@ -452,6 +452,63 @@ function Info.mindfulnessHover(player)
     return lines, effects
 end
 
+-- Lifestyle's Zen decay (LSPerTenMinutes): down by `step` every ten in-game
+-- minutes, gone below `floor`; the HUD tier at each value (LSMoodleManager).
+local zenDecay = {step = 0.02, floor = 0.2, levels = {0.15, 0.3, 0.5, 0.7}}
+Info.zenDecay = zenDecay
+
+local function zenTier(value)
+    for tier = 4, 1, -1 do if value >= zenDecay.levels[tier] then return tier end end
+    return 0
+end
+
+-- Ticks until the value leaves its tier, and until it is gone, run with
+-- Lifestyle's own arithmetic so the boundaries fall where the HUD's do.
+local function zenTicks(value)
+    local tier, ticks, drop = zenTier(value), 0, nil
+    while value > 0 and ticks < 200 do
+        value = value - zenDecay.step
+        if value < zenDecay.floor then value = 0 end
+        ticks = ticks + 1
+        if not drop and zenTier(value) ~= tier then drop = ticks end
+    end
+    return tier, drop or ticks, ticks
+end
+
+-- The tier showing now and how long it lasts, in in-game minutes:
+-- {tier, left (to the next drop), gone (to no Zen), span (this tier's whole length), next}.
+-- tick: minutes until Lifestyle's next ten-minute tick (Clock.untilTick).
+function Info.zenCountdown(player, tick)
+    local current = moodle(playerData(player), "Zen")
+    local value = current and current.Value
+    if not real(value) or value <= 0 then return end
+    local tier, drop, gone = zenTicks(value)
+    if tier == 0 then return end
+    local top = tier == 4 and 1 or zenDecay.levels[tier + 1]
+    local _, span = zenTicks(top - zenDecay.step / 2)
+    local minutes = Facts.zenTickMinutes
+    tick = real(tick) and tick > 0 and tick <= minutes and tick or minutes
+    return {tier = tier, left = tick + (drop - 1) * minutes, gone = tick + (gone - 1) * minutes,
+        span = math.max(drop, span) * minutes, next = tier - 1}
+end
+
+-- Mindfulness counts down a minute at a time and steps a tier down on the
+-- minute after it reaches zero; each lower tier lasts the full duration.
+-- {tier, left, gone, span, next}, or nil with no countdown running.
+-- into: the fraction of the current in-game minute already gone.
+function Info.mindfulnessCountdown(player, into)
+    if not supported() or not settings("Text").DividerMeditationNew then return end
+    local data = playerData(player)
+    local tier = mindfulnessTier(moodle(data, "MindfulState") and moodle(data, "MindfulState").Value)
+    local minutes = data and data.MindfulnessMinutes
+    local rank = perkLevel(player, "Meditation")
+    local duration = real(rank) and durationFor(player, rank)
+    if not tier or not real(minutes) or minutes <= 0 or not duration then return end
+    local left = math.max(0, minutes + 1 - (real(into) and into or 0))
+    return {tier = tier, left = left, gone = left + (tier - 1) * duration, span = math.max(left, duration + 1), next = tier - 1,
+        name = mindfulName(tier), nextName = tier > 1 and mindfulName(tier - 1) or nil}
+end
+
 local function mindfulnessRates(lines, heading, rank, tier, traitSlot, settingScale, healFactor)
     local effects = mindfulnessAmounts(rank, tier, traitSlot, settingScale, healFactor)
     if not effects then return end

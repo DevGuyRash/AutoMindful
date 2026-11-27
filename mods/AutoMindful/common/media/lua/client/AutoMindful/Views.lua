@@ -337,7 +337,8 @@ local function choice(window, rows, id)
         tip=entry.help or text[2], onClick=function() window:openChoiceMenu(id) end}
 end
 
-local tones = {good=colors.good, warn=colors.warn, bad=colors.bad, muted=colors.muted}
+-- Tones (good, warn, bad, muted) are colours of the same name.
+local tones = colors
 
 local function count(rows, label, value, color)
     local some = (value or 0) > 0
@@ -456,7 +457,6 @@ function Views.settings(window)
     return rows
 end
 
-local glanceTones = {good=colors.good, warn=colors.warn, bad=colors.bad, muted=colors.muted}
 
 -- The Body tab: what is coming up across every card, then each card.
 function Views.body(window)
@@ -478,8 +478,8 @@ function Views.body(window)
             -- Something dangerous never stays folded away.
             local folded = Preferences.folded(player, card.id) and not (pill and pill.urgent)
             rows[#rows + 1] = {kind="card", title=card.title, collapsed=folded,
-                pill=pill and {text=pill.text, color=glanceTones[pill.tone] or colors.muted},
-                color=pill and glanceTones[pill.tone] or colors.muted, label=card.id,
+                pill=pill and {text=pill.text, color=tones[pill.tone] or colors.muted},
+                color=pill and tones[pill.tone] or colors.muted, label=card.id,
                 onClick=function() Preferences.setFolded(player, card.id, not folded); window:invalidate(true) end}
             if not folded and card.rows then
                 local ok, err = pcall(card.rows, window, entry.model, rows)
@@ -497,7 +497,7 @@ function Views.body(window)
             all[#all + 1] = Clock.game(event.minutes) .. ": " .. event.text
             if index <= 5 then
                 rows[#rows + 1] = {kind="event", text=event.text, right=Clock.column(event.minutes),
-                    color=glanceTones[event.tone] or colors.muted, tip="In " .. Clock.both(event.minutes) .. " at normal speed."}
+                    color=tones[event.tone] or colors.muted, tip="In " .. Clock.both(event.minutes) .. " at normal speed."}
             end
         end
         if #events > 5 then
@@ -531,9 +531,9 @@ local function glances(rows, window, urgent)
         local buttons = {{text="Open", color=colors.muted, tip="See it in the Body tab.",
             onClick=function() window.focusCard = entry.card.id; window:show("body") end}}
         -- Something to do about it, right here (stop the bleeding).
-        if g.action then table.insert(buttons, 1, {text=g.action.text, color=glanceTones[g.tone], tip=g.action.tip,
+        if g.action then table.insert(buttons, 1, {text=g.action.text, color=tones[g.tone], tip=g.action.tip,
             disabled=g.action.disabled, onClick=g.action.onClick}) end
-        rows[#rows + 1] = {kind="wound", title=g.text, color=glanceTones[g.tone], buttons=buttons}
+        rows[#rows + 1] = {kind="wound", title=g.text, color=tones[g.tone], buttons=buttons}
     end
     if urgent then gap(rows, 4) end
 end

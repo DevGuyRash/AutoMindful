@@ -33,6 +33,7 @@ local ScoutEgress = require "AutoMindful/ScoutEgress"
 local Log = require "AutoMindful/Log"
 local Snap = require "AutoMindful/Snapshot"
 local Recovery = require "AutoMindful/Recovery"
+local Clock = require "AutoMindful/Clock"
 local Coexist = require "AutoMindful/Coexist"
 require "TimedActions/WalkToTimedAction"
 
@@ -2780,11 +2781,8 @@ function Controller.mindfulnessEnabled()
 end
 
 function Controller.mindfulnessClock()
-    local clock=getGameTime()
-    local hours=clock and clock.getWorldAgeHours and clock:getWorldAgeHours()
-    local day=clock and clock.getMinutesPerDay and clock:getMinutesPerDay()
-    return type(hours)=="number" and hours>=0 and hours<math.huge and hours*60 or nil,
-        type(day)=="number" and day>0 and day<math.huge and day or 120
+    local hours=Clock.worldHours()
+    return hours and hours>=0 and hours*60 or nil,Clock.dayMinutes(120)
 end
 
 function Controller.armMindfulnessWatch(player,state,now,plan,readings,fresh)

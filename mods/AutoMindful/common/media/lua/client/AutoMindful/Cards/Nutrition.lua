@@ -9,7 +9,8 @@ local Theme = require "AutoMindful/Theme"
 local colors = Theme.colors
 
 local Card = {id = "nutrition", title = "Nutrition", order = 20}
-local tones = {good = colors.good, warn = colors.warn, bad = colors.bad, muted = colors.muted}
+-- Tones (good, warn, bad, muted) are colours of the same name.
+local tones = colors
 
 local cache = setmetatable({}, {__mode = "k"})
 local projectMs, horizonDays = 2000, 60

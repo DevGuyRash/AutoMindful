@@ -27,6 +27,10 @@ end
 assert(Diet.goal(survivor(60))=="more" and Diet.goal(survivor(95))=="fewer" and Diet.goal(survivor(80))=="balanced",
     "Auto: gain when light, lose when heavy, balanced in between")
 assert(Diet.goal(T.playerNew())=="balanced","No weight known: balanced")
+-- Auto follows the game's bands (applyTraitFromWeight): 75 kg is already
+-- Underweight and 85 kg Overweight; 75.1 and 84.9 are healthy.
+assert(Diet.goal(survivor(75))=="more" and Diet.goal(survivor(85))=="fewer"
+    and Diet.goal(survivor(75.1))=="balanced" and Diet.goal(survivor(84.9))=="balanced","Auto keeps to the game's healthy band")
 passed("Auto follows the survivor's weight")
 
 local steak=food({hunger=-.4,protein=40,calories=600,carbs=0})

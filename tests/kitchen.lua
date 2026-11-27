@@ -1105,3 +1105,154 @@ do
     assert(summary.heats[1].tiles==1 and summary.raw==1 and summary.soon==1 and summary.wood>=1 and summary.starters==0, string.format("raw=%d soon=%d wood=%d starters=%d",summary.raw,summary.soon,summary.wood,summary.starters))
     passed("the kitchen summary says what each heat source needs and what there is to cook")
 end
+do
+    -- Crafts, as the game's crafting logic would judge them: a pie crust is made
+    -- because a pie then follows, and pie dough because a crust and then a pie
+    -- follow; a sealed can is opened when nothing is ready to eat; a recipe the
+    -- survivor has not learned is never tried; a planned input that changed is refused.
+    local Craft=require "AutoMindful/Craft"
+    ResourceType={Item="Item"}
+    local crafts={}
+    local function names(list) local l={}; for _,n in ipairs(list) do l[#l+1]={getFullName=function() return n end} end; return T.list(l) end
+    local function craft(name,inputs,outputs,known,keep)
+        local r={name=name,known=known~=false,ins=inputs,outs=outputs}
+        function r:getName() return name end
+        function r:getCategory() return "Cooking" end
+        function r:isAnySurfaceCraft() return false end
+        function r:getTranslationName() return name end
+        function r:getOutputs() return T.list({{getResourceType=function() return "Item" end,getPossibleResultItems=function() return names(outputs) end}}) end
+        function r:getInputs()
+            local l={}
+            for i,choice in ipairs(inputs) do
+                l[#l+1]={getResourceType=function() return "Item" end,getPossibleInputItems=function() return names(choice) end,
+                    isKeep=function() return keep==i end,isTool=function() return false end}
+            end
+            return T.list(l)
+        end
+        crafts[#crafts+1]=r
+        return r
+    end
+    craft("PlacePieInBakingPan",{{"Base.BakingPan"},{"Base.PieDough"}},{"Base.PiePrep"})
+    craft("MakePieDough",{{"Base.Flour"}},{"Base.PieDough"})
+    craft("OpenCannedFood",{{"Base.TinOpener"},{"Base.TinnedBeans"}},{"Base.OpenBeans"},true,1)
+    craft("MakeSecretStew",{{"Base.Truffle"}},{"Base.OpenBeans"},false)
+    local saved=getScriptManager
+    function getScriptManager() return {getAllCraftRecipes=function() return T.list(crafts) end,
+        FindItem=function(_,kind) return {getHungerChange=function() return -20 end} end} end
+    evolved({name="Pie",base="Base.PiePrep",result="Base.PieWholeRaw",cookable=true,takes={["Base.Apple"]=true}})
+    Dish.reset(); Craft.reset()
+    local made={}
+    local function make(kind)
+        local item=food({name=kind,fullType=kind,cookable=kind=="Base.PiePrep",hunger=kind=="Base.OpenBeans" and -.3 or -.15})
+        function item:isSpice() return false end
+        return item
+    end
+    function instanceItem(kind) return make(kind) end
+    HandcraftLogic={new=function(player)
+        local l={chosen={}}
+        function l:setIsoObject() end
+        function l:findCraftSurface() return {} end
+        function l:setContainers(list) self.containers=list.items end
+        function l:setRecipe(r) self.recipe=r end
+        function l:setRecipeFromContextClick(r) self.recipe=r end
+        function l:isRecipeAvailableForCharacter(r) return r.known end
+        function l:canPerformCurrentRecipe()
+            self.chosen={}
+            for _,choice in ipairs(self.recipe.ins) do
+                local hit
+                for _,c in ipairs(self.containers) do
+                    for _,item in ipairs(c.items or {}) do
+                        for _,kind in ipairs(choice) do if not hit and item:getFullType()==kind then hit=item end end
+                    end
+                end
+                if not hit then return false end
+                self.chosen[#self.chosen+1]=hit
+            end
+            return true
+        end
+        function l:getRecipeData() local s=self; return {getAllInputItems=function() return T.list(s.chosen) end} end
+        function l:startCraftAction() end
+        return l
+    end}
+    ISEntityUI={HandcraftStart=function(player,logic)
+        local action={Type="craft",isValid=function() return true end,perform=function()
+            for i,item in ipairs(logic.chosen) do
+                if not (logic.recipe.name=="OpenCannedFood" and i==1) then T.remove(item:getContainer() or player:getInventory(),item) end
+            end
+            for _,kind in ipairs(logic.recipe.outs) do made[#made+1]=T.add(player:getInventory(),make(kind)) end
+        end}
+        function action:setOnComplete() end
+        ISTimedActionQueue.add(action)
+        return action
+    end}
+    ISInventoryPaneContextMenu={OnNewCraftComplete=function() end}
+    Options.makeSoup=function() return true end
+    local function batch(p,s) run(); Kitchen.settle(p,s,T.now or 0,false); s.pending=nil end
+    local function through(p,s)
+        for _=1,6 do
+            if not Kitchen.ledger(p) then break end
+            batch(p,s)
+            if Kitchen.ledger(p) then Kitchen.duty(p,s,2000,true) end
+        end
+    end
+    local function apples(fridge)
+        for _=1,2 do local a=T.add(fridge,food({name="Apple",fullType="Base.Apple",cookable=false})); function a:isSpice() return false end end
+    end
+    -- Two crafts ahead: flour makes dough, dough and the pan make a crust, then the pie.
+    squares={}
+    local p=survivor(0,0); local s=state(); p.values.HUNGER=.3
+    stove(2,0)
+    local shelf=cupboard(-1,0); local fridge=cupboard(1,0,"fridge")
+    local pan=T.add(shelf,T.item("InventoryItem",{fullType="Base.BakingPan"}))
+    function pan:getActualWeight() return .5 end
+    local flour=T.add(shelf,food({name="Flour",fullType="Base.Flour",cookable=false})); function flour:isSpice() return false end
+    apples(fridge)
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).craft=="MakePieDough","Dough first, for the crust and the pie: "..tostring(Kitchen.ledger(p) and Kitchen.ledger(p).craft))
+    through(p,s)
+    assert(made[#made]:getFullType()=="Base.PieDough","The dough is made")
+    assert(Kitchen.meal(p,s,40000) and Kitchen.ledger(p).craft=="PlacePieInBakingPan","Then the crust")
+    assert(s.rejected[pan:getID()],"The pan is held for it")
+    through(p,s)
+    assert(made[#made]:getFullType()=="Base.PiePrep" and not s.rejected[pan:getID()],"The crust is made")
+    assert(Kitchen.meal(p,s,80000) and Kitchen.ledger(p).recipe=="Pie","Then the pie, with the crust just made")
+    -- A planned input that changed is refused: another pan, never the planned one.
+    squares={}; made={}
+    p=survivor(0,0); s=state(); p.values.HUNGER=.3
+    stove(2,0); shelf=cupboard(-1,0); fridge=cupboard(1,0,"fridge")
+    pan=T.add(shelf,T.item("InventoryItem",{fullType="Base.BakingPan"})); function pan:getActualWeight() return .5 end
+    local dough=T.add(shelf,food({name="Pie Dough",fullType="Base.PieDough",cookable=false})); function dough:isSpice() return false end
+    apples(fridge)
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).craft=="PlacePieInBakingPan")
+    batch(p,s) -- fetched
+    assert(p.inventory:contains(pan) and p.inventory:contains(dough))
+    -- The survivor's own pan, first in the pockets: the game's logic would take it now.
+    local mine=T.item("InventoryItem",{fullType="Base.BakingPan"})
+    table.insert(p.inventory.items,1,mine)
+    Kitchen.duty(p,s,2000,true)
+    assert(not Kitchen.ledger(p) and not s.pending,"Refused: not the pan that was planned")
+    assert(p.inventory:contains(mine) and p.inventory:contains(pan),"Both pans untouched")
+    assert(not s.rejected[pan:getID()],"Nothing held back after giving up")
+    -- A sealed can is opened when nothing is ready, with the opener from a carried bag.
+    squares={}; made={}
+    p=survivor(0,0); s=state(); p.values.HUNGER=.3
+    local bag=T.add(p.inventory,T.item("InventoryContainer",{fullType="Base.Bag_Schoolbag"}))
+    local pocket=T.container(0,0)
+    function bag:getInventory() return pocket end
+    function pocket:getOutermostContainer() return p.inventory end
+    local opener=T.add(pocket,T.item("InventoryItem",{fullType="Base.TinOpener"}))
+    function opener:isEquipped() return true end
+    fridge=cupboard(1,0,"fridge")
+    local can=T.add(fridge,food({name="Beans",fullType="Base.TinnedBeans",cookable=false}))
+    function can:getOpeningRecipe() return "OpenCannedFood" end
+    function can:isSpice() return false end
+    T.add(fridge,T.item("InventoryItem",{fullType="Base.Truffle"}))
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).craft=="OpenCannedFood","The can is opened: "..tostring(Kitchen.ledger(p) and Kitchen.ledger(p).craft))
+    through(p,s)
+    assert(made[1] and made[1]:getFullType()=="Base.OpenBeans" and pocket:contains(opener),"Opened, and the opener kept")
+    local options=Craft.options(p,Kitchen.scan(p,{},3000),{},3000)
+    for _,option in ipairs(options) do assert(option.def.name~="MakeSecretStew","Never a recipe not learned") end
+    getScriptManager=saved
+    Options.makeSoup=function() return false end
+    Dish.reset(); Craft.reset()
+    passed("crafts lead to better meals, two crafts ahead (dough, crust, pie); a sealed can is opened with a tool from a bag; never a recipe not learned")
+end

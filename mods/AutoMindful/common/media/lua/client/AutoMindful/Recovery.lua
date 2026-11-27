@@ -626,7 +626,11 @@ function Recovery.advance(player, state, now)
     local other = Coexist.owner(player)
     if other then
         if state.coexisting ~= other then Log.event(player, "coexist", "owner", other); state.coexisting = other end
+        -- Short and needed: leftovers kept cold, frozen food thawed, the toilet, pain, sleep.
+        if Kitchen.store(player, state, now) or not state.active then return end
+        if Kitchen.thaw(player, state, now) or not state.active then return end
         if P.lifestyleCare(player, state, P.lifestyleReady(player, state, now), now) then return end
+        if P.painAvailable(player, state, now) and P.supply(player, state, "pain") then return end
         if P.waitForSleep(player, state) then return end
         P.setPhase(state, "recovery-idle", other .. " is running. Autopilot steps in only for urgent needs.")
         return

@@ -11,6 +11,7 @@ local Beds = require "AutoMindful/Beds"
 local Danger = require "AutoMindful/Danger"
 local FirstAid = require "AutoMindful/FirstAid"
 local Dressings = require "AutoMindful/Dressings"
+local Boil = require "AutoMindful/Boil"
 local Fetch = require "AutoMindful/Fetch"
 local Fluids = require "AutoMindful/Fluids"
 local IntakeGuard = require "AutoMindful/IntakeGuard"
@@ -110,7 +111,9 @@ function Recovery.optionalWork(player, state)
     -- Fetching food for practice can wait; taking a dish out cannot.
     if state.phase == "kitchen" then
         local entry = Kitchen.ledger(player)
-        return entry ~= nil and entry.reason == "practice" and entry.stage ~= "cooking" and entry.stage ~= "finishing"
+        -- Boiling water for dressings can wait too, except taking it off the heat.
+        return entry ~= nil and ((entry.reason == "practice" and entry.stage ~= "cooking" and entry.stage ~= "finishing")
+            or (entry.kind == "boil" and (entry.stage ~= "boil-off" or entry.after == "fill")))
     end
     if state.phase == "collecting" then return state.supplyKind == "literature" or state.lifestylePickup ~= nil end
     return not essential[state.phase]
@@ -473,6 +476,13 @@ function Recovery.dressings(player, state, now)
     if not job then
         releaseAid(state, nil, "dressLoans")
         state.dressNext = now + 30000
+        return false
+    end
+    -- Boiling is a kitchen plan of its own: started here, run by the kitchen.
+    if job.kind == "boil" then
+        state.dressBusy = nil
+        if not Kitchen.ledger(player) and Boil.start(player, state, now, job.count, job.pots) then return true end
+        state.dressNext = now + 60000
         return false
     end
     -- What the game would craft with from what is carried decides first: a

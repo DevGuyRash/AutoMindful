@@ -13,6 +13,7 @@ local Diet = require "AutoMindful/Diet"
 local Progress = require "AutoMindful/Progress"
 local Dish = require "AutoMindful/Dish"
 local Craft = require "AutoMindful/Craft"
+local Boil = require "AutoMindful/Boil"
 local Fetch = require "AutoMindful/Fetch"
 local Fire = require "AutoMindful/Fire"
 local Alerts = require "AutoMindful/Alerts"
@@ -34,9 +35,15 @@ function Kitchen.bind(parts)
     P = parts
     local shared = {write = function(player, entry) Kitchen.write(player, entry) end, ledger = Kitchen.ledger, heatKind = Kitchen.heatKind, accepts = Kitchen.accepts,
         fueled = function(object) return Kitchen.isFueled(object) end,
-        place = function(...) return Kitchen.place(...) end}
+        place = function(...) return Kitchen.place(...) end,
+        -- For water on the heat (Boil): the same drivers and the same ledger.
+        scan = function(...) return Kitchen.scan(...) end, stoveAt = function(entry) return Kitchen.stoveAt(entry) end,
+        toggle = function(...) return Kitchen.toggle(...) end, isOn = function(object) return Kitchen.isOn(object) end,
+        canHeat = function(object) return Kitchen.canHeat(object) end, heatName = function(object) return Kitchen.heatName(object) end,
+        isTap = function(object) return Dish.isTap(object) end, shared = function(object) return Kitchen.sharedHeat(object) end}
     Dish.bind(shared, parts)
     Craft.bind(shared, parts)
+    Boil.bind(shared, parts)
 end
 
 -- ------------------------------------------------------------------ the food
@@ -195,6 +202,8 @@ function Kitchen.heatKind(object) local heat = heatOf(object); return heat and h
 -- Gone or replaced since it was found: neither on nor able to heat.
 local function isOn(object) local heat = heatOf(object); return heat ~= nil and heat.on(object) == true end
 local function canHeat(object) local heat = heatOf(object); return heat ~= nil and heat.ready(object) == true end
+Kitchen.isOn, Kitchen.canHeat = isOn, canHeat
+function Kitchen.sharedHeat(object) local heat = heatOf(object); return heat ~= nil and heat.shared == true end
 Kitchen.heatName = function(object)
     local heat = heatOf(object)
     local name = heat and heat.name or "stove"
@@ -450,6 +459,7 @@ local function toggle(player, stove, on, dish, minutes, entry, lit)
     end
     ISTimedActionQueue.add(action)
 end
+Kitchen.toggle = toggle
 
 local function transfer(player, item, from, to)
     local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, from, to)
@@ -506,6 +516,12 @@ function Kitchen.duty(player, state, now, walk)
         if not state or state.pending then return false end
         if stove then watched[player] = now end
         return Dish.step(player, state, now, entry, stove)
+    end
+    -- Water heated to sterilize dressings: its own steps, on its own heat.
+    if Boil.handles(entry.stage) then
+        if not state or state.pending then return false end
+        if stove then watched[player] = now end
+        return Boil.step(player, state, now, entry, stove)
     end
     -- A craft for a dish: no stove at all.
     if Craft.handles(entry.stage) then
@@ -625,7 +641,7 @@ function Kitchen.lit(player)
     if not entry then return false end
     local stove = stoveAt(entry)
     local stage = entry.stage
-    return stove ~= nil and isOn(stove) and (stage == "starting" or stage == "cooking" or stage == "finishing")
+    return stove ~= nil and isOn(stove) and (stage == "starting" or stage == "cooking" or stage == "finishing" or Boil.hot(stage))
 end
 
 -- Something on the stove needs a hand now, not just watching.
@@ -948,6 +964,7 @@ function Kitchen.settle(player, state, now, cut)
     if not entry then return end
     if Dish.handles(entry.stage) then return Dish.settle(player, state, now, cut) end
     if Craft.handles(entry.stage) then return Craft.settle(player, state, now, cut) end
+    if Boil.handles(entry.stage) then return Boil.settle(player, state, now, cut) end
     local stove = stoveAt(entry)
     local dish = dishIn(stove, entry)
     if entry.stage == "fetching" then
@@ -1098,6 +1115,7 @@ function Kitchen.ended(player)
     local entry = Kitchen.ledger(player)
     if not entry then return nil end
     local stove = stoveAt(entry)
+    if Boil.handles(entry.stage) then return Boil.ended(player, entry, stove) end
     if entry.stage == "fetching" or entry.stage == "ready" or Dish.handles(entry.stage) or Craft.handles(entry.stage) then
         Dish.forget(player); Craft.forget(player); write(player, nil); return nil
     end

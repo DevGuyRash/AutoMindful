@@ -67,12 +67,14 @@ end
 -- The game's crafting logic for a recipe, started from one input as its own
 -- menu does, with what is carried; nil when the survivor cannot make it now,
 -- and "last-drink" when the game would wash in water someone may need to drink.
-function Dressings.logic(player, name, anchor)
+-- extra: containers beside the survivor to craft from too (a pot left on the heat).
+function Dressings.logic(player, name, anchor, extra)
     local recipe = read(function() return getScriptManager():getCraftRecipe(name) end)
     local logic = recipe and read(function() return HandcraftLogic.new(player, nil, nil) end)
     if not logic then return nil end
     local list = ArrayList.new()
     for _, container in ipairs(carried(player)) do list:add(container) end
+    for _, container in ipairs(extra or {}) do list:add(container) end
     logic:setContainers(list)
     logic:setRecipe(recipe)
     if not read(function() return logic:isRecipeAvailableForCharacter(recipe) end, false) then return nil end
@@ -135,6 +137,9 @@ function Dressings.plan(player, look, radius)
     if water then return {kind = "wash", recipe = recipes.wash, anchor = dirty, uses = {water}} end
     local spirit = plain and pick("spirit")
     if spirit then return {kind = "sterilize", recipe = recipes.spirit, anchor = plain, uses = {spirit}} end
+    -- No alcohol: boiled water does it (Boil), with the largest pot around.
+    local pots = plain and FirstAid.roles.pot and pick("pot", {list = true}) or {}
+    if #pots > 0 then return {kind = "boil", anchor = plain, pots = pots, count = wounds + Dressings.policy.spare - sterile} end
     return nil
 end
 

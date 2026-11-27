@@ -252,9 +252,10 @@ end
 
 -- The best dish to make now from what the kitchen found. heatFor(item) gives a
 -- heat that cooks it, or nil. reason: "meal" or "practice". nil when nothing
--- fits, and then why: a tally of what ruled each recipe out.
+-- fits, and then why: a tally of what ruled each recipe out. Third: the best
+-- plan for each recipe that fits, best first, for the Kitchen tab.
 function Dish.plan(player, found, reason, heatFor, skipped, now)
-    local level, best = cookingLevel(player), nil
+    local level, best, each = cookingLevel(player), nil, {}
     local why = {bases = #(found.bases or {}), ingredients = #(found.ingredients or {}), dry = 0, cold = 0, cooked = 0, few = 0}
     local tap = found.taps and found.taps[1]
     for _, base in ipairs(found.bases or {}) do
@@ -276,15 +277,21 @@ function Dish.plan(player, found, reason, heatFor, skipped, now)
                     if real < (vessel and 2 or 1) then why.few = why.few + 1 end
                     if real >= (vessel and 2 or 1) then
                         local score = value + (vessel and 0 or 5)
-                        if not best or score > best.score then
-                            best = {base = base, def = def, heat = heat, items = items, score = score, real = real, tap = dry and tap or nil, cook = cook}
-                        end
+                        local plan = {base = base, def = def, heat = heat, items = items, score = score, real = real, tap = dry and tap or nil, cook = cook}
+                        if not best or score > best.score then best = plan end
+                        if not each[def.name] or score > each[def.name].score then each[def.name] = plan end
                     end
                 end
             end
         end
     end
-    return best, why
+    local list = {}
+    for _, plan in pairs(each) do list[#list + 1] = plan end
+    table.sort(list, function(a, b)
+        if a.score ~= b.score then return a.score > b.score end
+        return a.def.name < b.def.name
+    end)
+    return best, why, list
 end
 
 -- ------------------------------------------------------------------- the steps

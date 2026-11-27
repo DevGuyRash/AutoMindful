@@ -375,6 +375,23 @@ function Views.kitchen(window)
     if summary.soon > 0 then count(rows, "Rots within " .. summary.soonDays .. " days", summary.soon, colors.warn) end
     count(rows, "Ready to eat", summary.ready)
     count(rows, "In the freezer", summary.frozen)
+    head(rows, "Could make now")
+    if not summary.dishes then
+        rows[#rows + 1] = {kind="text", text="Dishes are off: turn on " .. Options.windowText.recoverySoup[1] .. " below.", color=colors.muted}
+    elseif #summary.dishes == 0 then
+        rows[#rows + 1] = {kind="text", text="No dish yet: " .. (summary.reason or "nothing nearby fits a recipe") .. ".", color=colors.muted}
+    else
+        for _, dish in ipairs(summary.dishes) do
+            rows[#rows + 1] = {kind="text", bullet=true, color=colors.text,
+                text=dish.name .. " in " .. dish.base .. ", " .. dish.count .. (dish.count == 1 and " ingredient" or " ingredients")
+                    .. (dish.heat and (", on the " .. dish.heat) or ", no cooking")}
+        end
+        if (summary.more or 0) > 0 then rows[#rows + 1] = {kind="text", text="And " .. summary.more .. " more.", color=colors.muted} end
+    end
+    if summary.crafts and #summary.crafts > 0 then
+        local more = (summary.moreCrafts or 0) > 0 and (" and " .. summary.moreCrafts .. " more") or ""
+        rows[#rows + 1] = {kind="text", text="Crafts it could do: " .. table.concat(summary.crafts, ", ") .. more .. ".", color=colors.muted}
+    end
     head(rows, "Keeping cold")
     count(rows, "Powered fridges", summary.fridges)
     count(rows, "Powered freezers", summary.freezers)

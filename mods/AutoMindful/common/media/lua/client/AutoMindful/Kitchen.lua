@@ -18,7 +18,7 @@ local Fire = require "AutoMindful/Fire"
 local Alerts = require "AutoMindful/Alerts"
 
 local Kitchen = {policy = {radius = 10, lookMs = 30000, retryMs = 600000, attempts = 3, burnShare = 0.8, againMs = 120000,
-    batch = 4, soonHours = 72, practiceMs = 60000, tired = 0.5, graceMs = 5000, thawMs = 600000, thawCount = 2,
+    batch = 4, soonHours = 72, practiceMs = 60000, tired = 0.5, graceMs = 5000, thawMs = 600000, thawCount = 2, couldMs = 10000,
     unwatchedMs = 15000, warnMs = 60000}}
 local watched, warned = {}, {}
 local P
@@ -1169,6 +1169,7 @@ end
 local doing = {fetching = "Getting food for ", ready = "Getting food for ", starting = "Starting ", cooking = "Cooking ",
     finishing = "Taking out "}
 
+local could = {}
 function Kitchen.summary(player, now)
     local found = Kitchen.scan(player, nil, now)
     local usable = {}
@@ -1208,8 +1209,56 @@ function Kitchen.summary(player, now)
     for _, item in ipairs(found.frozen) do
         if not item.carried then result.frozen = result.frozen + 1 end
     end
+    -- What it could make now: the best plan for each recipe and the crafts it
+    -- could do. Slower to work out than the rest, so looked at every ten seconds,
+    -- and on its own: a failure here leaves the rest of the tab as it is.
+    local cached = could[player]
+    if not Options.makeSoup() then
+        could[player] = nil
+    elseif cached and now >= cached.at and now - cached.at < Kitchen.policy.couldMs then
+        result.dishes, result.more, result.reason, result.crafts, result.moreCrafts = cached.dishes, cached.more, cached.reason, cached.crafts, cached.moreCrafts
+    else
+        local ok, list = pcall(function()
+            local _, why, each = Dish.plan(player, found, "meal", dishHeat(found), {}, now)
+            local out = {dishes = {}, crafts = {}, more = math.max(0, #each - 6), moreCrafts = 0, at = now}
+            for index, plan in ipairs(each) do
+                if index > 6 then break end
+                out.dishes[#out.dishes + 1] = {name = Dish.title(plan.def), base = plan.base.item:getDisplayName(), count = plan.real,
+                    heat = plan.heat and Kitchen.heatName(plan.heat.object) or nil}
+            end
+            if #each == 0 then
+                -- The one reason that ruled out most of what was there.
+                local top, reason = 0, "nothing nearby fits a recipe"
+                for _, pick in ipairs({{why.cold, "no free stove or grill can cook them (dishes are not cooked on a wood fire)"},
+                        {why.dry, "no running water for the pot"}, {why.cooked, "what is nearby is already cooked"},
+                        {why.few, "not enough ingredients for a dish"}}) do
+                    if (pick[1] or 0) > top then top, reason = pick[1], pick[2] end
+                end
+                if why.bases == 0 then reason = "no pot, pan, bowl, bread or crust nearby"
+                elseif why.ingredients == 0 then reason = "nothing nearby that a recipe takes" end
+                out.reason = reason
+            end
+            local seen = {}
+            for _, option in ipairs(Craft.options(player, found, {}, now)) do
+                local name = option.def.recipe.getTranslationName and option.def.recipe:getTranslationName() or option.def.name
+                if name and not seen[name] then
+                    seen[name] = true
+                    if #out.crafts < 6 then out.crafts[#out.crafts + 1] = name else out.moreCrafts = out.moreCrafts + 1 end
+                end
+            end
+            return out
+        end)
+        if ok then
+            could[player] = list
+            result.dishes, result.more, result.reason, result.crafts, result.moreCrafts = list.dishes, list.more, list.reason, list.crafts, list.moreCrafts
+        else
+            Log.detail(player, "kitchen.could", "error", tostring(list))
+        end
+    end
     return result
 end
+-- A setting changed: look again now.
+function Kitchen.lookAgain(player) could[player] = nil end
 
 function Kitchen.status(player, state)
     local entry = Kitchen.ledger(player)

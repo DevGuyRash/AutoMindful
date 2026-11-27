@@ -381,6 +381,7 @@ function Controller.stop(player, reason, cause, nativeReason)
     if cause ~= "switch" then Recovery.remember(player, false) end
     Recovery.ended(player)
     state.parkedTrip, state.aidTry, state.bedTry, state.lastResort, state.dressTry = nil, nil, nil, nil, nil
+    state.dressBusy, state.dressLoans, state.aidLoans, state.aidIdle = nil, nil, nil, nil
     state.guard, state.aidNotice, state.setbacks, state.interject = nil, nil, nil, nil
     state.active, state.trainingStopReason, state.trainingKind = false, nil, nil
     state.turnTier,state.recoveryTier,state.restroomDrain=nil,nil,nil

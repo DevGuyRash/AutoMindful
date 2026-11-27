@@ -8,6 +8,7 @@ for _, name in ipairs({"ISApplyBandage", "ISRemoveGlass", "ISRemoveBullet", "ISD
 end
 package.loaded["AutoMindful/Fluids"] = {isWater = function(fluid) return fluid.water == true end}
 function getTimestampMs() return 0 end
+function instanceof(value, kind) return type(value) == "table" and value.kind == kind end
 ItemTag, ComponentType, Perks = {}, {FluidContainer = "fluid"}, {Doctor = "doctor"}
 
 local Dressings = require "AutoMindful/Dressings"
@@ -88,3 +89,27 @@ do
     assert(Dressings.plan(survivor({wound(true)}, {sterile(), sterile()}), looker({[0] = {plain = plain}, [10] = {spirit = spirit}}, {}), 10) == nil)
 end
 print("PASS clean dressings are sterilized for the wounds there are, one spare")
+
+do
+    -- Denim and leather strips are tailoring stock, not dressings to wash.
+    assert(not roles.dirty.match(item("DenimStripsDirty")) and not roles.dirty.match(item("LeatherStripsDirty")))
+    -- The game picks the other inputs itself: if it would wash in water
+    -- someone may need to drink, that is said, and nothing is made.
+    local chosen
+    local function list(values) return {size = function() return #values end, get = function(_, index) return values[index + 1] end} end
+    getScriptManager = function() return {getCraftRecipe = function(_, name) return {name = name} end} end
+    ArrayList = {new = function() return {add = function() end} end}
+    HandcraftLogic = {new = function()
+        return {setContainers = function() end, setRecipe = function() end, isRecipeAvailableForCharacter = function() return true end,
+            setRecipeFromContextClick = function() end, canPerformCurrentRecipe = function() return true end,
+            getRecipeData = function() return {getAllInputItems = function() return list(chosen) end} end}
+    end}
+    local p = {getInventory = function() return {getItems = function() return list({}) end} end}
+    local dirty = item("BandageDirty")
+    chosen = {dirty, item("WaterBottle", {amount = 0.6, water = true})}
+    local logic, why = Dressings.logic(p, "CleanBandage", dirty)
+    assert(logic == nil and why == "last-drink")
+    chosen = {dirty, item("WaterBottle", {amount = 1.5, water = true})}
+    assert(Dressings.logic(p, "CleanBandage", dirty) ~= nil)
+end
+print("PASS only dressings are washed, and never in the last drink")

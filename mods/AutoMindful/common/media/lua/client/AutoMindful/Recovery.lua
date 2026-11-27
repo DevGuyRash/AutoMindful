@@ -323,6 +323,13 @@ local function walkFor(player, state, now, step, message)
 end
 
 function Recovery.firstAid(player, state, now)
+    -- Dressing work nobody carries on (Autopilot switched off, Auto All in
+    -- charge, or no calm moment for a while): its borrowed things go home.
+    if state.dressBusy and (not state.recovery or Coexist.owner(player) or not state.dressSeen
+            or now < state.dressSeen or now - state.dressSeen > 15000) then
+        state.dressBusy = nil
+        releaseAid(state, nil, "dressLoans")
+    end
     if not Options.firstAid() then releaseAid(state); releaseAid(state, nil, "dressLoans"); return false end
     if state.excursion and state.excursion.stage == "outbound" then return false end
     if state.aidNext and now < state.aidNext and state.aidNext - now <= 60000 then return false end
@@ -337,6 +344,7 @@ function Recovery.firstAid(player, state, now)
             return held ~= nil and now < held.at and held.at - now <= setbackLimitMs
         end})
     releaseAid(state, step and step.uses)
+    state.aidIdle = step == nil or nil
     if not step then
         state.aidBleedSince = nil
         state.aidNotice = missing == "bleeding" and "Bleeding, and there is no bandage within reach."
@@ -385,7 +393,7 @@ function Recovery.firstAid(player, state, now)
     -- What the dressing leaves for later, said once while danger is near.
     if guarded and step.waits then waiting(player, state, {part = step.part, kind = step.waits:match("^[^>]+"), chain = step.waits}, state.guard.reason or state.guard.level)
     else state.aidWaiting = nil end
-    state.aidTry = {step=step}
+    state.aidTry, state.aidIdle = {step=step}, nil
     local message = FirstAid.describe(step)
     local queued
     if step.kind == "take" then
@@ -414,13 +422,30 @@ end
 -- Between wounds, in a calm moment: a dirty dressing washed in clean water, a
 -- clean one sterilized with alcohol, with the game's own crafts. A step is
 -- done once the dressing it started from has turned into something else.
+local function dressDone(player, try)
+    local inventory = player:getInventory()
+    if try.kind == "walk" then return Grid.reachable(player:getSquare(), try.square) end
+    if try.kind == "take" then
+        for _, entry in ipairs(try.entries) do if not inventory:getItemById(entry.item:getID()) then return false end end
+        return true
+    end
+    return not inventory:getItemById(try.id)
+end
+
 local function dressSettled(player, state, now)
     local try = state.dressTry
     if not try then return true end
-    if not player:getInventory():getItemById(try.id) then state.dressTry = nil; return true end
+    if dressDone(player, try) then state.dressTry = nil; return true end
     try.endedAt = try.endedAt or now
     if now >= try.endedAt and now - try.endedAt < aidConfirmMs then return false end
     state.dressTry = nil
+    -- A walk or fetch that changed nothing: what it was for is passed over a while.
+    if try.kind == "walk" or try.kind == "take" then
+        for _, entry in ipairs(try.entries or {try.entry}) do state.rejected[entry.item:getID()] = now + 60000 end
+        FirstAid.forget(player)
+        Log.event(player, "dressing.refused", "step", try.kind, "cutShort", try.cut)
+        return true
+    end
     -- Stopped (darkness, the player): tried again later, and not for ever.
     state.dressCuts = try.cut and (state.dressCuts or 0) + 1 or 0
     if not try.cut or state.dressCuts >= 3 then state.rejected[try.id] = now + 600000; state.dressCuts = 0
@@ -434,6 +459,9 @@ function Recovery.dressings(player, state, now)
     -- Auto All in charge: its own Sterilize and Clean may be at it.
     if Coexist.owner(player) then return false end
     if state.guard or state.excursion or not player:getBodyDamage().getBodyParts then return false end
+    -- Never in the middle of a wound: only while first aid has nothing under way.
+    if not state.aidIdle or state.aidTry then return false end
+    state.dressSeen = now
     if state.dressNext and now < state.dressNext and state.dressNext - now <= 60000 then return false end
     if not dressSettled(player, state, now) then return false end
     state.dressNext = now + 2000
@@ -445,8 +473,18 @@ function Recovery.dressings(player, state, now)
         state.dressNext = now + 30000
         return false
     end
+    -- What the game would craft with from what is carried decides first: a
+    -- carried vessel it would use is used, and water someone may need to
+    -- drink is never washed with. Only when nothing carried serves is the
+    -- planned one fetched, and then it is the one the game takes.
+    local logic, why = Dressings.logic(player, job.recipe, job.anchor.item)
+    if why == "last-drink" then
+        state.dressNext = now + 600000
+        Log.event(player, "dressing.waiting", "why", why)
+        return false
+    end
     local uses, far, near = {}, nil, {}
-    for _, entry in ipairs(job.uses) do
+    for _, entry in ipairs(logic and {} or job.uses) do
         uses[entry.item] = true
         -- In a bag: into the hands with a loan, so it goes back to its bag.
         if not entry.carried then
@@ -458,11 +496,12 @@ function Recovery.dressings(player, state, now)
     if #near > 0 then
         message = "Getting " .. near[1].item:getDisplayName() .. " for the dressings."
         queued = takeAll(player, state, now, near, message, "dressLoans")
+        if queued then state.dressTry = {kind = "take", entries = near} end
     elseif far then
         message = "Going for " .. far.item:getDisplayName() .. " for the dressings."
         queued = walkFor(player, state, now, {square = far.square, entry = far}, message)
+        if queued then state.dressTry = {kind = "walk", square = far.square, entry = far} end
     else
-        local logic = Dressings.logic(player, job.recipe, job.anchor.item)
         if not logic then
             state.rejected[job.anchor.item:getID()] = now + 600000
             Log.event(player, "dressing.cannot", "step", job.kind, "item", Snap.item(job.anchor.item))

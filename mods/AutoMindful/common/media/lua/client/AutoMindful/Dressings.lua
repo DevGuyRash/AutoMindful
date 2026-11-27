@@ -20,7 +20,8 @@ local function fluidOf(item)
 end
 
 -- CleanBandage's inputs, and DisinfectRag's and DisinfectBandage's.
-local washable = {BandageDirty = true, DenimStripsDirty = true, LeatherStripsDirty = true, RippedSheetsDirty = true}
+-- Dressings only: denim and leather strips are kept for tailoring.
+local washable = {BandageDirty = true, RippedSheetsDirty = true}
 local sterilizable = {Bandage = true, RippedSheets = true}
 local spirits = {RubbingAlcohol = 1, Vodka = 2, Whiskey = 2}
 
@@ -59,7 +60,8 @@ local function carried(player)
 end
 
 -- The game's crafting logic for a recipe, started from one input as its own
--- menu does; nil when the survivor cannot make it now.
+-- menu does, with what is carried; nil when the survivor cannot make it now,
+-- and "last-drink" when the game would wash in water someone may need to drink.
 function Dressings.logic(player, name, anchor)
     local recipe = read(function() return getScriptManager():getCraftRecipe(name) end)
     local logic = recipe and read(function() return HandcraftLogic.new(player, nil, nil) end)
@@ -76,7 +78,7 @@ function Dressings.logic(player, name, anchor)
         local items = read(function() return logic:getRecipeData():getAllInputItems() end)
         for index = 0, items and items:size() - 1 or -1 do
             local fluid = fluidOf(items:get(index))
-            if fluid and fluid:getAmount() < Dressings.policy.washLiters + Dressings.policy.keepLiters then return nil end
+            if fluid and fluid:getAmount() < Dressings.policy.washLiters + Dressings.policy.keepLiters then return nil, "last-drink" end
         end
     end
     return logic
@@ -102,11 +104,13 @@ function Dressings.need(player)
         local part = parts:get(index)
         if part.bandaged and (part:bandaged() or FirstAid.open(part)) then wounds = wounds + 1 end
     end
-    local items = player:getInventory():getItems()
-    for index = 0, items:size() - 1 do
-        local item = items:get(index)
-        if item.getBandagePower and item:getBandagePower() > 0 and read(function() return item:isAlcoholic() end, false)
-                and not string.find(kind(item), "Dirty", 1, true) then sterile = sterile + 1 end
+    for _, container in ipairs(carried(player)) do
+        local items = container:getItems()
+        for index = 0, items:size() - 1 do
+            local item = items:get(index)
+            if item.getBandagePower and item:getBandagePower() > 0 and read(function() return item:isAlcoholic() end, false)
+                    and not string.find(kind(item), "Dirty", 1, true) then sterile = sterile + 1 end
+        end
     end
     return wounds, sterile
 end

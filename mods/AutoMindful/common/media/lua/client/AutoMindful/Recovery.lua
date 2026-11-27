@@ -10,6 +10,7 @@ local Saved = require "AutoMindful/Saved"
 local Beds = require "AutoMindful/Beds"
 local Danger = require "AutoMindful/Danger"
 local FirstAid = require "AutoMindful/FirstAid"
+local Fetch = require "AutoMindful/Fetch"
 local Fluids = require "AutoMindful/Fluids"
 local IntakeGuard = require "AutoMindful/IntakeGuard"
 local Interject = require "AutoMindful/Interject"
@@ -216,8 +217,9 @@ local function aidSettled(player, state, now)
     else
         record.count = record.count + 1
         record.at = now + math.min(setbackLimitMs, 30000 * 2 ^ (record.count - 1))
-        local item = try.step.item or try.step.tool or try.step.thread
-        if item then state.rejected[item.item:getID()] = now + 60000 end
+        local step = try.step
+        local list = step.entries or {step.entry or step.item or step.tool or step.thread}
+        for _, entry in ipairs(list) do state.rejected[entry.item:getID()] = now + 60000 end
     end
     FirstAid.forget(player)
     Log.event(player, "firstaid.refused", "step", try.step.kind, "part", FirstAid.partName(part), "count", record.count, "cutShort", try.cut)
@@ -239,6 +241,21 @@ local function returnTrip(player, state, now)
         end
     end
     return false
+end
+
+-- Once everything is back where it belongs, back to where first aid began:
+-- the spot the survivor was training or resting on.
+local function goBack(player, state)
+    local origin = state.aidOrigin
+    if not origin then return false end
+    for _, loan in ipairs(state.loans) do if loan.aidReturn and (loan.aidWalks or 0) < 2 then return false end end
+    state.aidOrigin = nil
+    local square = getCell():getGridSquare(origin.x, origin.y, origin.z)
+    local here = player:getSquare()
+    if not square or not here or here == square or state.excursion then return false end
+    return P.ownBatch(player, state, "firstaid", "Back to where first aid began.", function()
+        ISTimedActionQueue.add(ISWalkToTimedAction:new(player, square))
+    end)
 end
 
 -- Said once per change: what waits for safety, so the log shows it.
@@ -270,7 +287,8 @@ function Recovery.firstAid(player, state, now)
             or missing == "calming" and "Wounds wait until the panic passes: the sight of blood." or nil
         if missing then state.aidNext = now + aidRetryMs; return false end
         state.aidWaiting = nil
-        return not state.guard and Recovery.permit(player, state, "topUp", now) and returnTrip(player, state, now)
+        if state.guard or not Recovery.permit(player, state, "topUp", now) then return false end
+        return returnTrip(player, state, now) or goBack(player, state)
     end
     state.aidNotice = nil
     -- Care for a bleeding wound goes on while someone is at the controls or
@@ -280,11 +298,13 @@ function Recovery.firstAid(player, state, now)
     if not step.urgent and (Needs.critical(player, "water") or Needs.critical(player, "food")
             or not Recovery.permit(player, state, "topUp", now)) then return false end
     -- With danger near only a dressing on a bleeding wound, where it stands.
-    if guarded and not (step.urgent and step.kind == "bandage") then
+    if guarded and not (step.urgent and (step.kind == "bandage" or step.kind == "take" and step.chain == "bandage")) then
         waiting(player, state, step, state.guard.reason or state.guard.level)
         return false
     end
-    state.aidWaiting = nil
+    -- What the dressing leaves for later, said once while danger is near.
+    if guarded and step.waits then waiting(player, state, {part = step.part, kind = step.waits:match("^[^>]+"), chain = step.waits}, state.guard.reason or state.guard.level)
+    else state.aidWaiting = nil end
     state.aidTry = {step=step}
     local message = FirstAid.describe(step)
     local queued
@@ -295,11 +315,18 @@ function Recovery.firstAid(player, state, now)
                 if loan then
                     loan.defer = true
                     state.aidLoans = state.aidLoans or {}
-                    state.aidLoans[#state.aidLoans + 1] = loan
+                    local known = false
+                    for _, other in ipairs(state.aidLoans) do if other == loan then known = true end end
+                    if not known then state.aidLoans[#state.aidLoans + 1] = loan end
                 end
-                -- No room, or the game will not move it: held back a while,
-                -- so something else may serve.
-                if not Supplies.transfer(player, entry.item, loan) then
+                -- Lying on the floor: picked up as the game does, which needs no
+                -- loot window to have listed it. No room, or the game will not
+                -- move it: held back a while, so something else may serve.
+                local taken
+                if entry.entry.world and player:getInventory():hasRoomFor(player, entry.item) then
+                    taken = Fetch.queue(player, entry.entry) ~= nil
+                else taken = Supplies.transfer(player, entry.item, loan) end
+                if not taken then
                     state.rejected[entry.item:getID()] = now + 60000
                     if loan then loan.defer = nil end
                 end
@@ -307,7 +334,11 @@ function Recovery.firstAid(player, state, now)
         end)
         if not queued then state.aidNext = now + aidRetryMs; FirstAid.forget(player) end
     elseif step.kind == "walk" then
+        local from = player:getSquare()
         queued = P.ownBatch(player, state, "firstaid", message, function() luautils.walkAdj(player, step.square, true) end)
+        -- Nothing to walk: a wall between, or no free square beside it.
+        if not queued then state.rejected[step.entry.item:getID()] = now + 60000; state.aidNext = now + aidRetryMs; FirstAid.forget(player)
+        elseif not state.aidOrigin and not state.excursion and from then state.aidOrigin = {x = from:getX(), y = from:getY(), z = from:getZ()} end
     else
         queued = P.ownBatch(player, state, "firstaid", message, function()
             local action = FirstAid.action(player, step)

@@ -33,13 +33,17 @@ local function container()
     function c:getItems() return self.items end
     function c:contains(item) return self.items:contains(item) end
     function c:getSourceGrid() return nil end
+    function c:getItemById(id) for _, it in ipairs(self.items) do if it:getID() == id then return it end end end
     function c:getContainingItem() return self.bag end
     function c:getType() return "none" end
     return c
 end
 
+local nextID = 0
 local function item(kind, fields)
     local i = fields or {}
+    nextID = nextID + 1
+    i.id = i.id or nextID
     i.type = kind
     function i:getType() return self.type end
     function i:getDisplayName() return self.type end
@@ -51,6 +55,7 @@ local function item(kind, fields)
     function i:hasComponent(kind) return kind == "fluid" and self.fluid ~= nil end
     function i:getFluidContainer()
         local f = self.fluid
+        if not f then return nil end
         return {getAmount = function() return f.amount end, getProperties = function() return {getAlcohol = function() return f.alcohol end} end}
     end
     function i:IsDrainable() return self.drainable == true end
@@ -58,7 +63,7 @@ local function item(kind, fields)
     function i:getCurrentUsesFloat() return self.uses or 1 end
     function i:getContainer() return self.container end
     function i:getWorldItem() return nil end
-    function i:getID() return self.id or 0 end
+    function i:getID() return self.id end
     return i
 end
 
@@ -269,7 +274,7 @@ do
     local p = survivor({leg}, {traits = {hemophobic = true}, panic = 3})
     carry(p, "SutureNeedle"); carry(p, "Bandage", {power = 4})
     local step, why = FirstAid.plan(p, {radius = 0})
-    assert(step and step.kind == "unbandage", "taking a dressing off draws no blood")
+    assert(step == nil and why == "calming", "the dressing stays on while the stitches would have to wait")
     leg.cover = nil
     step, why = FirstAid.plan(p, {radius = 0})
     assert(step == nil and why == "calming", tostring(why))
@@ -349,9 +354,17 @@ do
     -- Something the game would not move is passed over for a while.
     local leg = part("ForeArm_L", {cut = true})
     local q = survivor({leg})
-    local first = carry(q, "Bandage", {power = 4}); first.getID = function() return 1 end
-    local second = carry(q, "Bandage", {power = 4}); second.getID = function() return 2 end
-    step = FirstAid.plan(q, {radius = 0, rejected = {[1] = 100}, now = 10})
+    local first = carry(q, "Bandage", {power = 4})
+    local second = carry(q, "Bandage", {power = 4})
+    step = FirstAid.plan(q, {radius = 0, rejected = {[first.id] = 100}, now = 10})
     assert(step.kind == "bandage" and step.item.item == second)
 end
 print("PASS danger keeps it to a dressing, and refused supplies are passed over")
+
+do
+    -- A broken neck is splinted: the game refuses only the head and chest.
+    local neck = part("Neck", {fracture = 30})
+    local p = survivor({neck}); carry(p, "Splint")
+    assert(joined(run(p)) == "splint")
+end
+print("PASS a neck fracture is splinted like a limb")

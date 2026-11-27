@@ -52,8 +52,8 @@ end
 
 local function disinfectant(item)
     return read(function()
-        if item:hasComponent(ComponentType.FluidContainer) then
-            local fluid = fluidOf(item)
+        local fluid = fluidOf(item)
+        if fluid then
             local amount = fluid:getAmount()
             return amount > 0.15 and fluid:getProperties():getAlcohol() / amount + 0.001 >= 0.4
         end
@@ -82,8 +82,8 @@ local roles = {
     -- Disinfectant and rubbing alcohol before a bottle of something to drink.
     alcohol = {match = disinfectant, grade = function(item)
         return read(function()
-            if not item:hasComponent(ComponentType.FluidContainer) then return 1 end
             local fluid = fluidOf(item)
+            if not fluid then return 1 end
             return fluid:getProperties():getAlcohol() / fluid:getAmount() >= 0.9 and 1 or 2
         end, 2)
     end},
@@ -148,7 +148,8 @@ end
 local function typeName(part) return tostring(read(function() return part:getType() end, "")) end
 -- Where bleeding kills fastest.
 local weights = {Neck = 30, Head = 20, Torso_Upper = 15, Torso_Lower = 12, Groin = 10, UpperLeg_L = 10, UpperLeg_R = 10}
-local unsplintable = {Head = true, Neck = true, Torso_Upper = true, Torso_Lower = true}
+-- HSplint's own exclusions.
+local unsplintable = {Head = true, Torso_Upper = true, Torso_Lower = true}
 
 local function bleedingOpen(part) return part:bleeding() and not part:bandaged() end
 local function goodStitches(part) return isStitched(part) and part:getStitchTime() > FirstAid.policy.goodStitch end
@@ -318,7 +319,8 @@ local function treatments(player, part, pick)
         local needle = not suture and pick("needle") or nil
         local thread = needle and pick("thread") or nil
         if suture or (needle and thread) then
-            stitch = {kind = "stitch", thread = suture or thread, needle = needle, holder = pick("holder")}
+            -- A holder only makes it quicker: worth taking if at hand, not a walk.
+            stitch = {kind = "stitch", thread = suture or thread, needle = needle, holder = pick("holder", {near = true})}
             major = true
         end
     end
@@ -397,7 +399,8 @@ end
 -- options.hurry: danger is near, so a bleeding wound gets only a dressing.
 -- A step: {kind, part, danger, urgent, chain, uses} plus what it takes;
 -- "walk" (square) and "take" (entries) come before anything is unwrapped.
--- urgent: for a wound that bleeds; uses: every item the wound's care takes.
+-- urgent: for a wound that bleeds; uses: every item the wound's care takes;
+-- waits: the care held back while only the bleeding is stopped.
 function FirstAid.plan(player, options)
     options = options or {}
     local parts = player:getBodyDamage():getBodyParts()
@@ -420,17 +423,27 @@ function FirstAid.plan(player, options)
         local part = wound.part
         local chain = treatments(player, part, fresh())
         local urgent = bleedingOpen(part)
+        local waits
         -- More than one wound bleeding, a walk, or danger near: the blood is
         -- stopped first, the rest of the care can follow.
         if urgent and #chain > 1 then
             local quick = fresh()("dressing")
             local walk = false
             for _, entry in ipairs(supplies(chain)) do if not entry.reach then walk = true end end
-            if quick and (bleeders > 1 or walk or options.hurry) then chain = {{kind = "bandage", item = quick}} end
+            if quick and (bleeders > 1 or walk or options.hurry) then
+                local rest = {}
+                for _, step in ipairs(chain) do rest[#rest + 1] = step.kind end
+                waits = table.concat(rest, ">")
+                chain = {{kind = "bandage", item = quick}}
+            end
         end
         if #chain == 0 then
             if urgent and not missing then missing = "bleeding" end
-        elseif bloody[chain[1].kind] and not urgent and panicked(player) then
+        elseif not urgent and panicked(player) and (function()
+                for _, step in ipairs(chain) do if bloody[step.kind] then return true end end
+                return false
+            end)() then
+            -- Not even the dressing comes off while the sight of blood would wait.
             waiting = waiting or "calming"
         else
             local kinds, uses = {}, {}
@@ -449,7 +462,7 @@ function FirstAid.plan(player, options)
             elseif far then step = {kind = "walk", square = far.square, entry = far}
             else step = chain[1] end
             step.part, step.danger, step.urgent, step.uses = part, wound.danger, urgent, uses
-            step.chain = table.concat(kinds, ">")
+            step.chain, step.waits = table.concat(kinds, ">"), waits
             return step
         end
     end
@@ -458,7 +471,13 @@ end
 
 -- --------------------------------------------------------------- the actions
 
-local function held(player, entry) return entry and entry.item:getContainer() == player:getInventory() end
+-- In the main inventory, by ID: in multiplayer the object may be replaced.
+local function current(player, entry)
+    local inventory = player:getInventory()
+    local item = entry and inventory:getItemById(entry.item:getID())
+    return item ~= nil and item:getContainer() == inventory and item or nil
+end
+local function held(player, entry) return current(player, entry) ~= nil end
 
 -- The game's action for a step, or nothing when the game would refuse it.
 function FirstAid.action(player, step)
@@ -469,15 +488,16 @@ function FirstAid.action(player, step)
     for _, field in ipairs(fields) do
         if step[field] and not held(player, step[field]) then return nil end
     end
-    if k == "bandage" then return (not part:bandaged() and dressing(step.item.item)) and ISApplyBandage:new(player, player, step.item.item, part, true) or nil end
+    local function use(field) return step[field] and current(player, step[field]) or nil end
+    if k == "bandage" then return (not part:bandaged() and dressing(use("item"))) and ISApplyBandage:new(player, player, use("item"), part, true) or nil end
     if k == "glass" then return part:haveGlass() and ISRemoveGlass:new(player, player, part, step.hands == true) or nil end
     if k == "bullet" then return part:haveBullet() and ISRemoveBullet:new(player, player, part) or nil end
-    if k == "disinfect" then return ISDisinfect:new(player, player, step.alcohol.item, part) end
-    if k == "splint" then return ISSplint:new(player, player, step.sheet and step.sheet.item or nil, step.plank.item, part, true) end
-    if k == "stitch" then return (part:deepWounded() and not part:haveGlass()) and ISStitch:new(player, player, step.thread.item, part, true) or nil end
-    if k == "burn" then return ISCleanBurn:new(player, player, step.rag.item, part) end
+    if k == "disinfect" then return ISDisinfect:new(player, player, use("alcohol"), part) end
+    if k == "splint" then return ISSplint:new(player, player, use("sheet"), use("plank"), part, true) end
+    if k == "stitch" then return (part:deepWounded() and not part:haveGlass()) and ISStitch:new(player, player, use("thread"), part, true) or nil end
+    if k == "burn" then return ISCleanBurn:new(player, player, use("rag"), part) end
     if k == "poultice" then
-        local herb = step.herb.item
+        local herb = use("herb")
         local class = kind(herb) == "ComfreyCataplasm" and ISComfreyCataplasm or kind(herb) == "WildGarlicCataplasm" and ISGarlicCataplasm or ISPlantainCataplasm
         return class:new(player, player, herb, part)
     end

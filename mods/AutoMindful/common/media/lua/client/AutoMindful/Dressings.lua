@@ -138,8 +138,8 @@ function Dressings.plan(player, look, radius)
     local spirit = plain and pick("spirit")
     if spirit then return {kind = "sterilize", recipe = recipes.spirit, anchor = plain, uses = {spirit}} end
     -- No alcohol: boiled water does it (Boil), with the largest pot around.
-    local pot = plain and FirstAid.roles.pot and pick("pot")
-    if pot then return {kind = "boil", anchor = plain, pot = pot, count = wounds + Dressings.policy.spare - sterile} end
+    local pots = plain and FirstAid.roles.pot and pick("pot", {list = true}) or {}
+    if #pots > 0 then return {kind = "boil", anchor = plain, pots = pots, count = wounds + Dressings.policy.spare - sterile} end
     return nil
 end
 

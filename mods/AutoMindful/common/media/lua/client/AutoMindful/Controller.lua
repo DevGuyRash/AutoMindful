@@ -1224,7 +1224,7 @@ local function yieldToPlayer(player, state, unexplained, walking, settling, paus
         yieldPractice(player,state,not unexplained and not walking)
         state.yielding = true
         if state.practiceCare then state.practiceCareNext=getTimestampMs()+120000 end
-        for _, loan in ipairs(state.loans) do loan.interference, loan.defer = true, nil end
+        for _, loan in ipairs(state.loans) do loan.interference = true; if not loan.held then loan.defer = nil end end
         Supplies.finishLoan(player, state.supplyLoan)
         PainCare.detach(player, state, getTimestampMs())
         resetSupply(state)
@@ -4583,7 +4583,7 @@ function Controller.update(player)
         for _, action in ipairs(state.pending or {}) do if not action.autoMindfulFinished then interrupted = true end end
         if interrupted then
             Supplies.finishLoan(player, state.supplyLoan)
-            for _, loan in ipairs(state.loans) do loan.defer = nil end
+            for _, loan in ipairs(state.loans) do if not loan.held then loan.defer = nil end end
             PainCare.detach(player, state, now)
             state.pending = nil
             closePractice(state)

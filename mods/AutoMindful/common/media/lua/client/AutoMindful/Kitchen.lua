@@ -1115,9 +1115,9 @@ function Kitchen.ended(player)
     local entry = Kitchen.ledger(player)
     if not entry then return nil end
     local stove = stoveAt(entry)
-    if entry.stage == "fetching" or entry.stage == "ready" or Dish.handles(entry.stage) or Craft.handles(entry.stage)
-            or (Boil.handles(entry.stage) and not entry.lit) then
-        Dish.forget(player); Craft.forget(player); Boil.forget(player); write(player, nil); return nil
+    if Boil.handles(entry.stage) then return Boil.ended(player, entry, stove) end
+    if entry.stage == "fetching" or entry.stage == "ready" or Dish.handles(entry.stage) or Craft.handles(entry.stage) then
+        Dish.forget(player); Craft.forget(player); write(player, nil); return nil
     end
     if not stove or not isOn(stove) or not entry.lit then return nil end
     if adjacent(player, stove:getSquare()) and not player:isDead() then

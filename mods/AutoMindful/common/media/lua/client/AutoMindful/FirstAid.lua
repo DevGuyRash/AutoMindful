@@ -267,6 +267,7 @@ local function picker(player, found, rejected, now)
     return function(name, options)
         local role = roles[name]
         local best, bestKey
+        local all = options and options.list and {}
         for _, entry in ipairs(found) do
             local item = entry.item
             local held = rejected and rejected[item:getID()]
@@ -274,8 +275,17 @@ local function picker(player, found, rejected, now)
                     and (not options or not options.carried or entry.carried or (entry.reach and entry.square == nil))
                     and role.match(item) and Fetch.present(entry.entry) then
                 local candidate = key(entry, role.grade and role.grade(item) or 1)
+                -- The best wherever it is: a walk is no reason for a lesser one.
+                if role.anywhere then candidate = {0, candidate[2], candidate[3], candidate[4]} end
+                if all then all[#all + 1] = {entry = entry, key = candidate} end
                 if not best or before(candidate, bestKey) then best, bestKey = entry, candidate end
             end
+        end
+        if all then
+            table.sort(all, function(a, b) return before(a.key, b.key) end)
+            local out = {}
+            for _, candidate in ipairs(all) do out[#out + 1] = candidate.entry end
+            return out
         end
         if best and role.consumed and not (options and options.peek) then used[best.item] = true end
         return best
@@ -564,7 +574,7 @@ end
 
 -- A picker over what is carried and within radius, for other care.
 -- options.near: within reach; options.carried: carried, bags included;
--- options.peek: not counted as used.
+-- options.peek: not counted as used; options.list: every match, best first.
 function FirstAid.picker(player, radius, rejected, now)
     return picker(player, collect(player, radius or 0), rejected, now)
 end

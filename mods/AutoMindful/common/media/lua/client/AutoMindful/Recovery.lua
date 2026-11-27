@@ -111,7 +111,9 @@ function Recovery.optionalWork(player, state)
     -- Fetching food for practice can wait; taking a dish out cannot.
     if state.phase == "kitchen" then
         local entry = Kitchen.ledger(player)
-        return entry ~= nil and entry.reason == "practice" and entry.stage ~= "cooking" and entry.stage ~= "finishing"
+        -- Boiling water for dressings can wait too, except taking it off the heat.
+        return entry ~= nil and ((entry.reason == "practice" and entry.stage ~= "cooking" and entry.stage ~= "finishing")
+            or (entry.kind == "boil" and entry.stage ~= "boil-off"))
     end
     if state.phase == "collecting" then return state.supplyKind == "literature" or state.lifestylePickup ~= nil end
     return not essential[state.phase]
@@ -479,7 +481,7 @@ function Recovery.dressings(player, state, now)
     -- Boiling is a kitchen plan of its own: started here, run by the kitchen.
     if job.kind == "boil" then
         state.dressBusy = nil
-        if not Kitchen.ledger(player) and Boil.start(player, state, now, job.count, job.pot) then return false end
+        if not Kitchen.ledger(player) and Boil.start(player, state, now, job.count, job.pots) then return true end
         state.dressNext = now + 60000
         return false
     end

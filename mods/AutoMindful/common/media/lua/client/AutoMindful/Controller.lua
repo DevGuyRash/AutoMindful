@@ -5040,6 +5040,12 @@ Recovery.bind({policy=recoveryPolicy, stat=stat, levels=levels, queueFor=queueFo
     resumeTier=Controller.resumeRecoveryTier, lookInside=Controller.lookInside, fetchWater=Controller.fetchWater,
     painReady=function(player,state,now) return wantsPainCare(player,state,now) end,
     prepareWalk=prepareScoutWalk,
+    -- Borrow a tool for the kitchen: it goes back where it came from once lent=false.
+    lend=function(player,state,item,lent)
+        local loan=loanFor(player,state,item)
+        if loan then loan.defer=lent~=false or nil end
+        return loan
+    end,
     available=function(player,state,kind)
         local before=state.travelPeek
         state.travelPeek=true

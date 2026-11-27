@@ -894,6 +894,8 @@ function Recovery.advance(player, state, now)
     -- While something cooks, care uses what is carried or within reach: no trips away from the stove.
     -- Cooking comes before eating raw what could be cooked.
     if Kitchen.prefer(player, state, now) or not state.active then return end
+    -- A hot drink before plain water, while only mildly thirsty.
+    if Kitchen.drink(player, state, now) or not state.active then return end
     local cooking = Kitchen.lit(player)
     if cooking then state.carriedOnly = true end
     local cared = P.care(player, state)
@@ -916,6 +918,7 @@ function Recovery.advance(player, state, now)
     end
     if state.coexisting then Log.event(player, "coexist", "owner", "none"); state.coexisting = nil end
     if Kitchen.store(player, state, now) or not state.active then return end
+    if Kitchen.reclaim(player, state, now) or not state.active then return end
     if Kitchen.thaw(player, state, now) or not state.active then return end
     local away = Presence.away(player, now)
     local calm = Recovery.permit(player, state, "posture", now)

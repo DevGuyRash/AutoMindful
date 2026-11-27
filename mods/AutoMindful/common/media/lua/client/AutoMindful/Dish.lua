@@ -42,10 +42,14 @@ local function read(fn, fallback)
     return fallback
 end
 
--- Not made: hot drinks feed no one, buckets keep the survivor's water, and a
--- result that does not feed (fishing chum) is not a dish.
+-- Hot drinks: coffee, tea and the like in a mug of water, made when thirsty.
+local function drink(name) return name:find("^HotDrink") ~= nil end
+
+-- Not made: buckets keep the survivor's water, and a result that does not
+-- feed (fishing chum) is not a dish. Hot drinks are their own kind.
 local function excluded(name, base, result)
-    if name:find("^HotDrink") or base == "Base.Bucket" or base == "Base.BucketEmpty" then return true end
+    if base == "Base.Bucket" or base == "Base.BucketEmpty" then return true end
+    if drink(name) then return false end
     local script = result and read(function() return getScriptManager():FindItem(result) end)
     local hunger = script and read(function() return script:getHungerChange() end)
     return type(hunger) == "number" and hunger >= 0
@@ -69,8 +73,10 @@ function Dish.catalog()
             local def = {recipe = recipe, name = name, base = base, result = result,
                 cookable = read(function() return recipe:isCookable() end, false) == true and not cold[name],
                 water = read(function() return recipe:getMinimumWater() end, 0) or 0,
-                max = read(function() return recipe:getMaxItems() end, Dish.policy.ingredients)}
-            if result then built.results[result] = true end
+                max = read(function() return recipe:getMaxItems() end, Dish.policy.ingredients), drink = drink(name)}
+            -- A hot drink left over is not a meal waiting to be eaten.
+            if result and not def.drink then built.results[result] = true end
+            if result and def.drink then built.drinks = built.drinks or {}; built.drinks[result] = true end
             built.byBase[base] = built.byBase[base] or {}
             table.insert(built.byBase[base], def)
             built.count = built.count + 1
@@ -87,6 +93,12 @@ function Dish.catalog()
 end
 function Dish.reset() catalog = nil end
 
+-- A hot drink already made (coffee, tea): drunk before another is made.
+function Dish.isDrink(item)
+    local drinks = item and Dish.catalog().drinks
+    return drinks ~= nil and drinks[item:getFullType()] == true
+end
+
 -- What the player would call it: Soup, Salad, Stir Fry.
 function Dish.title(def)
     local key = "ContextMenu_EvolvedRecipe_" .. def.name
@@ -96,7 +108,26 @@ end
 
 -- ---------------------------------------------------------------- the things
 
-local function water(item)
+local water
+
+-- Enough water for this recipe, as the game counts it: a mug wants to be full,
+-- a pot a measure. Falls back to litres when the game cannot say.
+local function wet(def, item)
+    if not def or (def.water or 0) <= 0 then return true end
+    local answer = read(function() return def.recipe:hasMinimumWater(item) end)
+    if type(answer) == "boolean" then return answer end
+    return water(item) >= def.water
+end
+
+-- The recipe a ledger entry is making, from the catalog.
+local function defFor(entry)
+    for _, def in ipairs(Dish.catalog().byBase[entry.vesselType or ""] or {}) do
+        if def.name == entry.recipe then return def end
+    end
+    return nil
+end
+
+water = function(item)
     local fluid = item.getFluidContainer and item:getFluidContainer()
     return fluid and fluid:getAmount() or 0
 end
@@ -235,7 +266,8 @@ local function pick(player, def, base, pool, reason, level, skipped, now, cook)
         return a.value > b.value
     end)
     local items, value, real = {}, 0, 0
-    local limit = math.min(def.max or Dish.policy.ingredients, Dish.policy.ingredients)
+    -- A drink takes one thing to brew: more coffee only makes it thirstier.
+    local limit = def.drink and 1 or math.min(def.max or Dish.policy.ingredients, Dish.policy.ingredients)
     for _, candidate in ipairs(candidates) do
         if real >= limit then break end
         items[#items + 1], real = candidate.entry, real + 1
@@ -263,7 +295,9 @@ function Dish.plan(player, found, reason, heatFor, skipped, now)
         -- Practice never borrows what the survivor carries.
         if not (reason == "practice" and base.carried) and not held(skipped, base.item, now) then
             for _, def in ipairs(Dish.recipesFor(base.item) or {}) do
-                local dry = def.water > 0 and water(base.item) < def.water
+              -- Drinks only when a drink is wanted, and only drinks then.
+              if (reason == "drink") == (def.drink == true) then
+                local dry = not wet(def, base.item)
                 local cook = needsHeat(def, base.item)
                 -- A finished dish is not cooked again to take more.
                 local done = not vessel and cook and base.item:isCooked()
@@ -273,15 +307,17 @@ function Dish.plan(player, found, reason, heatFor, skipped, now)
                 elseif cook and not heat then why.cold = why.cold + 1 end
                 if not (dry and not tap) and not done and (heat or not cook) then
                     local items, value, real = pick(player, def, base, found.ingredients or {}, reason, level, skipped, now, cook)
-                    -- A pot or pan wants two things in it; bread or a crust one.
-                    if real < (vessel and 2 or 1) then why.few = why.few + 1 end
-                    if real >= (vessel and 2 or 1) then
+                    -- A pot or pan wants two things in it; bread, a crust or a mug one.
+                    local least = (vessel and not def.drink) and 2 or 1
+                    if real < least then why.few = why.few + 1 end
+                    if real >= least then
                         local score = value + (vessel and 0 or 5)
                         local plan = {base = base, def = def, heat = heat, items = items, score = score, real = real, tap = dry and tap or nil, cook = cook}
                         if not best or score > best.score then best = plan end
                         if not each[def.name] or score > each[def.name].score then each[def.name] = plan end
                     end
                 end
+              end
             end
         end
     end
@@ -328,15 +364,32 @@ function Dish.recipe(player, base, name)
     return nil
 end
 
+-- Keeps for years (a coffee tin, salt, a box of pasta): not for the fridge.
+local function lasting(item)
+    local ok, limit = pcall(function() return item:getOffAgeMax() end)
+    return ok and type(limit) == "number" and limit >= 10000
+end
+
+-- Lasting ingredients borrowed from a cupboard go back there, remainders and
+-- all, once the dish no longer needs them: the controller's loans return them.
+local function giveBack(player, state)
+    local sources = Dish.sources and Dish.sources[player]
+    for _, item in ipairs(sources and sources.lent or {}) do
+        if P and P.lend then P.lend(player, state, item, false) end
+    end
+    if sources then sources.lent = nil end
+end
+
 -- What was fetched for the dish and is still in the pockets goes on the list for
--- the fridge, rather than spoiling there.
+-- the fridge, rather than spoiling there. Lasting things go back to their cupboard instead.
 local function putAway(player, entry)
     local inventory, list, seen = player:getInventory(), {}, {}
     for _, id in ipairs(player:getModData().AutoMindfulLeftovers or {}) do list[#list + 1], seen[id] = id, true end
     local added = false
     for _, group in ipairs({entry.ingredients or {}, entry.dropped or {}}) do
         for _, id in ipairs(group) do
-            if entry.fetched and entry.fetched[tostring(id)] and not seen[id] and inventory:getItemById(id) then
+            local item = inventory:getItemById(id)
+            if entry.fetched and entry.fetched[tostring(id)] and not seen[id] and item and not lasting(item) then
                 list[#list + 1], seen[id], added = id, true, true
             end
         end
@@ -356,6 +409,7 @@ end
 local function fail(player, state, now, entry, why)
     Log.event(player, "dish.giveup", "why", why, "stage", entry.stage, "recipe", entry.recipe)
     putAway(player, entry)
+    giveBack(player, state)
     release(state, entry)
     state.kitchenSkip = state.kitchenSkip or {}
     for _, id in ipairs(entry.ingredients or {}) do state.kitchenSkip[id] = now + Dish.policy.holdMs end
@@ -394,7 +448,8 @@ function Dish.start(player, state, now, plan, reason)
         ids[#ids + 1] = chosen.item:getID()
         fetched[tostring(chosen.item:getID())] = not chosen.carried or nil
     end
-    if not inventory:hasRoomFor(player, weight) then return false end
+    -- Too much to carry: the kitchen may set some carried things aside first.
+    if not inventory:hasRoomFor(player, weight) then return false, "room", weight end
     local heat = plan.heat and plan.heat.object
     local square = heat and heat:getSquare()
     local tapSquare = plan.tap and plan.tap.square
@@ -409,13 +464,19 @@ function Dish.start(player, state, now, plan, reason)
     state.rejected[base.item:getID()] = now + Dish.policy.holdMs
     -- Where things come from, for the fetch batches.
     Dish.sources = Dish.sources or {}
-    Dish.sources[player] = {base = base, ingredients = plan.items}
+    local lent = {}
+    for _, chosen in ipairs(plan.items) do
+        -- Borrowed while still in its cupboard, so the return knows the place.
+        if not chosen.carried and lasting(chosen.item) and P and P.lend and P.lend(player, state, chosen.item, true) then lent[#lent + 1] = chosen.item end
+    end
+    Dish.sources[player] = {base = base, ingredients = plan.items, lent = lent}
     K.write(player, entry)
     Log.event(player, "dish.start", "recipe", def.name, "reason", reason, "count", #ids, "base", Snap.item(base.item),
         "heat", entry.heat, "cooked", plan.cook, "score", math.floor(plan.score))
     if Dish.step(player, state, now, entry, heat) then return true end
     -- The first step could not even be queued: nothing stays held back.
     release(state, entry)
+    giveBack(player, state)
     Dish.sources[player] = nil
     K.write(player, nil)
     return false
@@ -426,6 +487,7 @@ function Dish.forget(player) if Dish.sources then Dish.sources[player] = nil end
 
 local function finished(player, state, entry, dish)
     putAway(player, entry)
+    giveBack(player, state)
     release(state, entry)
     Dish.forget(player)
     K.write(player, nil)
@@ -474,7 +536,7 @@ function Dish.step(player, state, now, entry, stove)
         if #entry.ingredients < 1 then return fail(player, state, now, entry, "ingredients-gone") end
         if #missing == 0 then
             local base = inventory:getItemById(entry.vessel)
-            entry.stage = (entry.water or 0) > 0 and base and water(base) < entry.water and "dish-fill" or "dish-add"
+            entry.stage = (entry.water or 0) > 0 and base and not wet(defFor(entry) or {water = entry.water}, base) and "dish-fill" or "dish-add"
             K.write(player, entry)
             return Dish.step(player, state, now, entry, stove)
         end
@@ -489,7 +551,7 @@ function Dish.step(player, state, now, entry, stove)
     elseif entry.stage == "dish-fill" then
         local vessel, tap = inventory:getItemById(entry.vessel), tapAt(entry.tap)
         if not vessel then return fail(player, state, now, entry, "base-lost") end
-        if water(vessel) >= entry.water then entry.stage = "dish-add"; K.write(player, entry); return Dish.step(player, state, now, entry, stove) end
+        if wet(defFor(entry) or {water = entry.water}, vessel) then entry.stage = "dish-add"; K.write(player, entry); return Dish.step(player, state, now, entry, stove) end
         if not tap then return fail(player, state, now, entry, "no-water") end
         return P.ownBatch(player, state, "kitchen", "Filling " .. vessel:getDisplayName() .. " with water.", function()
             local square = tap:getSquare()
@@ -506,7 +568,9 @@ function Dish.step(player, state, now, entry, stove)
         local nextItem
         for _, id in ipairs(entry.ingredients) do
             local item = inventory:getItemById(id)
-            if item and usable and usable:contains(item) and def and Dish.usable(def, item, level, base, entry.cookable) then nextItem = item; break end
+            -- A drink takes each thing once: a second spoon of coffee only adds thirst.
+            local again = item and def and def.drink and entry.went and entry.went[tostring(id)] and not item:isSpice()
+            if item and not again and usable and usable:contains(item) and def and Dish.usable(def, item, level, base, entry.cookable) then nextItem = item; break end
         end
         if (entry.adds or 0) >= (entry.max or Dish.policy.ingredients) then nextItem = nil end
         if not nextItem then
@@ -515,6 +579,7 @@ function Dish.step(player, state, now, entry, stove)
             if not entry.cookable then return finished(player, state, entry, base) end
             -- Ready to cook: nothing is held back any more; leftovers may be eaten.
             putAway(player, entry)
+            giveBack(player, state)
             release(state, entry)
             Dish.forget(player)
             entry.stage, entry.item, entry.items, entry.lit = "ready", entry.base, {entry.base}, nil
@@ -569,7 +634,7 @@ function Dish.settle(player, state, now, cut)
         end
     elseif entry.stage == "dish-fill" then
         local vessel = inventory:getItemById(entry.vessel)
-        if (not vessel or water(vessel) < entry.water) and not cut then return fail(player, state, now, entry, "not-filled") end
+        if (not vessel or not wet(defFor(entry) or {water = entry.water}, vessel)) and not cut then return fail(player, state, now, entry, "not-filled") end
     elseif entry.stage == "dish-add" and entry.adding then
         local changedBase = false
         if not inventory:getItemById(entry.base) then
@@ -589,6 +654,8 @@ function Dish.settle(player, state, now, cut)
         local shrank = item ~= nil and entry.addingHunger ~= nil and math.abs(item:getHungerChange() - entry.addingHunger) > 0.000001
         if changedBase or not item or shrank then
             entry.adds = (entry.adds or 0) + 1
+            entry.went = entry.went or {}
+            entry.went[tostring(entry.adding)] = true
             if not item then
                 local left = {}
                 for _, id in ipairs(entry.ingredients) do if id ~= entry.adding then left[#left + 1] = id end end

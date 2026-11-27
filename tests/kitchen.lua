@@ -606,7 +606,7 @@ do
 end
 do
     -- A salad needs no stove: a bowl from the cupboard, greens from the fridge.
-    -- Wine is never put in, and hot drinks are not dishes.
+    -- Wine is never put in, and hot drinks are drinks, not meals.
     squares={}; Dish.reset()
     local p=survivor(0,0); local s=state()
     local shelf=cupboard(-1,0)
@@ -617,7 +617,8 @@ do
     local tomato=T.add(fridge,food({name="Tomato",fullType="Base.Tomato",cookable=false}))
     local wine=T.add(fridge,food({name="Wine",fullType="Base.Wine",cookable=false,alcohol=true}))
     for _,item in ipairs({lettuce,tomato,wine}) do function item:isSpice() return false end end
-    assert(not Dish.catalog().byBase["Base.Mugl"],"Hot drinks are not made")
+    local mug=Dish.catalog().byBase["Base.Mugl"]
+    assert(not mug or mug[1].drink,"A hot drink is a drink, never a meal")
     adding(p,{["Base.Bowl"]={name="Salad",type="Base.Salad"}})
     Options.makeSoup=function() return true end
     local function batch() run(); Kitchen.settle(p,s,T.now or 0,false); s.pending=nil end
@@ -1258,4 +1259,341 @@ do
     Options.makeSoup=function() return false end
     Dish.reset(); Craft.reset()
     passed("crafts lead to better meals, two crafts ahead (dough, crust, pie); a sealed can is opened with a tool from a bag; never a recipe not learned")
+end
+do
+    -- A pot of pasta when the only pot is empty: fetched, filled at the sink,
+    -- then the craft is made with the real pot, and the pasta dish follows.
+    local Craft=require "AutoMindful/Craft"
+    ResourceType={Item="Item",Fluid="Fluid"}
+    Fluid={Water="Water"}
+    local saved=getScriptManager
+    local names=function(list) local l={}; for _,n in ipairs(list) do l[#l+1]={getFullName=function() return n end} end; return T.list(l) end
+    local pasta={name="PlacePastaInCookingPot2",known=true,ins={{"Base.Pot"},{"Base.Pasta"}},outs={"Base.WaterPotPasta"},fill=1.5}
+    function pasta:getName() return self.name end
+    function pasta:getCategory() return "Cooking" end
+    function pasta:isAnySurfaceCraft() return false end
+    function pasta:getTranslationName() return "Put pasta in the pot" end
+    function pasta:getOutputs() return T.list({{getResourceType=function() return "Item" end,getPossibleResultItems=function() return names(pasta.outs) end}}) end
+    function pasta:getInputs()
+        local water={getResourceType=function() return "Fluid" end,containsFluid=function(_,f) return f=="Water" end,getAmount=function() return 1.5 end}
+        return T.list({
+            {getResourceType=function() return "Item" end,getPossibleInputItems=function() return names({"Base.Pot"}) end,isKeep=function() return false end,
+                isTool=function() return false end,hasConsumeFromItem=function() return true end,getConsumeFromItemScript=function() return water end},
+            {getResourceType=function() return "Item" end,getPossibleInputItems=function() return names({"Base.Pasta"}) end,isKeep=function() return false end,
+                isTool=function() return false end,hasConsumeFromItem=function() return false end}})
+    end
+    function getScriptManager() return {getAllCraftRecipes=function() return T.list({pasta}) end,
+        FindItem=function() return {getHungerChange=function() return -20 end} end} end
+    evolved({name="PastaPot",base="Base.WaterPotPasta",result="Base.PastaPot",cookable=true,takes={["Base.Tomato"]=true}})
+    Dish.reset(); Craft.reset()
+    local function fluidOf(amount)
+        local f={amount=amount}
+        function f:getAmount() return self.amount end
+        function f:getCapacity() return 3 end
+        function f:isEmpty() return self.amount<=0 end
+        function f:isPureFluid() return true end
+        return f
+    end
+    function instanceItem(kind) local i=food({name=kind,fullType=kind,cookable=true,hunger=-.4}); function i:isSpice() return false end; return i end
+    HandcraftLogic={new=function()
+        local l={chosen={}}
+        function l:setIsoObject() end
+        function l:findCraftSurface() return {} end
+        function l:setContainers(list) self.containers=list.items end
+        function l:setRecipe(r) self.recipe=r end
+        function l:setRecipeFromContextClick(r) self.recipe=r end
+        function l:isRecipeAvailableForCharacter(r) return r.known end
+        function l:canPerformCurrentRecipe()
+            self.chosen={}
+            for i,choice in ipairs(self.recipe.ins) do
+                local hit
+                for _,c in ipairs(self.containers) do
+                    for _,item in ipairs(c.items or {}) do
+                        local wet=not (i==1 and self.recipe.fill) or (item.fluid and item.fluid.amount>=self.recipe.fill)
+                        if not hit and item:getFullType()==choice[1] and wet then hit=item end
+                    end
+                end
+                if not hit then return false end
+                self.chosen[#self.chosen+1]=hit
+            end
+            return true
+        end
+        function l:getRecipeData() local s=self; return {getAllInputItems=function() return T.list(s.chosen) end} end
+        function l:startCraftAction() end
+        return l
+    end}
+    local made
+    ISEntityUI={HandcraftStart=function(player,logic)
+        local action={Type="craft",isValid=function() return true end,perform=function()
+            for _,item in ipairs(logic.chosen) do T.remove(item:getContainer() or player:getInventory(),item) end
+            made=T.add(player:getInventory(),instanceItem("Base.WaterPotPasta"))
+        end}
+        function action:setOnComplete() end
+        ISTimedActionQueue.add(action)
+        return action
+    end}
+    ISInventoryPaneContextMenu={OnNewCraftComplete=function() end}
+    Options.makeSoup=function() return true end
+    squares={}
+    local p=survivor(0,0); local s=state(); p.values.HUNGER=.3
+    stove(2,0)
+    local shelf=cupboard(-1,0); local fridge=cupboard(1,0,"fridge")
+    local pot=T.add(shelf,T.item("InventoryItem",{fullType="Base.Pot",fluid=fluidOf(0)}))
+    function pot:getActualWeight() return 1 end
+    local box=T.add(shelf,food({name="Pasta",fullType="Base.Pasta",cookable=false})); function box:isSpice() return false end
+    local tomato=T.add(fridge,food({name="Tomato",fullType="Base.Tomato",cookable=false})); function tomato:isSpice() return false end
+    local sink={sq=square(0,2)}
+    function sink:hasWater() return true end
+    function sink:isTaintedWater() return false end
+    function sink:getFluidAmount() return 1000 end
+    function sink:getSquare() return self.sq end
+    sink.sq.objects={sink}
+    local filled=false
+    ISTakeWaterAction={new=function(_,player,item) return {Type="fill",isValid=function() return true end,perform=function() item.fluid.amount=3; filled=true end} end}
+    local function batch() run(); Kitchen.settle(p,s,T.now or 0,false); s.pending=nil end
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).stage=="craft-fill","The empty pot is filled first: "..tostring(Kitchen.ledger(p) and Kitchen.ledger(p).stage))
+    assert(s.rejected[pot:getID()],"The pot is held for it")
+    for _=1,3 do
+        if not Kitchen.ledger(p) or Kitchen.ledger(p).stage~="craft-fill" then break end
+        batch()
+        if Kitchen.ledger(p) then Kitchen.duty(p,s,2000,true) end
+    end
+    assert(Kitchen.ledger(p) and Kitchen.ledger(p).craft=="PlacePastaInCookingPot2" and Kitchen.ledger(p).stage~="craft-fill",
+        "Filled, and the pasta goes in the real pot straight away: "..tostring(Kitchen.ledger(p) and Kitchen.ledger(p).stage))
+    assert(filled and pot.fluid.amount>=1.5 and p.inventory:contains(pot),"Fetched and filled at the sink")
+    for _=1,6 do
+        if not Kitchen.ledger(p) then break end
+        batch()
+        if Kitchen.ledger(p) then Kitchen.duty(p,s,3000,true) end
+    end
+    assert(made and made:getFullType()=="Base.WaterPotPasta","The pot of pasta is made")
+    getScriptManager=saved
+    Options.makeSoup=function() return false end
+    Dish.reset(); Craft.reset()
+    passed("an empty pot is filled at the sink before a pot of pasta is made")
+end
+do
+    -- Mildly thirsty, with a mug, coffee, a sink and a stove: a hot drink rather than plain water.
+    squares={}; Dish.reset()
+    Fluid={Water="Water"}
+    local p=survivor(0,0); local s=state()
+    p.values.HUNGER=0; p.values.THIRST=.2
+    stove(2,0)
+    local shelf=cupboard(-1,0)
+    local fluid={amount=0}
+    function fluid:getAmount() return self.amount end
+    function fluid:getCapacity() return .3 end
+    function fluid:isEmpty() return self.amount<=0 end
+    function fluid:isPureFluid() return true end
+    local mug=T.add(shelf,T.item("InventoryItem",{fullType="Base.Mugl",fluid=fluid}))
+    function mug:getActualWeight() return .2 end
+    local coffee=T.add(shelf,food({name="Coffee",fullType="Base.Coffee2",cookable=false,hunger=-.01})); function coffee:isSpice() return false end
+    for _,r in ipairs(recipes) do if r.def.name=="HotDrink" then function r:hasMinimumWater(item) return item.fluid and item.fluid.amount>=item.fluid:getCapacity() end end end
+    local sink={sq=square(0,2)}
+    function sink:hasWater() return true end
+    function sink:isTaintedWater() return false end
+    function sink:getFluidAmount() return 1000 end
+    function sink:getSquare() return self.sq end
+    sink.sq.objects={sink}
+    ISTakeWaterAction={new=function(_,player,item) return {Type="fill",isValid=function() return true end,perform=function() item.fluid.amount=.3 end} end}
+    adding(p,{["Base.Mugl"]={name="Hot Drink",type="Base.HotDrink"}})
+    Options.makeSoup=function() return true end
+    assert(Kitchen.drink(p,s,1000),"A hot drink is made while mildly thirsty")
+    local entry=Kitchen.ledger(p)
+    assert(entry.recipe=="HotDrink" and entry.cookable,"Coffee in a mug, heated")
+    assert(not Kitchen.meal(p,s,1000) or Kitchen.ledger(p).recipe=="HotDrink","Never planned as a meal")
+    Options.makeSoup=function() return false end
+    passed("a hot drink is made instead of plain water while only mildly thirsty")
+end
+do
+    -- Three crafts ahead: grain is ground to flour, flour makes dough, the dough
+    -- and a pan make a crust, then the pie. The first of them is chosen now.
+    local Craft=require "AutoMindful/Craft"
+    ResourceType={Item="Item",Fluid="Fluid"}
+    local crafts={}
+    local names=function(list) local l={}; for _,n in ipairs(list) do l[#l+1]={getFullName=function() return n end} end; return T.list(l) end
+    local function craft(name,inputs,outputs)
+        local r={name=name,known=true,ins=inputs,outs=outputs}
+        function r:getName() return name end
+        function r:getCategory() return "Cooking" end
+        function r:isAnySurfaceCraft() return false end
+        function r:getTranslationName() return name end
+        function r:getOutputs() return T.list({{getResourceType=function() return "Item" end,getPossibleResultItems=function() return names(outputs) end}}) end
+        function r:getInputs()
+            local l={}
+            for _,choice in ipairs(inputs) do
+                l[#l+1]={getResourceType=function() return "Item" end,getPossibleInputItems=function() return names(choice) end,
+                    isKeep=function() return false end,isTool=function() return false end,hasConsumeFromItem=function() return false end}
+            end
+            return T.list(l)
+        end
+        crafts[#crafts+1]=r
+    end
+    craft("GrindGrain",{{"Base.Wheat"}},{"Base.Flour"})
+    craft("MakePieDough",{{"Base.Flour"}},{"Base.PieDough"})
+    craft("PlacePieInBakingPan",{{"Base.BakingPan"},{"Base.PieDough"}},{"Base.PiePrep"})
+    local saved=getScriptManager
+    function getScriptManager() return {getAllCraftRecipes=function() return T.list(crafts) end,
+        FindItem=function() return {getHungerChange=function() return -20 end} end} end
+    Dish.reset(); Craft.reset()
+    function instanceItem(kind) local i=food({name=kind,fullType=kind,cookable=kind=="Base.PiePrep",hunger=-.15}); function i:isSpice() return false end; return i end
+    HandcraftLogic={new=function()
+        local l={chosen={}}
+        function l:setIsoObject() end
+        function l:findCraftSurface() return {} end
+        function l:setContainers(list) self.containers=list.items end
+        function l:setRecipe(r) self.recipe=r end
+        function l:setRecipeFromContextClick(r) self.recipe=r end
+        function l:isRecipeAvailableForCharacter(r) return r.known end
+        function l:canPerformCurrentRecipe()
+            self.chosen={}
+            for _,choice in ipairs(self.recipe.ins) do
+                local hit
+                for _,c in ipairs(self.containers) do for _,item in ipairs(c.items or {}) do if not hit and item:getFullType()==choice[1] then hit=item end end end
+                if not hit then return false end
+                self.chosen[#self.chosen+1]=hit
+            end
+            return true
+        end
+        function l:getRecipeData() local s=self; return {getAllInputItems=function() return T.list(s.chosen) end} end
+        function l:startCraftAction() end
+        return l
+    end}
+    Options.makeSoup=function() return true end
+    squares={}
+    local p=survivor(0,0); local s=state(); p.values.HUNGER=.3
+    stove(2,0)
+    local shelf=cupboard(-1,0); local fridge=cupboard(1,0,"fridge")
+    local pan=T.add(shelf,T.item("InventoryItem",{fullType="Base.BakingPan"})); function pan:getActualWeight() return .5 end
+    local grain=T.add(shelf,food({name="Wheat",fullType="Base.Wheat",cookable=false})); function grain:isSpice() return false end
+    for _=1,2 do local a=T.add(fridge,food({name="Apple",fullType="Base.Apple",cookable=false})); function a:isSpice() return false end end
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).craft=="GrindGrain","Grinding first, three crafts before the pie: "..tostring(Kitchen.ledger(p) and (Kitchen.ledger(p).craft or Kitchen.ledger(p).recipe)))
+    getScriptManager=saved
+    Options.makeSoup=function() return false end
+    Dish.reset(); Craft.reset()
+    passed("a chain three crafts deep is planned: grain, flour, dough, crust, then the pie")
+end
+do
+    -- A tin opener taken from a shelf is borrowed for the craft and handed back
+    -- to the loans once the can is open, so it returns to the shelf.
+    local Craft=require "AutoMindful/Craft"
+    ResourceType={Item="Item",Fluid="Fluid"}
+    local names=function(list) local l={}; for _,n in ipairs(list) do l[#l+1]={getFullName=function() return n end} end; return T.list(l) end
+    local open={name="OpenCannedFood",known=true,ins={{"Base.TinOpener"},{"Base.TinnedBeans"}},outs={"Base.OpenBeans"}}
+    function open:getName() return self.name end
+    function open:getCategory() return "Cooking" end
+    function open:isAnySurfaceCraft() return false end
+    function open:getTranslationName() return "Open a can" end
+    function open:getOutputs() return T.list({{getResourceType=function() return "Item" end,getPossibleResultItems=function() return names(open.outs) end}}) end
+    function open:getInputs()
+        return T.list({
+            {getResourceType=function() return "Item" end,getPossibleInputItems=function() return names({"Base.TinOpener"}) end,isKeep=function() return true end,
+                isTool=function() return false end,hasConsumeFromItem=function() return false end},
+            {getResourceType=function() return "Item" end,getPossibleInputItems=function() return names({"Base.TinnedBeans"}) end,isKeep=function() return false end,
+                isTool=function() return false end,hasConsumeFromItem=function() return false end}})
+    end
+    local saved=getScriptManager
+    function getScriptManager() return {getAllCraftRecipes=function() return T.list({open}) end,
+        FindItem=function() return {getHungerChange=function() return -20 end} end} end
+    Dish.reset(); Craft.reset()
+    function instanceItem(kind) local i=food({name=kind,fullType=kind,cookable=false,hunger=-.3}); function i:isSpice() return false end; return i end
+    HandcraftLogic={new=function()
+        local l={chosen={}}
+        function l:setIsoObject() end
+        function l:findCraftSurface() return {} end
+        function l:setContainers(list) self.containers=list.items end
+        function l:setRecipe(r) self.recipe=r end
+        function l:setRecipeFromContextClick(r) self.recipe=r end
+        function l:isRecipeAvailableForCharacter() return true end
+        function l:canPerformCurrentRecipe()
+            self.chosen={}
+            for _,choice in ipairs(self.recipe.ins) do
+                local hit
+                for _,c in ipairs(self.containers) do for _,item in ipairs(c.items or {}) do if not hit and item:getFullType()==choice[1] then hit=item end end end
+                if not hit then return false end
+                self.chosen[#self.chosen+1]=hit
+            end
+            return true
+        end
+        function l:getRecipeData() local s=self; return {getAllInputItems=function() return T.list(s.chosen) end} end
+        function l:startCraftAction() end
+        return l
+    end}
+    ISEntityUI={HandcraftStart=function(player,logic)
+        local action={Type="craft",isValid=function() return true end,perform=function()
+            T.remove(player:getInventory(),logic.chosen[2]); T.add(player:getInventory(),instanceItem("Base.OpenBeans"))
+        end}
+        function action:setOnComplete() end
+        ISTimedActionQueue.add(action)
+        return action
+    end}
+    ISInventoryPaneContextMenu={OnNewCraftComplete=function() end}
+    local lent={}
+    parts.lend=function(player,state,item,on) lent[#lent+1]={item=item,on=on}; return {} end
+    Options.makeSoup=function() return true end
+    squares={}
+    local p=survivor(0,0); local s=state(); p.values.HUNGER=.3
+    local shelf=cupboard(-1,0)
+    local opener=T.add(shelf,T.item("InventoryItem",{fullType="Base.TinOpener"})); function opener:getActualWeight() return .2 end
+    local can=T.add(shelf,food({name="Beans",fullType="Base.TinnedBeans",cookable=false})); function can:isSpice() return false end
+    function can:getOpeningRecipe() return "OpenCannedFood" end
+    assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).craft=="OpenCannedFood","The can is opened")
+    assert(lent[1] and lent[1].item==opener and lent[1].on==true,"The opener is borrowed while still on the shelf")
+    for _=1,4 do
+        if not Kitchen.ledger(p) then break end
+        run(); Kitchen.settle(p,s,2000,false); s.pending=nil
+        if Kitchen.ledger(p) then Kitchen.duty(p,s,2000,true) end
+    end
+    assert(not Kitchen.ledger(p) and lent[#lent].item==opener and lent[#lent].on==false,"Handed back to the loans once the can is open")
+    parts.lend=nil
+    getScriptManager=saved
+    Options.makeSoup=function() return false end
+    Dish.reset(); Craft.reset()
+    passed("a tool taken from a shelf for a craft is borrowed and handed back afterwards")
+end
+do
+    -- Too much carried for a salad: a heavy tool is set down on the counter,
+    -- the salad is made, and the tool is picked up again afterwards.
+    squares={}; Dish.reset()
+    local p=survivor(0,0); local s=state(); p.values.HUNGER=.3
+    local counter=cupboard(-1,0)
+    local fridge=cupboard(1,0,"fridge")
+    local bowl=T.add(counter,T.item("InventoryItem",{fullType="Base.Bowl"})); function bowl:getActualWeight() return .2 end
+    for _,kind in ipairs({"Base.Lettuce","Base.Tomato"}) do local g=T.add(fridge,food({name=kind,fullType=kind,cookable=false})); function g:isSpice() return false end end
+    local hammer=T.add(p.inventory,T.item("InventoryItem",{fullType="Base.Sledgehammer"})); function hammer:getActualWeight() return 5 end
+    local roomy=p.inventory.hasRoomFor
+    function p.inventory:hasRoomFor(_,what)
+        local carried=0
+        for _,item in ipairs(self.items) do carried=carried+(item.getActualWeight and item:getActualWeight() or 0) end
+        local extra=type(what)=="number" and what or (what and what.getActualWeight and what:getActualWeight() or 0)
+        return carried+extra<=5.5
+    end
+    adding(p,{["Base.Bowl"]={name="Salad",type="Base.Salad"}})
+    Options.makeSoup=function() return true end
+    assert(Kitchen.meal(p,s,1000) and not Kitchen.ledger(p),"Room is made first, not the salad yet")
+    run(); s.pending=nil
+    assert(counter:contains(hammer) and not p.inventory:contains(hammer),"The hammer is set down on the counter")
+    assert(p:getModData().AutoMindfulSetAside and #p:getModData().AutoMindfulSetAside==1,"And remembered")
+    s.kitchenNext=nil
+    assert(Kitchen.meal(p,s,40000) and Kitchen.ledger(p).recipe=="Salad","Now the salad")
+    for _=1,6 do
+        if not Kitchen.ledger(p) then break end
+        run(); Kitchen.settle(p,s,41000,false); s.pending=nil
+        if Kitchen.ledger(p) then Kitchen.duty(p,s,41000,true) end
+    end
+    assert(not Kitchen.ledger(p),"The salad is made")
+    -- Eaten meanwhile: the salad leaves room again.
+    for i=#p.inventory.items,1,-1 do if p.inventory.items[i].fullType=="Base.Salad" then table.remove(p.inventory.items,i) end end
+    assert(s.reclaimNext,"Not picked up again before the dish has had its chance")
+    s.reclaimNext=nil
+    assert(Kitchen.reclaim(p,s,90000),"The hammer is picked up again")
+    run(); s.pending=nil
+    assert(p.inventory:contains(hammer) and not counter:contains(hammer),"Back in the pockets")
+    s.reclaimNext=nil
+    Kitchen.reclaim(p,s,200000)
+    local left=p:getModData().AutoMindfulSetAside
+    assert(not left or #left==0,"And forgotten only once it is really back")
+    p.inventory.hasRoomFor=roomy
+    Options.makeSoup=function() return false end
+    passed("too much carried for a dish: things are set down near the kitchen and picked up again afterwards")
 end

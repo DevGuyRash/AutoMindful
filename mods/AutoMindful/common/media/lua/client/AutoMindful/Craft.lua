@@ -18,12 +18,14 @@ local Options = require "AutoMindful/Options"
 -- penalty: what a craft
 -- step must earn over the best dish without it; tries: walks, cuts and checks
 -- before a craft gives up; broad: an input that takes almost anything.
-local Craft = {policy = {penalty = 5, holdMs = 600000, retryMs = 600000, broad = 200, tries = 3}}
+-- depth: crafts in a row the planner looks through; trials: dish plans it may
+-- ask for in one look, however many crafts there are.
+local Craft = {policy = {penalty = 5, holdMs = 600000, retryMs = 600000, broad = 200, tries = 3, depth = 4, trials = 40}}
 local K, P
 
 function Craft.bind(kitchen, parts) K, P = kitchen, parts end
 
-local stages = {["craft-fetch"] = true, ["craft-walk"] = true, ["craft-make"] = true}
+local stages = {["craft-fetch"] = true, ["craft-walk"] = true, ["craft-make"] = true, ["craft-fill"] = true}
 function Craft.handles(stage) return stages[stage] == true end
 
 local function read(fn, fallback)
@@ -51,7 +53,7 @@ local catalog
 -- tools it keeps (a knife on the belt may still cut).
 function Craft.catalog()
     if catalog then return catalog end
-    local built = {list = {}, count = 0}
+    local built = {list = {}, count = 0, vessels = {}}
     local all = read(function() return getScriptManager():getAllCraftRecipes() end)
     for index = 0, all and all:size() - 1 or -1 do
         local recipe = all:get(index)
@@ -75,6 +77,12 @@ function Craft.catalog()
                     if read(function() return input:isKeep() or input:isTool() end, false) then
                         for _, kind in ipairs(choices) do def.keep[kind] = true end
                     end
+                    -- A pot or saucepan that must already hold water (a pot of pasta, of rice).
+                    local child = read(function() return input:hasConsumeFromItem() and input:getConsumeFromItemScript() end)
+                    if child and read(function() return child:getResourceType() == ResourceType.Fluid and child:containsFluid(Fluid.Water) end, false) then
+                        def.fill = {vessels = {}, amount = read(function() return child:getAmount() end, 1)}
+                        for _, kind in ipairs(choices) do def.fill.vessels[kind] = true; built.vessels[kind] = true end
+                    end
                 end
             end
             if #def.outputs > 0 then
@@ -88,6 +96,7 @@ function Craft.catalog()
 end
 function Craft.reset() catalog = nil end
 
+
 -- Worth asking the game about: something of every kind it takes is around.
 local function possible(def, types)
     for _, choices in ipairs(def.inputs) do
@@ -98,6 +107,44 @@ local function possible(def, types)
         end
     end
     return true
+end
+
+-- A pot or saucepan some craft wants water in, holding nothing or only water.
+function Craft.vessel(item)
+    if not item or Grid.favorite(item) or not Craft.catalog().vessels[item:getFullType()] then return false end
+    local fluid = item.getFluidContainer and item:getFluidContainer()
+    return fluid ~= nil and (fluid:isEmpty() or fluid:isPureFluid(Fluid.Water))
+end
+
+local function water(item)
+    local fluid = item.getFluidContainer and item:getFluidContainer()
+    return fluid and fluid:getAmount() or 0, fluid and fluid:getCapacity() or 0
+end
+
+-- Crafts that only lack water in their pot: fill it at a safe tap first.
+local function fillOptions(found, skipped, now)
+    local list, tap = {}, found.taps and found.taps[1]
+    if not tap then return list end
+    for _, def in ipairs(Craft.catalog().list) do
+        local resting = skipped and skipped["craft:" .. def.name]
+        if def.fill and not (resting and now < resting) then
+            for _, entry in ipairs(found.vessels or {}) do
+                local held = skipped and skipped[entry.item:getID()]
+                local amount, capacity = water(entry.item)
+                if def.fill.vessels[entry.item:getFullType()] and not (held and now < held) and amount < def.fill.amount
+                        and capacity >= def.fill.amount then
+                    local types = {}
+                    for kind in pairs(found.types or {}) do types[kind] = true end
+                    types[entry.item:getFullType()] = true
+                    if possible(def, types) then
+                        list[#list + 1] = {def = def, inputs = {entry.item}, outputs = def.outputs, fill = {vessel = entry, tap = tap}}
+                        break
+                    end
+                end
+            end
+        end
+    end
+    return list
 end
 
 -- The survivor's own containers: the main inventory and the bags in it.
@@ -238,7 +285,56 @@ local function trial(player, found, virtual, gone, heatFor, skipped, now)
     return plan.score + (plan.base.virtual and worth(player, plan.base.item) or 0)
 end
 
-local function virtuals(kinds)
+local virtuals
+
+-- Takes something of these kinds: the craft follows on from what came before.
+local function feeds(def, kinds)
+    for _, choices in ipairs(def.inputs) do
+        for _, kind in ipairs(choices) do
+            for _, out in ipairs(kinds) do if kind == out then return true end end
+        end
+    end
+    return false
+end
+
+-- The best meal a chain of crafts leads to, each further craft paying the
+-- step penalty again. kinds: everything the chain has made so far. depth: how
+-- many crafts it has. budget: dish plans left for this look. seen: crafts in it.
+local function chain(player, found, kinds, gone, heatFor, skipped, now, depth, budget, seen, spent)
+    if depth >= Craft.policy.depth or budget.left <= 0 then return nil end
+    local types = {}
+    for kind in pairs(found.types or {}) do if not (spent and spent[kind]) then types[kind] = true end end
+    for _, kind in ipairs(kinds) do types[kind] = true end
+    local best
+    for _, next in ipairs(Craft.catalog().list) do
+        if budget.left <= 0 then break end
+        if not seen[next.name] and not next.fill and #next.outputs <= 2 and feeds(next, kinds) and possible(next, types) then
+            budget.left = budget.left - 1
+            local made = {}
+            for _, kind in ipairs(kinds) do made[#made + 1] = kind end
+            for _, kind in ipairs(next.outputs) do made[#made + 1] = kind end
+            local here = trial(player, found, virtuals(next.outputs), gone, heatFor, skipped, now)
+            if here then here = here - (depth + 1) * Craft.policy.penalty end
+            -- What this craft uses up is not there for the next one.
+            local used = {}
+            for kind in pairs(spent or {}) do used[kind] = true end
+            for _, choices in ipairs(next.inputs) do
+                for _, kind in ipairs(choices) do
+                    if types[kind] and not next.keep[kind] then used[kind] = true; break end
+                end
+            end
+            seen[next.name] = true
+            local further = chain(player, found, made, gone, heatFor, skipped, now, depth + 1, budget, seen, used)
+            seen[next.name] = nil
+            for _, score in ipairs({here or false, further or false}) do
+                if score and (not best or score > best) then best = score end
+            end
+        end
+    end
+    return best
+end
+
+virtuals = function(kinds)
     local out = {}
     for _, kind in ipairs(kinds) do
         local item = made(kind)
@@ -255,7 +351,9 @@ end
 function Craft.best(player, found, planned, heatFor, skipped, now)
     local bar = planned and planned.score or 0
     local best
+    local budget = {left = Craft.policy.trials}
     local options = Craft.options(player, found, skipped, now)
+    for _, option in ipairs(fillOptions(found, skipped, now)) do options[#options + 1] = option end
     -- For the log: how many were possible, and the best of them even when it lost.
     local look = {options = #options, bar = math.floor(bar), surface = found.surface ~= nil}
     for _, option in ipairs(options) do
@@ -263,27 +361,14 @@ function Craft.best(player, found, planned, heatFor, skipped, now)
         for _, item in ipairs(option.inputs) do if not option.def.keep[item:getFullType()] then gone[item] = true end end
         local virtual = virtuals(option.outputs)
         local score = Options.makeSoup() and trial(player, found, virtual, gone, heatFor, skipped, now) or nil
-        if score then score = score - Craft.policy.penalty end
+        if score then score = score - Craft.policy.penalty * (option.fill and 2 or 1) end
         local forDish = score ~= nil
-        -- A second craft its results allow, toward a dish.
-        if Options.makeSoup() then
-            local types = {}
-            for kind in pairs(found.types or {}) do types[kind] = true end
-            for _, kind in ipairs(option.outputs) do types[kind] = true end
-            for _, next in ipairs(Craft.catalog().list) do
-                local feeds = false
-                for _, choices in ipairs(next.inputs) do
-                    for _, kind in ipairs(choices) do for _, out in ipairs(option.outputs) do feeds = feeds or kind == out end end
-                end
-                if next ~= option.def and feeds and possible(next, types) and #next.outputs <= 2 then
-                    local second = trial(player, found, virtuals(next.outputs), gone, heatFor, skipped, now)
-                    if second and (not score or second - 2 * Craft.policy.penalty > score) then
-                        score, forDish = second - 2 * Craft.policy.penalty, true
-                    end
-                end
-            end
+        -- Further crafts its results allow, toward a dish: dough, a crust, the pie.
+        if Options.makeSoup() and not option.fill then
+            local deeper = chain(player, found, option.outputs, gone, heatFor, skipped, now, 1, budget, {[option.def.name] = true})
+            if deeper and (not score or deeper > score) then score, forDish = deeper, true end
         end
-        if (found.ready or 0) == 0 then
+        if (found.ready or 0) == 0 and not option.fill then
             for _, entry in ipairs(virtual) do
                 local raw = instanceof(entry.item, "Food") and entry.item:isbDangerousUncooked() and not entry.item:isCooked()
                 if not raw or heatFor(entry.item) then
@@ -333,9 +418,21 @@ local function release(state, entry)
     for _, id in ipairs(entry.inputs or {}) do state.rejected[id] = nil end
 end
 
+-- Tools borrowed for the craft (a knife, a tin opener, a pan) go back where
+-- they came from once it is over: the controller's loans return them.
+local function giveBack(player, state, entry)
+    local sources = Craft.sources and Craft.sources[player]
+    for _, item in ipairs(sources and sources.tools or {}) do
+        if P.lend then P.lend(player, state, item, false) end
+    end
+    if sources then sources.tools = nil end
+    entry.tools = nil
+end
+
 local function fail(player, state, now, entry, why)
     Log.event(player, "craft.giveup", "why", why, "stage", entry.stage, "craft", entry.craft)
     release(state, entry)
+    giveBack(player, state, entry)
     state.kitchenSkip = state.kitchenSkip or {}
     state.kitchenSkip["craft:" .. entry.craft] = now + Craft.policy.retryMs
     if Craft.sources then Craft.sources[player] = nil end
@@ -347,6 +444,7 @@ function Craft.forget(player) if Craft.sources then Craft.sources[player] = nil 
 
 local function finish(player, state, entry, new)
     release(state, entry)
+    giveBack(player, state, entry)
     Craft.forget(player)
     K.write(player, nil)
     -- Look again soon when the craft was for a dish: that dish comes next.
@@ -358,33 +456,60 @@ end
 -- Starts the chosen craft. Returns true when its first step was queued.
 function Craft.start(player, state, now, best)
     local option, inventory = best.option, player:getInventory()
-    local ids, entries, weight = {}, {}, 0
+    if option.fill then
+        local vessel, tapSquare = option.fill.vessel, option.fill.tap.square
+        if not vessel.carried and not inventory:hasRoomFor(player, vessel.item) then return false, "room", vessel.item:getActualWeight() end
+        local entry = {stage = "craft-fill", craft = option.def.name, vessel = vessel.item:getID(), amount = option.def.fill.amount,
+            tap = {x = tapSquare:getX(), y = tapSquare:getY(), z = tapSquare:getZ()}, tries = 0, forDish = true,
+            name = "Filling " .. vessel.item:getDisplayName() .. " with water"}
+        state.rejected[vessel.item:getID()] = now + Craft.policy.holdMs
+        entry.inputs = {vessel.item:getID()}
+        Craft.sources = Craft.sources or {}
+        Craft.sources[player] = {entries = vessel.carried and {} or {vessel}}
+        K.write(player, entry)
+        Log.event(player, "craft.fill", "craft", option.def.name, "vessel", vessel.item:getFullType(), "amount", entry.amount, "score", math.floor(best.score))
+        if Craft.step(player, state, now, entry) then return true end
+        release(state, entry)
+        Craft.sources[player] = nil
+        K.write(player, nil)
+        return false
+    end
+    local ids, entries, weight, tools = {}, {}, 0, {}
     for _, item in ipairs(option.inputs) do
         ids[#ids + 1] = item:getID()
         local container = item:getContainer()
         if container ~= inventory and not (container and container:getOutermostContainer() == inventory) then
             weight = weight + item:getActualWeight()
             entries[#entries + 1] = Fetch.entry(item, container, nil, false)
+            -- A tool from a cupboard is borrowed, not kept.
+            if option.def.keep[item:getFullType()] then tools[#tools + 1] = item end
         end
     end
     for _, kind in ipairs(option.outputs) do
         local item = made(kind)
         weight = weight + (item and item:getActualWeight() or 0)
     end
-    if not inventory:hasRoomFor(player, weight) then return false end
+    if not inventory:hasRoomFor(player, weight) then return false, "room", weight end
     local surface = option.surface and option.surface.getSquare and option.surface:getSquare()
     local entry = {stage = "craft-fetch", craft = option.def.name, inputs = ids, outputs = option.outputs,
         surface = surface and {x = surface:getX(), y = surface:getY(), z = surface:getZ()} or nil, tries = 0,
         name = read(function() return option.def.recipe:getTranslationName() end) or option.def.name,
         forDish = best.forDish == true}
+    -- Borrowed while it is where it came from, so the return knows that place.
+    entry.tools = {}
+    local lent = {}
+    for _, item in ipairs(tools) do
+        if P.lend and P.lend(player, state, item, true) then entry.tools[#entry.tools + 1] = item:getID(); lent[#lent + 1] = item end
+    end
     for _, id in ipairs(ids) do state.rejected[id] = now + Craft.policy.holdMs end
     Craft.sources = Craft.sources or {}
-    Craft.sources[player] = {entries = entries}
+    Craft.sources[player] = {entries = entries, tools = lent}
     K.write(player, entry)
     Log.event(player, "craft.start", "craft", option.def.name, "inputs", #ids, "fetch", #entries, "makes", table.concat(option.outputs, "+"),
         "score", math.floor(best.score))
     if Craft.step(player, state, now, entry) then return true end
     release(state, entry)
+    giveBack(player, state, entry)
     Craft.sources[player] = nil
     K.write(player, nil)
     return false
@@ -401,7 +526,47 @@ function Craft.step(player, state, now, entry)
     local sources = Craft.sources and Craft.sources[player]
     if not Options.makeSoup() then return fail(player, state, now, entry, "turned-off") end
     local lower = string.lower(entry.name)
-    if entry.stage == "craft-fetch" then
+    if entry.stage == "craft-fill" then
+        local vessel = inventory:getItemById(entry.vessel)
+        if not vessel then
+            local source = sources and sources.entries[1]
+            if not source or not Fetch.present(source) then return fail(player, state, now, entry, "vessel-gone") end
+            return P.ownBatch(player, state, "kitchen", "Getting " .. source.item:getDisplayName() .. " to fill.", function()
+                local square = Fetch.square(source)
+                if square and not Grid.reachable(player:getSquare(), square) and not luautils.walkAdj(player, square, true) then return end
+                Fetch.queue(player, source)
+            end)
+        end
+        -- Full enough: the craft itself now, with the real pot, before anything
+        -- else (eating) can take what it needs.
+        if water(vessel) >= entry.amount then
+            release(state, entry)
+            Craft.forget(player)
+            K.write(player, nil)
+            Log.event(player, "craft.filled", "craft", entry.craft, "litres", water(vessel))
+            local found = K.scan and K.scan(player, state.kitchenSkip, now)
+            for _, option in ipairs(found and Craft.options(player, found, state.kitchenSkip, now) or {}) do
+                if option.def.name == entry.craft then
+                    return Craft.start(player, state, now, {option = option, score = 0, forDish = true})
+                end
+            end
+            state.kitchenNext, state.preferNext = nil, nil
+            return false
+        end
+        local square = getCell():getGridSquare(entry.tap.x, entry.tap.y, entry.tap.z)
+        local tap
+        local objects = square and square:getObjects()
+        for index = 0, objects and objects:size() - 1 or -1 do
+            if not tap and Dish.isTap(objects:get(index)) then tap = objects:get(index) end
+        end
+        if not tap then return fail(player, state, now, entry, "no-water") end
+        entry.before = {water(vessel)}
+        K.write(player, entry)
+        return P.ownBatch(player, state, "kitchen", entry.name .. ".", function()
+            if not Grid.reachable(player:getSquare(), square) and not luautils.walkAdj(player, square, true) then return end
+            ISTimedActionQueue.add(ISTakeWaterAction:new(player, vessel, tap, false))
+        end)
+    elseif entry.stage == "craft-fetch" then
         if not sources then return fail(player, state, now, entry, "reloaded") end
         local missing = {}
         for _, source in ipairs(sources.entries) do
@@ -480,6 +645,26 @@ function Craft.settle(player, state, now, cut)
     local entry = K.ledger(player)
     if not entry then return end
     local inventory = player:getInventory()
+    if entry.stage == "craft-fill" then
+        local vessel = inventory:getItemById(entry.vessel)
+        if cut then return end
+        if not vessel then
+            -- Not fetched, again and again: the pot stays where it is.
+            entry.tries = (entry.tries or 0) + 1
+            if entry.tries >= Craft.policy.tries then return fail(player, state, now, entry, "vessel-not-fetched") end
+            K.write(player, entry)
+            return
+        end
+        -- No more water than before, again and again: the tap or the pot will not do.
+        local before = entry.before and entry.before[1]
+        if before and water(vessel) <= before then
+            entry.tries = (entry.tries or 0) + 1
+            if entry.tries >= Craft.policy.tries then return fail(player, state, now, entry, "not-filled") end
+        end
+        entry.before = nil
+        K.write(player, entry)
+        return
+    end
     if entry.stage == "craft-fetch" then
         local sources = Craft.sources and Craft.sources[player]
         local count = 0

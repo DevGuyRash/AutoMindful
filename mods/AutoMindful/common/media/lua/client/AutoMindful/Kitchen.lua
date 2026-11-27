@@ -6,6 +6,7 @@ local Log = require "AutoMindful/Log"
 local Options = require "AutoMindful/Options"
 local Snap = require "AutoMindful/Snapshot"
 local Grid = require "AutoMindful/Grid"
+local Storage = require "AutoMindful/Storage"
 local Saved = require "AutoMindful/Saved"
 local Needs = require "AutoMindful/SurvivalNeeds"
 local Fluids = require "AutoMindful/Fluids"
@@ -227,7 +228,7 @@ end
 function Kitchen.scan(player, rejected, now, fridgesOnly)
     -- heats: every stove or grill seen, on or off, busy or not.
     -- bases: what a dish can start from; ingredients: what recipes take; dishes: made dishes ready to eat.
-    local result = {stoves = {}, food = {}, fridges = {}, bases = {}, ingredients = {}, taps = {}, ready = 0, dishes = 0, heats = 0,
+    local result = {stoves = {}, food = {}, fridges = {}, bases = {}, ingredients = {}, vessels = {}, taps = {}, ready = 0, dishes = 0, heats = 0,
         fuel = {}, tinder = {}, starters = {}, frozen = {}, freezers = {}, heatList = {},
         -- For crafts: every kind of thing around, every container it is in, and the nearest counter.
         types = {}, containers = {}, surface = nil}
@@ -251,6 +252,7 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
         -- For a dish: what it starts from (a pot, a pan, bread slices) and what goes in.
         if free and Dish.recipesFor(item) then result.bases[#result.bases + 1] = Fetch.entry(item, container, world, carried, holder) end
         if free and Dish.ingredient(item) then result.ingredients[#result.ingredients + 1] = Fetch.entry(item, container, world, carried, holder) end
+        if free and Craft.vessel(item) then result.vessels[#result.vessels + 1] = Fetch.entry(item, container, world, carried, holder) end
         if free and Kitchen.cookable(item) then
             result.food[#result.food + 1] = Fetch.entry(item, container, world, carried, holder)
         elseif not floor and instanceof(item, "Food") and Fluids.safeFood(item) and item:getHungerChange() <= -0.05
@@ -561,7 +563,8 @@ function Kitchen.duty(player, state, now, walk)
     end
     if not dish and not on then
         Alerts.clear(player, "stove")
-        if entry.cooked and #entry.cooked > 0 then
+        -- A hot drink is for drinking now, not for the fridge.
+        if entry.cooked and #entry.cooked > 0 and entry.reason ~= "drink" then
             -- Added to what is still waiting for the fridge, never in its place.
             local list, seen = {}, {}
             for _, id in ipairs(player:getModData().AutoMindfulLeftovers or {}) do list[#list + 1], seen[id] = id, true end
@@ -690,6 +693,149 @@ local function dishHeat(found)
     return function(item) return Kitchen.heatFor(stoves, item) end
 end
 
+-- ------------------------------------------------------------- making room
+
+local function heldInPlace(item)
+    local ok, equipped = pcall(function() return item:isEquipped() end)
+    if ok and equipped then return true end
+    local okSlot, slot = pcall(function() return item:getAttachedSlot() end)
+    return okSlot and type(slot) == "number" and slot >= 0
+end
+
+-- Too much to carry for a dish: set some carried things aside in the nearest
+-- kitchen cupboard or counter with room, heaviest first, and remember where.
+-- Nothing worn, held, on the belt, favourite or held back for the meal. True
+-- when a batch was queued; the dish is tried again afterwards.
+function Kitchen.makeRoom(player, state, weight, found, keep)
+    if not weight or weight <= 0 then return false end
+    local inventory = player:getInventory()
+    -- Never what another part of Autopilot has borrowed: it goes back where it came from.
+    local lent = {}
+    for _, loan in ipairs(state.loans or {}) do
+        for _, item in ipairs(loan.items or {}) do lent[item:getID()] = true end
+    end
+    local candidates, items = {}, inventory:getItems()
+    for index = 0, items:size() - 1 do
+        local item = items:get(index)
+        local held = state.rejected and state.rejected[item:getID()]
+        local fluid = item.getFluidContainer and item:getFluidContainer()
+        -- Not food, bags, weapons, anything holding liquid, or what the meal itself needs.
+        if not heldInPlace(item) and not Grid.favorite(item) and not held and not lent[item:getID()]
+                and not (keep and keep[item]) and not instanceof(item, "Food") and not instanceof(item, "InventoryContainer")
+                and not instanceof(item, "HandWeapon") and not (fluid and not fluid:isEmpty())
+                and item:getActualWeight() >= 0.5 then
+            candidates[#candidates + 1] = item
+        end
+    end
+    table.sort(candidates, function(a, b) return a:getActualWeight() > b:getActualWeight() end)
+    -- The nearest cupboard or counter (not a fridge or freezer) that is not carried.
+    local here = player:getSquare()
+    local target, targetSquare, best
+    for _, container in ipairs(found.containers or {}) do
+        local kind = container:getType()
+        local square = Grid.containerSquare(container)
+        local owner = container.getParent and container:getParent()
+        -- A cupboard, counter or shelf: never a fridge, a freezer, the floor, or anything that heats.
+        if square and kind ~= "fridge" and kind ~= "freezer" and kind ~= "floor" and not heatOf(owner)
+                and container:getOutermostContainer() ~= inventory and Storage.permitted(player, square) then
+            local dx, dy = square:getX() - here:getX(), square:getY() - here:getY()
+            local distance = dx * dx + dy * dy
+            if not best or distance < best then target, targetSquare, best = container, square, distance end
+        end
+    end
+    if not target then return false end
+    local chosen, freed = {}, 0
+    for _, item in ipairs(candidates) do
+        if freed >= weight then break end
+        if target:hasRoomFor(player, freed + item:getActualWeight()) then
+            chosen[#chosen + 1] = item
+            freed = freed + item:getActualWeight()
+        end
+    end
+    if freed < weight then return false end
+    local list = {}
+    for _, record in ipairs(player:getModData().AutoMindfulSetAside or {}) do list[#list + 1] = record end
+    for _, item in ipairs(chosen) do
+        list[#list + 1] = {id = item:getID(), x = targetSquare:getX(), y = targetSquare:getY(), z = targetSquare:getZ(), type = item:getFullType()}
+    end
+    Log.event(player, "kitchen.setaside", "count", #chosen, "weight", freed, "to", Grid.key(targetSquare))
+    local queued = P.ownBatch(player, state, "kitchen", "Setting a few things down to make room for cooking.", function()
+        if not adjacent(player, targetSquare) and not luautils.walkAdj(player, targetSquare, true) then return end
+        for _, item in ipairs(chosen) do transfer(player, item, inventory, target) end
+    end)
+    -- Not picked up again before the dish has had its chance to start.
+    if queued then Saved.set(player, "AutoMindfulSetAside", list); state.reclaimNext = getTimestampMs() + 120000 else state.pending = nil end
+    return queued
+end
+
+-- What was set aside comes back once the kitchen is done, from where it was put.
+function Kitchen.reclaim(player, state, now)
+    local list = player:getModData().AutoMindfulSetAside
+    if not list or #list == 0 or Kitchen.ledger(player) then return false end
+    if state.reclaimNext and now < state.reclaimNext and state.reclaimNext - now <= Kitchen.policy.lookMs then return false end
+    state.reclaimNext = now + Kitchen.policy.lookMs
+    local inventory = player:getInventory()
+    local left, take, square, weight = {}, {}, nil, 0
+    for _, record in ipairs(list) do
+        if not inventory:getItemById(record.id) then
+            local sq = getCell():getGridSquare(record.x, record.y, record.z)
+            local found
+            local objects = sq and sq:getObjects()
+            -- Out of sight (an unloaded square) is not gone: kept for later.
+            if not sq then left[#left + 1] = record end
+            for index = 0, objects and objects:size() - 1 or -1 do
+                local object = objects:get(index)
+                for c = 0, (object.getContainerCount and object:getContainerCount() or 0) - 1 do
+                    local container = object:getContainerByIndex(c)
+                    local item = container and container:getItemById(record.id)
+                    if item then found = {item = item, container = container} end
+                end
+            end
+            if found and (not square or sq == square) and inventory:hasRoomFor(player, weight + found.item:getActualWeight()) then
+                square = sq
+                weight = weight + found.item:getActualWeight()
+                take[#take + 1] = found
+                left[#left + 1] = record
+            elseif found then
+                left[#left + 1] = record
+            elseif sq then
+                -- Someone took it, or it moved: not ours to chase.
+                Log.event(player, "kitchen.setaside-lost", "type", record.type)
+            end
+        end
+    end
+    if #take == 0 then
+        Saved.set(player, "AutoMindfulSetAside", #left > 0 and left or nil)
+        return false
+    end
+    -- Records stay until each item is really back: the next look drops those in the pockets.
+    Saved.set(player, "AutoMindfulSetAside", left)
+    local queued = P.ownBatch(player, state, "kitchen", "Picking up what was set down for cooking.", function()
+        if not adjacent(player, square) and not luautils.walkAdj(player, square, true) then return end
+        for _, found in ipairs(take) do transfer(player, found.item, found.container, inventory) end
+    end)
+    if not queued then state.pending = nil end
+    return queued
+end
+
+-- A hot drink while only mildly thirsty: coffee or tea instead of plain water,
+-- when a mug, water, something to brew and heat are at hand.
+function Kitchen.drink(player, state, now)
+    if Kitchen.ledger(player) or not Options.cookMeals() or not Options.makeSoup() then return false end
+    if not Needs.due(player, "water") or Needs.pressing(player, "water") or Needs.lowHealth(player) then return false end
+    if state.drinkNext and now < state.drinkNext and state.drinkNext - now <= Kitchen.policy.lookMs then return false end
+    state.drinkNext = now + Kitchen.policy.lookMs
+    -- A hot drink already in the pockets is drunk first.
+    local items = player:getInventory():getItems()
+    for index = 0, items:size() - 1 do
+        if Dish.isDrink(items:get(index)) then return false end
+    end
+    local found = Kitchen.scan(player, skip(state), now)
+    local plan = Dish.plan(player, found, "drink", dishHeat(found), skip(state), now)
+    Log.event(player, "kitchen.drink", "plan", plan and plan.def.name, "with", plan and #plan.items)
+    return plan ~= nil and Dish.start(player, state, now, plan, "drink")
+end
+
 function Kitchen.meal(player, state, now, preferring)
     if Kitchen.ledger(player) then return Kitchen.duty(player, state, now, true) end
     if not Options.cookMeals() or not Needs.due(player, "food") then return false end
@@ -719,10 +865,20 @@ function Kitchen.meal(player, state, now, preferring)
     elseif look then
         Log.event(player, "craft.look", "options", 0, "surface", look.surface)
     end
-    if prep and Craft.start(player, state, now, prep) then state.kitchenNotice = nil; return true end
+    if prep then
+        local started, why, weight = Craft.start(player, state, now, prep)
+        if started then state.kitchenNotice = nil; return true end
+        local keep = {}
+        for _, item in ipairs(prep.option.inputs or {}) do keep[item] = true end
+        if why == "room" and Kitchen.makeRoom(player, state, weight, found, keep) then return true end
+    end
     if plan then
         state.kitchenNotice = nil
-        if Dish.start(player, state, now, plan, "meal") then return true end
+        local started, why, weight = Dish.start(player, state, now, plan, "meal")
+        if started then return true end
+        local keep = {[plan.base.item] = true}
+        for _, chosen in ipairs(plan.items) do keep[chosen.item] = true end
+        if why == "room" and Kitchen.makeRoom(player, state, weight, found, keep) then return true end
     end
     -- Other ready food is eaten as it is rather than waited on.
     if preferring and found.ready > 0 then return false end

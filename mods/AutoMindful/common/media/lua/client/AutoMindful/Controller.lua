@@ -41,7 +41,7 @@ local Controller = {}
 AutoMindful.Controller = Controller
 local states = {}
 local modeTitles = {both = "Training", meditation = "Meditation", yoga = "Yoga",
-    recovery = "Autopilot", meditateTo = "Meditation", yogaTo = "Yoga"}
+    recovery = "Autopilot", meditateTo = "Meditation", yogaTo = "Yoga", treat = "First aid"}
 local tierModes = {meditateTo="meditation", yogaTo="yoga"}
 local tierAttempts, tierWorkMs, tierWaitingMs = 4, 480000, 480000
 local recoveryTierMs = {[1]=90000, [2]=240000, [3]=420000}
@@ -378,7 +378,7 @@ function Controller.stop(player, reason, cause, nativeReason)
         Log.endJob(player)
     end
     MaskRestore.observe(player,state.maskRestore,queueFor(player))
-    if cause ~= "switch" then Recovery.remember(player, false) end
+    if cause ~= "switch" and state.mode ~= "treat" then Recovery.remember(player, false) end
     Recovery.ended(player)
     state.parkedTrip, state.aidTry, state.bedTry, state.lastResort, state.dressTry = nil, nil, nil, nil, nil
     state.dressBusy, state.dressLoans, state.aidLoans, state.aidIdle = nil, nil, nil, nil
@@ -409,7 +409,7 @@ end
 -- charge of a survivor: it backs off and tries again, and only Stop ends it.
 function Controller.giveUp(player, reason, cause, nativeReason)
     local state = stateFor(player)
-    if state.active and state.recovery and not player:isDead() then Recovery.setback(player, state, reason, cause)
+    if state.active and state.recovery and state.mode ~= "treat" and not player:isDead() then Recovery.setback(player, state, reason, cause)
     else Controller.stop(player, reason, cause, nativeReason) end
 end
 
@@ -1037,6 +1037,7 @@ end
 
 local wellnessDisabled = "Lifestyle Wellness is disabled in this world."
 local function available(player, mode)
+    if mode == "treat" then return true end
     -- Autopilot needs nothing from Lifestyle; without it there is nothing more to wait for.
     if mode == "recovery" and not Tiers.lifestylePresent() then return true end
     if not Tiers.wellnessEnabled() and mode ~= "recovery" then
@@ -1309,6 +1310,20 @@ function Controller.recoveryYields(player,state,queue)
     state.recoveryInterrupted=nil
     if not reason and interrupted then reason,cause=interrupted.reason,interrupted.cause end
     if not reason then return false end
+    if state.mode=="treat" then
+        -- A one-off First aid job ends when the player takes over. Danger close
+        -- by, or a game window open, it waits like Autopilot, but not for long.
+        local now=getTimestampMs()
+        if cause=="stop" then Controller.stop(player,reason)
+        elseif cause=="manual-input" or cause=="walking" then Controller.stop(player,"First aid stopped: you took over.","manual")
+        else
+            state.treatHeld=state.treatHeld or now
+            if now<state.treatHeld or now-state.treatHeld>=60000 then
+                Controller.stop(player,"First aid stopped: "..((reason or ""):gsub("^Autopilot[^:]*:%s*","")),cause)
+            else Controller.pauseRecovery(player,state,(reason or ""):gsub("Autopilot","First aid"),cause) end
+        end
+        return true
+    end
     if cause=="stop" then Controller.stop(player,reason)
     else Controller.pauseRecovery(player,state,reason,cause) end
     return true
@@ -3411,6 +3426,7 @@ end
 
 local function advance(player, state)
     local now=getTimestampMs()
+    if state.mode=="treat" then Controller.advanceTreat(player,state,now); return end
     if Recovery.firstAid(player,state,now) then return end
     if state.lowHealth then Controller.lowHealthCare(player,state,now); return end
     if state.recovery then Recovery.advance(player,state,now); return end
@@ -4396,7 +4412,7 @@ function Controller.update(player)
     if state.aimStarted then state.idleSince = nil; return end
     if busy then
         state.mindfulnessWatch=nil
-        if state.recovery and state.active and occupied and not moving and Options.careBetween() then
+        if state.recovery and state.mode~="treat" and state.active and occupied and not moving and Options.careBetween() then
             Recovery.between(player,state,queue,now)
         end
         yieldToPlayer(player, state, lost and not occupied and not state.contextVisible and not moving, moving, unconfirmed)
@@ -4739,7 +4755,7 @@ function Controller.update(player)
         state.cycleUntil = now + ActionYield.cooperativeWindowMs
     end
     if state.active and state.guard and not state.pending then
-        Recovery.guarded(player,state,now)
+        if state.mode=="treat" then Controller.advanceTreat(player,state,now) else Recovery.guarded(player,state,now) end
         return
     end
     if state.parkedTrip and not state.excursion and not state.guard then Recovery.unparkTrip(player,state) end
@@ -4776,7 +4792,7 @@ local function admission(player, mode, tier, asking)
         if current>=tier then return false,(Tiers.label(tierKind,tier) or "That tier").." is already active." end
     end
     local danger
-    if mode=="recovery" then
+    if mode=="recovery" or mode=="treat" then
         if player:isDead() then danger="Stopped because the survivor died." end
     elseif asking then danger=Controller.lastingDanger(player)
     else danger=unsafeReason(player) end
@@ -4808,13 +4824,18 @@ local function begin(player, mode, collectNearby, tier, switching)
     local ready, message = admission(player, mode, tier, switching)
     if not ready then return false, message end
     local tierKind=tierModes[mode]
-    local recovery=mode=="recovery"
+    local recovery=mode=="recovery" or mode=="treat"
     local medLevel, yogaLevel = levels(player)
     local state = {player = player, active = true, startedAt = getTimestampMs(), mode = mode, collectNearby = collectNearby == true, phase = "starting",
         message = "Checking supplies and training requirements.", rejected = {}, careNeeds = {}, failures = 0}
     if player:getSquare() then ActionYield.rememberPosition(state, player) end
-    Recovery.remember(player,recovery)
-    if recovery then
+    -- A one-off First aid job leaves a remembered Autopilot to resume.
+    if mode~="treat" then Recovery.remember(player,recovery) end
+    if mode=="treat" then
+        state.recovery=true
+        state.cooperativePending={}
+        state.message="Seeing to the wounds you asked about."
+    elseif recovery then
         state.recovery=true
         state.cooperativePending={}
         state.message="Watching for recovery needs and leaving room for other actions."
@@ -4892,6 +4913,59 @@ function Controller.start(player, mode, collectNearby, tier)
     return started,message
 end
 
+-- The one-off First aid job: only the wounds asked for (and any that bleeds),
+-- nothing else of Autopilot's. It ends once they are seen to and borrowed
+-- things are on their way back, when Auto All takes charge, or after a
+-- minute of waiting on danger.
+function Controller.advanceTreat(player,state,now)
+    state.treatHeld=nil
+    if Coexist.owner(player) then Controller.stop(player,"First aid stopped: Auto All is looking after the survivor.","coexist"); return end
+    if Recovery.firstAid(player,state,now) then state.treatQuiet,state.treatGuard=nil,nil; return end
+    if state.guard and state.aidFocus then
+        state.treatGuard=state.treatGuard or now
+        if now<state.treatGuard or now-state.treatGuard>=60000 then
+            Controller.stop(player,"First aid stopped: "..(state.guard.reason or "danger is near")..".","guard")
+            return
+        end
+    else state.treatGuard=nil end
+    -- The last borrowed things go back after it stops, as after any job; a
+    -- walk back that cannot be made is not waited for long.
+    local owed=state.aidOrigin~=nil
+    for _,loan in ipairs(state.loans) do if loan.aidReturn and (loan.aidWalks or 0)<2 then owed=true end end
+    if state.aidFocus or state.aidLoans then state.treatQuiet=nil
+    elseif not owed or (state.treatQuiet and now>=state.treatQuiet and now-state.treatQuiet>=10000) then
+        local done=state.aidFinished
+        Controller.stop(player,done and done.message or "Wounds seen to.","treated")
+        return
+    else state.treatQuiet=state.treatQuiet or now end
+    setPhase(state,"recovering",state.aidNotice or "Seeing to the wounds you asked about.")
+end
+
+-- One wound (part) or every wound (nil), at the player's word: the running
+-- job takes it into its own first aid; otherwise a First aid job starts and
+-- stops once that care is done.
+-- choice: {change=true, prefer=item}: a fresh dressing on that part, and which.
+function Controller.treat(player, part, choice)
+    if not player then return false, "Choose a local survivor." end
+    local state=stateFor(player)
+    -- A second request adds to the first: nothing asked for is dropped.
+    local focus=state.active and state.aidFocus or {parts={},choices={}}
+    if not part then focus.parts=nil elseif focus.parts then focus.parts[part]=true end
+    if part and choice and choice.change then focus.choices[part]={change=true,prefer=choice.prefer} end
+    if state.active then
+        if state.aidHeld then if part then state.aidHeld[part]=nil else state.aidHeld=nil end end
+        state.aidFocus,state.aidNext,state.aidFinished=focus,nil,nil
+        Log.event(player,"firstaid.asked","part",part and Recovery.partName(part) or "all","running",state.mode)
+        return true,"First aid is next."
+    end
+    local started,message=Controller.start(player,"treat",Recovery.collectNearby(player))
+    if started then
+        states[player].aidFocus=focus
+        Log.event(player,"firstaid.asked","part",part and Recovery.partName(part) or "all","running","treat")
+    end
+    return started,message
+end
+
 function Controller.status(player)
     if not player then return {active = false, phase = "idle", message = "No local survivor.", meditation = 0, yoga = 0} end
     local state = stateFor(player)
@@ -4912,7 +4986,7 @@ function Controller.status(player)
         elapsed = state.active and state.startedAt and getTimestampMs()-state.startedAt or nil, startProgress=state.startProgress,
         switching = state.switchTo ~= nil,
         away = state.active and state.recovery and Recovery.away(player,getTimestampMs()) or false, guard = state.active and state.guard or nil,
-        alerts = state.active and state.recovery and Recovery.alerts(player) or nil, aidNotice = state.active and state.aidNotice or nil, kitchen = state.active and Recovery.kitchen(player, state) or nil, boxedIn = state.active and state.boxedIn or nil,
+        alerts = state.active and state.recovery and Recovery.alerts(player) or nil, aidNotice = state.active and state.aidNotice or nil, aidFocus = state.active and state.aidFocus or nil, kitchen = state.active and Recovery.kitchen(player, state) or nil, boxedIn = state.active and state.boxedIn or nil,
         returnNotice = state.maskNotice or state.returnNotice or state.fluidNotice, careNotice = (state.practiceCareNoticeUntil and getTimestampMs()<state.practiceCareNoticeUntil and state.practiceCareNotice) or tierNotice or state.careNotice or state.lifestyleNotice, painNotice = state.painNotice, pendingReturns = #state.loans}
 end
 
@@ -4991,7 +5065,7 @@ local function onPlayerUpdate(player)
     if not ok then
         Log.error(player,"Controller.update",message,trace)
         local now=getTimestampMs()
-        if not state.recovery or player:isDead() then
+        if not state.recovery or state.mode=="treat" or player:isDead() then
             Controller.stop(player,"Second Nature stopped after an error. Use Copy report in the Log tab, or see console.txt.")
             return
         end

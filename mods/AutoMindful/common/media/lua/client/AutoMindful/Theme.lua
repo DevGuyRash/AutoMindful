@@ -21,6 +21,7 @@ Theme.colors = {
     both = rgb(0.76, 0.76, 0.52),
     tier = rgb(0.72, 0.62, 0.90),
     recovery = rgb(0.46, 0.68, 0.90),
+    care = rgb(0.92, 0.52, 0.56),
     good = rgb(0.49, 0.80, 0.49),
     warn = rgb(0.95, 0.72, 0.36),
     bad = rgb(0.93, 0.43, 0.38),
@@ -47,7 +48,7 @@ end
 -- Shipped art first; a client-only loader that restores Lua without mounting
 -- loose images gets a symbol from the game's own texture packs instead.
 local stock = {
-    Yoga="Item_Dumbbell", Meditate="Item_Candle", Endurance="Moodle_Icon_Endurance", Mindful="FavoriteStar",
+    Yoga="Item_Dumbbell", Meditate="Item_Candle", Endurance="Moodle_Icon_Endurance", Mindful="FavoriteStar", Bandage="Item_Bandage",
 }
 local cache = {}
 

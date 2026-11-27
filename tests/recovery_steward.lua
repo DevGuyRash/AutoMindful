@@ -593,4 +593,37 @@ do
     C.stop(p)
     passed("food that can be cooked counts toward how long food lasts")
 end
+do
+    -- One click for one part: that part's care and nothing else, then it
+    -- stops, says so, and leaves a remembered Autopilot to resume.
+    local p=survivor()
+    local arm,leg=part({open=true,scratch=true}),part({open=true,scratch=true})
+    wounded(p,{arm,leg}); bandage(p,"Bandage"); bandage(p,"Bandage")
+    p:getModData().AutoMindfulRecovery=true
+    assert(C.treat(p,arm) and C.status(p).mode=="treat")
+    step(p,12)
+    local a=queue(p)[1]
+    assert(a and a.Type=="bandage","the asked part is dressed at once, no waiting for a quiet moment")
+    a:perform(); seconds(p,6)
+    assert(not C.status(p).active and C.status(p).message=="Left Forearm seen to.",tostring(C.status(p).message))
+    assert(arm.cover and not leg.cover and count(p,"bandage")==1,"the other part was not asked for")
+    assert(p:getModData().AutoMindfulRecovery==true,"Autopilot still resumes after a load")
+end
+do
+    -- Nothing to dress it with: it stops at once and says what is missing.
+    local p=survivor(); local arm=part({open=true,scratch=true}); wounded(p,{arm})
+    assert(C.treat(p,arm)); seconds(p,6)
+    assert(not C.status(p).active and C.status(p).message=="Done as far as it could: the left forearm needs a bandage or a rag.",
+        tostring(C.status(p).message))
+end
+do
+    -- The player takes over: a one-off job ends instead of waiting like Autopilot.
+    local p=survivor(); local arm,leg=part({open=true,scratch=true}),part({open=true,scratch=true})
+    wounded(p,{arm,leg}); bandage(p,"Bandage")
+    assert(C.treat(p,nil)); step(p,2)
+    p.movementInput,p.moving=true,true; seconds(p,4)
+    assert(not C.status(p).active and C.status(p).message=="First aid stopped: you took over.",tostring(C.status(p).message))
+    p.movementInput,p.moving=false,false
+end
+passed("one click sees to what was asked, says what is left, and ends")
 print("RECOVERY STEWARD PASS")

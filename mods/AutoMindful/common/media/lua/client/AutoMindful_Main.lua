@@ -10,8 +10,11 @@ local ZenMoodle = require "AutoMindful/ZenMoodle"
 ZenMoodle.install()
 ZenMoodle.watch()
 require "ISUI/ISToolTipInv"
+require "XpSystem/ISUI/ISHealthPanel"
 local FoodHover = require "AutoMindful/FoodHover"
+local HealthPanel = require "AutoMindful/HealthPanel"
 FoodHover.install()
+HealthPanel.install()
 Log.setLevelSource(Options.logLevel)
 
 local function version(id)
@@ -24,8 +27,9 @@ local function onGameStart()
     Theme.preload()
     ZenMoodle.onPlayerReady()
     WorldMenu.install()
-    -- Mods loaded after this one may have replaced it since: wrap what is there now.
+    -- Mods loaded after this one may have replaced these since: wrap what is there now.
     FoodHover.install()
+    HealthPanel.install()
 end
 
 local function keyPressed(key)

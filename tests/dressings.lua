@@ -14,11 +14,12 @@ local Dressings = require "AutoMindful/Dressings"
 local roles = Dressings.roles
 
 local function item(kind, fluid)
+    local primary = fluid and {getFluidTypeString = function() return fluid.type or "Water" end}
     return {kind = kind, getType = function() return kind end, getWorldItem = function() return nil end,
         getFluidContainer = function()
             if not fluid then return nil end
             return {getAmount = function() return fluid.amount end, isTainted = function() return fluid.tainted == true end,
-                water = fluid.water, getProperties = function() return {getAlcohol = function() return fluid.alcohol or 0 end} end}
+                water = fluid.water, getPrimaryFluid = function() return primary end, getProperties = function() return {getAlcohol = function() return fluid.alcohol or 0 end} end}
         end}
 end
 
@@ -31,12 +32,13 @@ assert(not roles.water.match(item("WaterBottle", {amount = 0.6, water = true})),
 assert(not roles.water.match(item("WaterBottle", {amount = 1, water = true, tainted = true})))
 assert(not roles.water.match(item("PopBottle", {amount = 1, water = false})))
 -- Spirit: at least 0.1 l of something strong; disinfectant before a drink.
-local disinfectant = item("Disinfectant", {amount = 0.5, alcohol = 0.5})
-local vodka = item("Vodka", {amount = 0.75, alcohol = 0.3})
-local beer = item("BeerBottle", {amount = 0.5, alcohol = 0.025})
-assert(roles.spirit.match(disinfectant) and roles.spirit.match(vodka) and not roles.spirit.match(beer))
+local disinfectant = item("Disinfectant", {amount = 0.5, alcohol = 0.5, type = "RubbingAlcohol"})
+local vodka = item("Vodka", {amount = 0.75, alcohol = 0.3, type = "Vodka"})
+local cologne = item("Cologne", {amount = 0.2, alcohol = 0.2, type = "Cologne"})
+local beer = item("BeerBottle", {amount = 0.5, alcohol = 0.025, type = "Beer"})
+assert(roles.spirit.match(disinfectant) and roles.spirit.match(vodka) and not roles.spirit.match(beer) and not roles.spirit.match(cologne), "only what DisinfectRag takes")
 assert(roles.spirit.grade(disinfectant) < roles.spirit.grade(vodka))
-assert(not roles.spirit.match(item("Disinfectant", {amount = 0.05, alcohol = 0.05})))
+assert(not roles.spirit.match(item("Disinfectant", {amount = 0.05, alcohol = 0.05, type = "RubbingAlcohol"})))
 print("PASS what may be washed, sterilized, and with what")
 
 -- Planning, over a picker double: role name -> entry.

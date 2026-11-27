@@ -5,7 +5,7 @@
 local Fluids = require "AutoMindful/Fluids"
 local FirstAid = require "AutoMindful/FirstAid"
 
-local Dressings = {policy = {washLiters = 0.5, keepLiters = 0.5, spiritLiters = 0.1, hotWater = 1.6, spare = 1}}
+local Dressings = {policy = {washLiters = 0.5, keepLiters = 0.5, spiritLiters = 0.1, spare = 1}}
 
 local function read(fn, fallback)
     local ok, value = pcall(fn)
@@ -22,6 +22,7 @@ end
 -- CleanBandage's inputs, and DisinfectRag's and DisinfectBandage's.
 local washable = {BandageDirty = true, DenimStripsDirty = true, LeatherStripsDirty = true, RippedSheetsDirty = true}
 local sterilizable = {Bandage = true, RippedSheets = true}
+local spirits = {RubbingAlcohol = 1, Vodka = 2, Whiskey = 2}
 
 Dressings.roles = {
     dirty = {match = function(item) return washable[kind(item)] == true end, consumed = true},
@@ -34,18 +35,14 @@ Dressings.roles = {
                 and Fluids.isWater(fluid) and not fluid:isTainted()
         end, false) == true
     end, grade = function(item) return -fluidOf(item):getAmount() end},
-    -- RubbingAlcohol, Vodka or Whiskey: what DisinfectRag takes. Disinfectant
-    -- is rubbing alcohol; a drink is used only when nothing else is there.
+    -- RubbingAlcohol, Vodka or Whiskey: exactly what DisinfectRag takes (not
+    -- cologne). Disinfectant is rubbing alcohol; a drink only when nothing else is there.
     spirit = {match = function(item)
         local fluid = fluidOf(item)
         return fluid ~= nil and read(function()
-            local amount = fluid:getAmount()
-            return amount >= Dressings.policy.spiritLiters and fluid:getProperties():getAlcohol() / amount >= 0.35
+            return fluid:getAmount() >= Dressings.policy.spiritLiters and spirits[fluid:getPrimaryFluid():getFluidTypeString()] ~= nil
         end, false) == true
-    end, grade = function(item)
-        local fluid = fluidOf(item)
-        return fluid:getProperties():getAlcohol() / fluid:getAmount() >= 0.9 and 1 or 2
-    end},
+    end, grade = function(item) return spirits[fluidOf(item):getPrimaryFluid():getFluidTypeString()] end},
 }
 
 local recipes = {wash = "CleanBandage", spirit = "DisinfectRag", boil = "DisinfectBandage"}
@@ -74,6 +71,14 @@ function Dressings.logic(player, name, anchor)
     if not read(function() return logic:isRecipeAvailableForCharacter(recipe) end, false) then return nil end
     if anchor then logic:setRecipeFromContextClick(recipe, anchor) end
     if not read(function() return logic:canPerformCurrentRecipe() end, false) then return nil end
+    -- The game picks the other inputs itself: never someone's last drink.
+    if name == recipes.wash then
+        local items = read(function() return logic:getRecipeData():getAllInputItems() end)
+        for index = 0, items and items:size() - 1 or -1 do
+            local fluid = fluidOf(items:get(index))
+            if fluid and fluid:getAmount() < Dressings.policy.washLiters + Dressings.policy.keepLiters then return nil end
+        end
+    end
     return logic
 end
 

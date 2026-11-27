@@ -260,6 +260,17 @@ local function goBack(player, state)
     end)
 end
 
+-- Auto All's jobs that look after wounds and dressings themselves.
+local medicalJobs = {medicine = true, sterilize = true, clean = true, wring = true}
+local coexistBleedMs = 30000
+
+local function coexisting(player, state, step, other)
+    local signature = "coexist:" .. other .. ":" .. FirstAid.partName(step.part) .. ":" .. step.kind
+    if state.aidWaiting == signature then return end
+    state.aidWaiting = signature
+    Log.event(player, "firstaid.waiting", "why", other, "part", FirstAid.partName(step.part), "next", step.kind, "chain", step.chain)
+end
+
 -- Said once per change: what waits for safety, so the log shows it.
 local function waiting(player, state, step, why)
     state.aidNotice = FirstAid.describe(step):gsub("%.$", "") .. " waits until it is safe."
@@ -312,7 +323,7 @@ local function walkFor(player, state, now, step, message)
 end
 
 function Recovery.firstAid(player, state, now)
-    if not Options.firstAid() then releaseAid(state); return false end
+    if not Options.firstAid() then releaseAid(state); releaseAid(state, nil, "dressLoans"); return false end
     if state.excursion and state.excursion.stage == "outbound" then return false end
     if state.aidNext and now < state.aidNext and state.aidNext - now <= 60000 then return false end
     if not player:getBodyDamage().getBodyParts then return false end
@@ -327,15 +338,39 @@ function Recovery.firstAid(player, state, now)
         end})
     releaseAid(state, step and step.uses)
     if not step then
+        state.aidBleedSince = nil
         state.aidNotice = missing == "bleeding" and "Bleeding, and there is no bandage within reach."
             or missing == "calming" and "Wounds wait until the panic passes: the sight of blood." or nil
-        if missing then state.aidNext = now + aidRetryMs; return false end
+        if missing then state.aidNext = now + aidRetryMs end
         state.aidWaiting = nil
         if state.guard or not Recovery.permit(player, state, "topUp", now) then return false end
+        -- Nothing to treat now, or nothing to treat it with: borrowed things still go home.
+        if missing then return returnTrip(player, state, now) end
         -- A dressing job under way walks back by itself once it is done.
         return returnTrip(player, state, now) or (not state.dressBusy and goBack(player, state))
     end
     state.aidNotice = nil
+    -- Auto All in charge: its Auto Medicine, Sterilize and Clean do this very
+    -- work, so nothing is started or slipped in between, except a dressing on
+    -- a wound that has bled undressed too long. Its other jobs leave room for
+    -- care of a bleeding wound only.
+    local other = Coexist.owner(player)
+    if other then
+        local kind = other:match("%(([%w_]+)%)")
+        if medicalJobs[kind] then
+            local since = state.aidBleedSince
+            if step.urgent and not since then state.aidBleedSince = now; since = now end
+            if not (step.urgent and (step.kind == "bandage" or step.kind == "take" and step.chain == "bandage")
+                    and now >= since and now - since >= coexistBleedMs) then
+                coexisting(player, state, step, other)
+                return false
+            end
+        elseif not step.urgent then
+            coexisting(player, state, step, other)
+            return false
+        end
+    end
+    if not step.urgent then state.aidBleedSince = nil end
     -- Care for a bleeding wound goes on while someone is at the controls or
     -- something else is due; the rest waits until nobody needs the hands and
     -- no thirst or hunger is critical. Low health is no reason to wait:
@@ -386,13 +421,18 @@ local function dressSettled(player, state, now)
     try.endedAt = try.endedAt or now
     if now >= try.endedAt and now - try.endedAt < aidConfirmMs then return false end
     state.dressTry = nil
-    if not try.cut then state.rejected[try.id] = now + 600000 end
+    -- Stopped (darkness, the player): tried again later, and not for ever.
+    state.dressCuts = try.cut and (state.dressCuts or 0) + 1 or 0
+    if not try.cut or state.dressCuts >= 3 then state.rejected[try.id] = now + 600000; state.dressCuts = 0
+    else state.dressNext = now + 30000 end
     Log.event(player, "dressing.refused", "step", try.kind, "cutShort", try.cut)
     return true
 end
 
 function Recovery.dressings(player, state, now)
-    if not state.recovery or not Options.firstAid() then state.dressBusy = nil; return false end
+    if not state.recovery or not Options.firstAid() then state.dressBusy = nil; releaseAid(state, nil, "dressLoans"); return false end
+    -- Auto All in charge: its own Sterilize and Clean may be at it.
+    if Coexist.owner(player) then return false end
     if state.guard or state.excursion or not player:getBodyDamage().getBodyParts then return false end
     if state.dressNext and now < state.dressNext and state.dressNext - now <= 60000 then return false end
     if not dressSettled(player, state, now) then return false end
@@ -408,7 +448,8 @@ function Recovery.dressings(player, state, now)
     local uses, far, near = {}, nil, {}
     for _, entry in ipairs(job.uses) do
         uses[entry.item] = true
-        if not entry.carried and not (entry.reach and entry.square == nil) then
+        -- In a bag: into the hands with a loan, so it goes back to its bag.
+        if not entry.carried then
             if entry.reach then near[#near + 1] = entry elseif not far then far = entry end
         end
     end

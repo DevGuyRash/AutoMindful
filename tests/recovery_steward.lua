@@ -270,6 +270,27 @@ do
     O.firstAid=function() return true end
     C.stop(p)
 end
+do
+    -- Auto All's own Auto Medicine at work: nothing slipped in between, unless
+    -- a wound has bled undressed for half a minute. Its other jobs leave room
+    -- for a bleeding wound only.
+    local p=survivor(); local arm=part({open=true,scratch=true}); wounded(p,{arm}); bandage(p,"Bandage")
+    AutoAll={isRunning=function() return true end,tasks={[0]={kind="medicine"}}}
+    function p:getPlayerNum() return 0 end
+    begin(p); C.setAway(p,true); seconds(p,20)
+    assert(count(p,"bandage")==0,"Auto Medicine's wound is left to it")
+    arm.blood=true; seconds(p,10)
+    assert(count(p,"bandage")==0,"a fresh bleed is Auto Medicine's to dress first")
+    seconds(p,30)
+    assert(count(p,"bandage")==1,"bleeding that cannot wait is dressed")
+    queue(p)[1]:perform()
+    local leg=part({open=true,scratch=true}); wounded(p,{arm,leg}); bandage(p,"Bandage")
+    AutoAll.tasks[0].kind="exercise"; seconds(p,20)
+    assert(count(p,"bandage")==1,"a scratch waits while Auto All exercises")
+    AutoAll=nil; seconds(p,20)
+    assert(count(p,"bandage")==2,"and is dressed once Auto All is done")
+    C.stop(p)
+end
 for _,mode in ipairs({"recovery","meditation"}) do
     -- Hurt on an errand: nothing may wait for the end of a trip that cannot go on.
     scout=true

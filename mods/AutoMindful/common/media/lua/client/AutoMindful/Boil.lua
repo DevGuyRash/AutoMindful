@@ -158,10 +158,8 @@ function Boil.start(player, state, now, count, pots)
     local fetch = {}
     if not pot.carried then fetch[#fetch + 1] = pot.entry end
     if plan then
-        entry.fire = {fuel = {}, tinder = plan.tinder and plan.tinder.item:getID(), starter = plan.starter and plan.starter.item:getID()}
-        for _, fuel in ipairs(plan.fuel) do entry.fire.fuel[#entry.fire.fuel + 1] = fuel.item:getID(); fetch[#fetch + 1] = fuel end
-        if plan.tinder then fetch[#fetch + 1] = plan.tinder end
-        if plan.starter then fetch[#fetch + 1] = plan.starter end
+        entry.fire = Fire.record(plan)
+        for _, wanted in ipairs(Fire.wanted(plan)) do fetch[#fetch + 1] = wanted end
     end
     sources[player] = {fetch = fetch, loan = not pot.carried or nil, pot = pot.item, spares = spares,
         taps = taps}
@@ -251,7 +249,9 @@ function Boil.step(player, state, now, entry, stove)
     if entry.stage == "boil-fetch" then
         local missing = {}
         for _, wanted in ipairs(source and source.fetch or {}) do
-            if not inventory:getItemById(wanted.item:getID()) then missing[#missing + 1] = wanted end
+            -- In the main inventory, where the game's actions look; a bag does not count.
+            local item = inventory:getItemById(wanted.item:getID())
+            if not item or item:getContainer() ~= inventory then missing[#missing + 1] = wanted end
         end
         if not source then
             if not pot then return fail(player, state, now, entry, stove, "reloaded") end

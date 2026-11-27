@@ -252,8 +252,10 @@ function FirstAid.forget(player) looks[player] = nil end
 -- A picker over what was found: anything at hand before anything to walk
 -- for; at hand, the better grade, carried first; to walk for, the better
 -- grade, then the nearest. Consumables serve once.
-local function picker(player, found, rejected, now)
+-- prefer: an item the player chose; it serves any role it fits, first.
+local function picker(player, found, rejected, now, prefer)
     local used, here = {}, player:getSquare()
+    local preferID = prefer and read(function() return prefer:getID() end, nil)
     local function key(entry, grade)
         if entry.carried then return {0, grade, 0, 0} end
         if entry.reach then return {0, grade, 1, 0} end
@@ -266,6 +268,20 @@ local function picker(player, found, rejected, now)
     end
     return function(name, options)
         local role = roles[name]
+        -- The player's choice is a dressing; it never becomes a burn rag or
+        -- anything else, and it is passed over like anything the game refused.
+        if preferID and (name == "dressing" or name == "clean") and not (options and options.list) then
+            for _, entry in ipairs(found) do
+                local item = entry.item
+                local held = rejected and rejected[item:getID()]
+                if item:getID() == preferID and not used[item] and not (held and now and now < held)
+                        and (not options or not options.near or entry.reach)
+                        and role.match(item) and Fetch.present(entry.entry) then
+                    if role.consumed and not (options and options.peek) then used[item] = true end
+                    return entry
+                end
+            end
+        end
         local best, bestKey
         local all = options and options.list and {}
         for _, entry in ipairs(found) do
@@ -299,7 +315,8 @@ local needsUncovered = {glass = true, bullet = true, disinfect = true, stitch = 
 
 -- The treatments one wound needs now, in the game's order, with what each
 -- takes. A treatment nothing is found for is left out; one it blocks waits.
-local function treatments(player, part, pick)
+-- change: the player asked for a fresh dressing on this part, dirty or not.
+local function treatments(player, part, pick, change)
     local list = {}
     local function add(step) list[#list + 1] = step end
     local covered = part:bandaged()
@@ -348,14 +365,14 @@ local function treatments(player, part, pick)
     -- Under a dressing, the one to follow it is secured before cloth goes to a burn.
     local dress
     local function pickDress() return pick((part:bleeding() or part:getBleedingTime() > 0) and "dressing" or "clean") end
-    if covered and stillOpen then dress = pickDress() end
+    if covered and (stillOpen or change) then dress = pickDress() end
     local burn
     if part:isNeedBurnWash() and part:getBurnTime() > 0 then
         local rag = pick("burn")
         if rag then burn = {kind = "burn", rag = rag} end
     end
     -- Riding along: only when the wound is bare, or coming bare anyway.
-    local bare = not covered or major or (dress ~= nil and (burn ~= nil or worthChanging(part)))
+    local bare = not covered or major or (dress ~= nil and (burn ~= nil or worthChanging(part) or change))
     if not bare then burn = nil end
     if not alcohol and bare and (stitch or deep or isCut(part) or isBitten(part)) and part:getAlcoholLevel() <= 0
             and not pick("sterile", {peek = true}) then
@@ -373,8 +390,8 @@ local function treatments(player, part, pick)
     end
     local uncover = false
     for _, step in ipairs(list) do if needsUncovered[step.kind] then uncover = true end end
-    if not covered and stillOpen then dress = pickDress() end
-    if covered and not uncover and not (dress and worthChanging(part)) then dress = nil end
+    if not covered and (stillOpen or change) then dress = pickDress() end
+    if covered and not uncover and not (dress and (worthChanging(part) or change)) then dress = nil end
     if covered and (uncover or dress) then table.insert(list, 1, {kind = "unbandage"}) end
     if dress then add({kind = "bandage", item = dress}) end
     if #list == 0 then
@@ -407,7 +424,12 @@ end
 -- options.radius: how far to look and walk (0: carried and within reach);
 -- options.blocked(part): a wound whose last treatment did not take;
 -- options.rejected, options.now: items held back until a time;
--- options.hurry: danger is near, so a bleeding wound gets only a dressing.
+-- options.hurry: danger is near, so a bleeding wound gets only a dressing;
+-- options.only: the parts the player asked to see to, as a set (a bleeding
+-- wound elsewhere still comes first); options.onlyBleeding: nothing else;
+-- options.keep: parts always planned, never blocked (a wound left bare);
+-- options.choice(part): {change, prefer}: a fresh dressing on that part
+-- whatever the old one is like, and the item the player chose.
 -- A step: {kind, part, danger, urgent, chain, uses} plus what it takes;
 -- "walk" (square) and "take" (entries) come before anything is unwrapped.
 -- urgent: for a wound that bleeds; uses: every item the wound's care takes;
@@ -420,19 +442,40 @@ function FirstAid.plan(player, options)
         local part = parts:get(index)
         -- Only what the game reads as a body part with wounds.
         local danger = part.bandaged and FirstAid.danger(player, part) or 0
+        local choice = options.choice and options.choice(part)
+        local kept = options.keep and options.keep[part]
+        -- A fresh dressing asked for, or one taken off and not yet replaced.
+        if danger <= 0 and ((choice and choice.change) or kept) then danger = 1 end
         if danger > 0 then
             if bleedingOpen(part) then bleeders = bleeders + 1 end
-            if not (options.blocked and options.blocked(part)) then list[#list + 1] = {part = part, danger = danger} end
+            local asked = bleedingOpen(part) or kept
+                or (not options.onlyBleeding and (not options.only or options.only[part]))
+            local blocked = options.blocked and options.blocked(part)
+            -- A wound left bare is still covered after a refusal, but the
+            -- refused treatment is not tried again until its wait is over.
+            if asked and (kept or not blocked) then list[#list + 1] = {part = part, danger = danger, dressOnly = kept and blocked} end
         end
     end
     if #list == 0 then return nil end
     table.sort(list, function(a, b) return a.danger > b.danger end)
     local found = collect(player, options.radius or 0)
-    local function fresh() return picker(player, found, options.rejected, options.now) end
+    local function chosen(part) return part and options.choice and options.choice(part) or nil end
+    local function fresh(part)
+        local choice = chosen(part)
+        return picker(player, found, options.rejected, options.now, choice and choice.prefer or nil)
+    end
+    local function chainFor(part)
+        local choice = chosen(part)
+        return treatments(player, part, fresh(part), choice and choice.change)
+    end
     local missing, waiting
     for _, wound in ipairs(list) do
         local part = wound.part
-        local chain = treatments(player, part, fresh())
+        local chain = chainFor(part)
+        if wound.dressOnly then
+            local dress = not part:bandaged() and fresh(part)((part:bleeding() or part:getBleedingTime() > 0) and "dressing" or "clean")
+            chain = dress and {{kind = "bandage", item = dress}} or {}
+        end
         local urgent = bleedingOpen(part)
         local waits
         -- More than one wound bleeding, a walk, or danger near: the blood is
@@ -477,7 +520,7 @@ function FirstAid.plan(player, options)
             -- What the other wounds will take stays borrowed too.
             for _, other in ipairs(list) do
                 if other ~= wound then
-                    for _, entry in ipairs(supplies(treatments(player, other.part, fresh()))) do uses[entry.item] = true end
+                    for _, entry in ipairs(supplies(chainFor(other.part))) do uses[entry.item] = true end
                 end
             end
             return step
@@ -485,6 +528,39 @@ function FirstAid.plan(player, options)
     end
     return nil, missing or waiting
 end
+
+-- What one wound's care would be now, read only: each step with what it
+-- would use and where that is, and what nothing was found for.
+-- radius: as for plan; choice: {change, prefer} as the player picked them.
+-- A step: {kind, item, carried, walk, hands}.
+function FirstAid.preview(player, part, radius, choice)
+    choice = choice or {}
+    local chain = treatments(player, part, picker(player, collect(player, radius or 0), nil, nil, choice.prefer), choice.change)
+    local steps, have = {}, {}
+    for _, step in ipairs(chain) do
+        have[step.kind] = true
+        local entry = step.item or step.tool or step.thread or step.plank or step.alcohol or step.rag or step.herb
+        steps[#steps + 1] = {kind = step.kind, item = entry and read(function() return entry.item:getDisplayName() end, nil),
+            carried = entry and entry.carried or false, walk = entry ~= nil and not entry.reach, hands = step.hands == true}
+    end
+    local missing = {}
+    local function need(wanted, kind, what) if wanted and not have[kind] then missing[#missing + 1] = what end end
+    local covered = part:bandaged()
+    need(part:haveBullet(), "bullet", "tweezers or a suture needle holder")
+    need(fractured(part) and not isStitched(part), "splint", "a splint, or a plank and ripped sheets")
+    need(unstitched(part), "stitch", "a suture needle, or a needle and thread")
+    need(infectionKnown(player, part) and part:getAlcoholLevel() < 1, "disinfect", "disinfectant or strong alcohol")
+    need(not covered and (dressable(part) or part:bleeding()), "bandage", "a bandage or a rag")
+    need(covered and worthChanging(part), "bandage", "a clean dressing")
+    need(part:isNeedBurnWash() and part:getBurnTime() > 0, "burn", "a clean rag or bandage for the burn")
+    return {steps = steps, missing = missing, covered = covered, danger = FirstAid.danger(player, part)}
+end
+
+FirstAid.infectionKnown = infectionKnown
+FirstAid.fractured = fractured
+FirstAid.worthChanging = worthChanging
+FirstAid.dressable = dressable
+FirstAid.wound = {deep = isDeep, stitched = isStitched, cut = isCut, scratched = isScratched, bitten = isBitten}
 
 -- --------------------------------------------------------------- the actions
 

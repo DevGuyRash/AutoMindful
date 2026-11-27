@@ -149,6 +149,7 @@ function Recovery.kitchen(player, state) return Kitchen.status(player, state) en
 function Recovery.alerts(player) return Alerts.list(player) end
 
 function Recovery.collectNearby(player) return Preferences.collectNearby(player) end
+function Recovery.partName(part) return FirstAid.partName(part) end
 
 function Recovery.danger(player) return Danger.read(player) end
 
@@ -207,6 +208,17 @@ local function aidSettled(player, state, now)
     if FirstAid.done(player, try.step) then
         state.aidTry = nil
         if try.step.kind == "bandage" and state.aidHeld then state.aidHeld[try.step.part] = nil end
+        -- The fresh dressing the player asked for is on: asked once, done once.
+        -- A dressing first aid took off stays its job until another is on;
+        -- the fresh one the player asked for is asked once, done once.
+        if try.step.kind == "unbandage" then
+            state.aidUncovered = state.aidUncovered or {}
+            state.aidUncovered[try.step.part] = true
+        elseif try.step.kind == "bandage" then
+            if state.aidUncovered then state.aidUncovered[try.step.part] = nil end
+            local focus = state.aidFocus
+            if focus and focus.choices then focus.choices[try.step.part] = nil end
+        end
         return true
     end
     try.endedAt = try.endedAt or now
@@ -325,6 +337,30 @@ local function walkFor(player, state, now, step, message)
     return queued
 end
 
+-- What is left of the care the player asked for, said plainly: done, or
+-- which part still needs what, and why it stopped there.
+function Recovery.aidOutcome(player, state, focus, missing, now)
+    local radius = reach(state) and Options.searchRadius() or 0
+    local parts, names, left = player:getBodyDamage():getBodyParts(), {}, {}
+    for index = 0, parts:size() - 1 do
+        local part = parts:get(index)
+        if (not focus.parts or focus.parts[part]) and FirstAid.danger(player, part) > 0 then
+            local preview = FirstAid.preview(player, part, radius)
+            local held = state.aidHeld and state.aidHeld[part]
+            local why = preview.missing[1] and ("needs " .. preview.missing[1])
+                or (held and now < held.at and "the game would not do the last step") or nil
+            if why then left[#left + 1] = FirstAid.partName(part):lower() .. " " .. why end
+        end
+        if focus.parts and focus.parts[part] then names[#names + 1] = FirstAid.partName(part) end
+    end
+    local message
+    if missing == "bleeding" then message = "Still bleeding: there is no bandage within reach."
+    elseif missing == "calming" then message = "Stopped: the sight of blood is too much right now. Ask again once the panic passes."
+    elseif #left > 0 then message = "Done as far as it could: the " .. table.concat(left, "; the ") .. "."
+    else message = (#names == 1 and (names[1] .. " seen to.")) or "Wounds seen to." end
+    return {message = message, at = now, parts = #names > 0 and table.concat(names, ",") or "all", left = #left}
+end
+
 function Recovery.firstAid(player, state, now)
     -- Dressing work nobody carries on (Autopilot switched off, Auto All in
     -- charge, or no calm moment for a while): its borrowed things go home.
@@ -333,7 +369,16 @@ function Recovery.firstAid(player, state, now)
         state.dressBusy = nil
         releaseAid(state, nil, "dressLoans")
     end
-    if not Options.firstAid() then releaseAid(state); releaseAid(state, nil, "dressLoans"); return false end
+    -- What the player asked for (Controller.treat) needs no setting and no
+    -- waiting for a quiet moment: it is the reason for being here.
+    local focus = state.aidFocus
+    local treat = state.mode == "treat"
+    -- A wound left bare is first aid's until it is covered (by anyone) or no longer needs it.
+    for part in pairs(state.aidUncovered or {}) do
+        if part:bandaged() or not FirstAid.dressable(part) then state.aidUncovered[part] = nil end
+    end
+    local asked = focus ~= nil or treat
+    if not Options.firstAid() and not asked then releaseAid(state); releaseAid(state, nil, "dressLoans"); return false end
     if state.excursion and state.excursion.stage == "outbound" then return false end
     if state.aidNext and now < state.aidNext and state.aidNext - now <= 60000 then return false end
     if not player:getBodyDamage().getBodyParts then return false end
@@ -343,20 +388,28 @@ function Recovery.firstAid(player, state, now)
     local other = Coexist.owner(player)
     local medical = other and medicalJobs[other:match("%(([%w_]+)%)")]
     local step, missing = FirstAid.plan(player, {radius = reach(state) and Options.searchRadius() or 0,
-        rejected = state.rejected, now = now, hurry = guarded or medical,
+        rejected = state.rejected, now = now, hurry = guarded or medical, only = focus and focus.parts,
+        onlyBleeding = treat and not focus, keep = state.aidUncovered,
+        choice = function(part) return focus and focus.choices and focus.choices[part] end,
         blocked = function(part)
+            if state.aidUncovered and state.aidUncovered[part] then return false end
             local held = state.aidHeld and state.aidHeld[part]
             return held ~= nil and now < held.at and held.at - now <= setbackLimitMs
         end})
     releaseAid(state, step and step.uses)
     state.aidIdle = step == nil or nil
     if not step then
+        if focus then
+            state.aidFocus = nil
+            state.aidFinished = Recovery.aidOutcome(player, state, focus, missing, now)
+            Log.event(player, "firstaid.asked.done", "parts", state.aidFinished.parts, "left", state.aidFinished.left, "missing", missing)
+        end
         state.aidBleedSince = nil
         state.aidNotice = missing == "bleeding" and "Bleeding, and there is no bandage within reach."
             or missing == "calming" and "Wounds wait until the panic passes: the sight of blood." or nil
         if missing then state.aidNext = now + aidRetryMs end
         state.aidWaiting = nil
-        if state.guard or not Recovery.permit(player, state, "topUp", now) then return false end
+        if state.guard or not (asked or Recovery.permit(player, state, "topUp", now)) then return false end
         -- Nothing to treat now, or nothing to treat it with: borrowed things still go home.
         if missing then return returnTrip(player, state, now) end
         -- A dressing job under way walks back by itself once it is done.
@@ -385,7 +438,7 @@ function Recovery.firstAid(player, state, now)
     -- something else is due; the rest waits until nobody needs the hands and
     -- no thirst or hunger is critical. Low health is no reason to wait:
     -- treating the wounds is how it comes back.
-    if not step.urgent and (Needs.critical(player, "water") or Needs.critical(player, "food")
+    if not step.urgent and not asked and (Needs.critical(player, "water") or Needs.critical(player, "food")
             or not Recovery.permit(player, state, "topUp", now)) then return false end
     -- With danger near only a dressing on a bleeding wound, where it stands.
     if guarded and not (step.urgent and (step.kind == "bandage" or step.kind == "take" and step.chain == "bandage")) then

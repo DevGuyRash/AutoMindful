@@ -368,3 +368,110 @@ do
     assert(joined(run(p)) == "splint")
 end
 print("PASS a neck fracture is splinted like a limb")
+
+do
+    -- Asked for one part: only that part, then nothing more. Another wound
+    -- that bleeds openly is dressed first all the same.
+    local hand = part("Hand_R", {scratch = true})
+    local leg = part("UpperLeg_L", {cut = true})
+    local p = survivor({hand, leg})
+    carry(p, "Bandage", {power = 4}); carry(p, "Bandage", {power = 4})
+    local only = {[hand] = true}
+    local step = FirstAid.plan(p, {radius = 0, only = only})
+    assert(step.kind == "bandage" and step.part == hand, step.kind)
+    hand.cover = true
+    assert(FirstAid.plan(p, {radius = 0, only = only}) == nil, "the leg was not asked for")
+    assert(FirstAid.plan(p, {radius = 0, onlyBleeding = true}) == nil, "nothing bleeds")
+    leg.blood = true
+    step = FirstAid.plan(p, {radius = 0, only = only})
+    assert(step and step.part == leg and step.urgent, "a bleeding wound is never passed over")
+end
+print("PASS one part asked for is the one seen to, after any bleeding")
+
+do
+    -- A wound whose dressing came off stays first aid's job until another is
+    -- on, whatever was asked next and whatever was refused.
+    local arm = part("ForeArm_L", {cut = true})
+    local hand = part("Hand_R", {scratch = true})
+    local p = survivor({arm, hand})
+    carry(p, "Bandage", {power = 4}); carry(p, "Bandage", {power = 4})
+    local step = FirstAid.plan(p, {radius = 0, only = {[hand] = true}, keep = {[arm] = true},
+        blocked = function(b) return b == arm end})
+    assert(step.part == arm, "the bare forearm comes before the hand")
+end
+print("PASS a wound left bare is never dropped")
+
+do
+    -- A fresh dressing asked for on a clean one: off, then the chosen one on
+    -- (HApplyBandage needs the part bare).
+    local hand = part("Hand_R", {scratch = true, cover = true})
+    local p = survivor({hand})
+    carry(p, "Bandage", {power = 4})
+    local sterile = carry(p, "AlcoholBandage", {power = 4, alcoholic = true})
+    local plain = carry(p, "RippedSheets", {power = 2})
+    assert(FirstAid.plan(p, {radius = 0}) == nil, "a clean dressing is left alone")
+    local options = {radius = 0, only = {[hand] = true}, choice = function(b) return b == hand and {change = true, prefer = plain} or nil end}
+    local step = FirstAid.plan(p, options)
+    assert(step.kind == "unbandage" and step.part == hand, step.kind)
+    hand.cover = nil
+    step = FirstAid.plan(p, options)
+    assert(step.kind == "bandage" and step.item.item == plain, "the chosen dressing, not the best one")
+    local preview = FirstAid.preview(p, part("Hand_L", {scratch = true, cover = true}), 0, {change = true, prefer = sterile})
+    assert(#preview.steps == 2 and preview.steps[1].kind == "unbandage" and preview.steps[2].item == "AlcoholBandage")
+end
+print("PASS a fresh dressing of the player's choosing replaces a clean one")
+
+do
+    -- Stitches still healing want a dressing; with none, the preview says so.
+    local arm = part("ForeArm_L", {stitches = true, stitchTime = 10})
+    local p = survivor({arm})
+    local preview = FirstAid.preview(p, arm, 0)
+    assert(#preview.steps == 0 and preview.missing[1] == "a bandage or a rag", tostring(preview.missing[1]))
+    carry(p, "Bandage", {power = 4})
+    preview = FirstAid.preview(p, arm, 0)
+    assert(preview.steps[1].kind == "bandage" and preview.steps[1].carried and not preview.steps[1].walk)
+end
+print("PASS stitches that are healing need a dressing, and the preview says what is missing")
+
+do
+    -- The chosen dressing is only ever a dressing, and something the game
+    -- refused is passed over even when chosen.
+    local arm = part("ForeArm_L", {burn = 10, wash = true, cover = true})
+    local p = survivor({arm})
+    local chosen = carry(p, "AlcoholBandage", {power = 4, alcoholic = true})
+    local other = carry(p, "Bandage", {power = 4})
+    local rag = carry(p, "RippedSheets", {power = 2})
+    local options = {radius = 0, only = {[arm] = true}, choice = function() return {change = true, prefer = chosen} end}
+    local kinds, used = {}, {}
+    for _ = 1, 6 do
+        local step = FirstAid.plan(p, options)
+        if not step then break end
+        kinds[#kinds + 1] = step.kind
+        if step.kind == "unbandage" then arm.cover = nil
+        elseif step.kind == "burn" then used.burn = step.rag.item; arm.wash = nil
+        elseif step.kind == "bandage" then used.bandage = step.item.item; arm.cover = true; break end
+    end
+    assert(used.bandage == chosen and used.burn ~= chosen, "the chosen dressing goes on; the burn gets a rag: " .. table.concat(kinds, ">"))
+    arm.cover, arm.wash = true, nil
+    local refused = FirstAid.plan(p, {radius = 0, only = {[arm] = true}, rejected = {[chosen.id] = 100}, now = 10,
+        choice = function() return {change = true, prefer = chosen} end})
+    arm.cover = nil
+    refused = FirstAid.plan(p, {radius = 0, only = {[arm] = true}, rejected = {[chosen.id] = 100}, now = 10,
+        choice = function() return {change = true, prefer = chosen} end})
+    assert(refused.kind == "bandage" and refused.item.item ~= chosen, "a refused choice gives way to another dressing")
+end
+print("PASS the chosen dressing stays a dressing, and gives way when refused")
+
+do
+    -- A fresh dressing on a part that healed under the old one: off, and the
+    -- new one still goes on.
+    local hand = part("Hand_R", {cover = true})
+    local p = survivor({hand})
+    local fresh = carry(p, "Bandage", {power = 4})
+    local options = {radius = 0, only = {[hand] = true}, choice = function() return {change = true, prefer = fresh} end}
+    assert(FirstAid.plan(p, options).kind == "unbandage")
+    hand.cover = nil
+    local step = FirstAid.plan(p, options)
+    assert(step and step.kind == "bandage" and step.item.item == fresh, "the replacement is not forgotten once the part is bare")
+end
+print("PASS a replacement asked for on a healed part is finished")

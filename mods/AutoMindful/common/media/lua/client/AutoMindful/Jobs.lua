@@ -10,13 +10,13 @@ local Theme = require "AutoMindful/Theme"
 local Log = require "AutoMindful/Log"
 
 local Jobs = {}
-local names = {meditation="Meditation", yoga="Yoga", both="Yoga and Meditation", recovery="Autopilot"}
+local names = {meditation="Meditation", yoga="Yoga", both="Yoga and Meditation", recovery="Autopilot", treat="First aid"}
 local policyText = {alternate="Switches after each session", lowest="Trains whichever is behind", closest="Finishes whichever is ahead"}
 local tierModes = {meditation="meditateTo", yoga="yogaTo"}
 local tierFamily = {meditation="Mindfulness", yoga="Zen"}
-Jobs.colors = {meditation="meditation", yoga="yoga", both="both", tier="tier", recovery="recovery",
+Jobs.colors = {meditation="meditation", yoga="yoga", both="both", tier="tier", recovery="recovery", treat="care",
     meditateTo="meditation", yogaTo="yoga"}
-Jobs.icons = {meditation="Meditate", yoga="Yoga", both="Mindful", tier="Mindful", recovery="Endurance",
+Jobs.icons = {meditation="Meditate", yoga="Yoga", both="Mindful", tier="Mindful", recovery="Endurance", treat="Bandage",
     meditateTo="Meditate", yogaTo="Yoga"}
 
 function Jobs.title(status)

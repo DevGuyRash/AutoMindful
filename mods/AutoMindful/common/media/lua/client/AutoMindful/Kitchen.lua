@@ -266,11 +266,8 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
         elseif carried and instanceof(item, "InventoryContainer") then
             take(item:getInventory(), true)
         end
-        -- What a fire needs: wood, tinder and a lighter or matches.
-        if not Fire.candidate(item) then return end
-        if Fire.isFuel(item) then result.fuel[#result.fuel + 1] = Fetch.entry(item, container, world, carried, holder) end
-        if Fire.isTinder(item) then result.tinder[#result.tinder + 1] = Fetch.entry(item, container, world, carried, holder) end
-        if Fire.isStarter(item) then result.starters[#result.starters + 1] = Fetch.entry(item, container, world, carried, holder) end
+        -- What a fire needs: fuel, and tinder and a starter, petrol, or a notched plank and a stick.
+        Fire.collect(item, result, function() return Fetch.entry(item, container, world, carried, holder) end)
     end
     take = function(container, carried)
         if fridgesOnly or not container or seen[container] then return end
@@ -983,12 +980,8 @@ function Kitchen.cook(player, state, now, entry, stove, pool, reason, found)
             skip(state)["stove:" .. stoveKey(object)] = now + Kitchen.policy.lookMs
             return false
         end
-        record.fire = {fuel = {}, tinder = plan.tinder and plan.tinder.item:getID(), starter = plan.starter and plan.starter.item:getID()}
-        for _, fuel in ipairs(plan.fuel) do
-            record.fire.fuel[#record.fire.fuel + 1] = fuel.item:getID()
-            want(fuel)
-        end
-        want(plan.tinder); want(plan.starter)
+        record.fire = Fire.record(plan)
+        for _, wanted in ipairs(Fire.wanted(plan)) do want(wanted) end
     end
     local load = 0
     for _, found in ipairs(fetch) do load = load + found.item:getActualWeight() end
@@ -1324,8 +1317,13 @@ end
 local function fireNeeds(found)
     local missing = {}
     if #found.fuel == 0 then missing[#missing + 1] = "wood" end
-    if #found.tinder == 0 then missing[#missing + 1] = "paper or twigs" end
-    if #found.starters == 0 then missing[#missing + 1] = "a lighter or matches" end
+    local starters, petrol = #found.starters > 0, #(found.petrol or {}) > 0
+    local kindle = #(found.kindling or {}) > 0 and #(found.sticks or {}) > 0
+    -- Any one way to light it will do: tinder and a starter, petrol and a starter, or a notched plank and a stick.
+    if not ((starters and (#found.tinder > 0 or petrol)) or kindle) then
+        if #found.tinder == 0 and not petrol then missing[#missing + 1] = "paper or twigs" end
+        if not starters then missing[#missing + 1] = "a lighter or matches" end
+    end
     if #missing == 0 then return "more wood" end
     return table.concat(missing, ", ")
 end

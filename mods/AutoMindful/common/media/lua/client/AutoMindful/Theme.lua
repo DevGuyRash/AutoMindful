@@ -26,6 +26,24 @@ Theme.colors = {
     bad = rgb(0.93, 0.43, 0.38),
 }
 
+-- Time left as colour: strong green when a span has just begun, through
+-- amber and red to dark red as it runs out. fraction: 1 full .. 0 empty.
+local timeStops = {
+    {0, rgb(0.62, 0.10, 0.08)}, {0.25, rgb(0.90, 0.30, 0.22)}, {0.5, rgb(0.96, 0.74, 0.28)}, {1, rgb(0.26, 0.82, 0.38)},
+}
+function Theme.timeLeft(fraction)
+    fraction = math.max(0, math.min(1, fraction or 0))
+    for index = 2, #timeStops do
+        local low, high = timeStops[index - 1], timeStops[index]
+        if fraction <= high[1] then
+            local t = (fraction - low[1]) / (high[1] - low[1])
+            local a, b = low[2], high[2]
+            return rgb(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t)
+        end
+    end
+    return timeStops[#timeStops][2]
+end
+
 -- Shipped art first; a client-only loader that restores Lua without mounting
 -- loose images gets a symbol from the game's own texture packs instead.
 local stock = {

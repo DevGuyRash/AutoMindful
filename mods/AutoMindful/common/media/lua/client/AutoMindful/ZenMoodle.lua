@@ -1,5 +1,7 @@
 -- Augment the existing Lifestyle HUD, not the player's moodle state.
 local Info = require "AutoMindful/WellnessInfo"
+local Clock = require "AutoMindful/Clock"
+local Theme = require "AutoMindful/Theme"
 local Zen = {}
 local numerals = {"I", "II", "III", "IV"}
 
@@ -39,6 +41,24 @@ local function wrap(lines, tm, font, text, maxWidth)
     if line then lines[#lines+1] = line end
 end
 
+local zenNames = {"Zen I", "Zen II", "Zen III", "Zen IV"}
+
+-- How long the tier showing now has left, live: the next drop, a bar that
+-- drains toward it (green when fresh, dark red when nearly gone), and when
+-- the moodle ends altogether. Real time is at normal game speed.
+function Zen.countdown(player, name)
+    local timer
+    if name == "Zen" then timer = Info.zenCountdown(player, Clock.untilTick(10))
+    else timer = Info.mindfulnessCountdown(player, (Clock.minuteOfDay() or 0) % 1) end
+    if not timer then return nil end
+    local function span(minutes) return Clock.game(minutes) .. " (" .. Clock.real(Clock.realSeconds(minutes)) .. " real)" end
+    local nextName = name == "Zen" and zenNames[timer.next] or timer.nextName
+    local rows = {{text = (nextName and ("Drops to " .. nextName) or "Ends") .. " in " .. span(timer.left)}}
+    rows[#rows + 1] = {bar = math.max(0, math.min(1, timer.left / timer.span))}
+    if nextName then rows[#rows + 1] = {text = "Gone in " .. span(timer.gone), muted = true} end
+    return rows, timer
+end
+
 local function draw(ui, player, name, title, description)
     local x, y, w, h = ui:getX(), ui:getY(), ui:getWidth(), ui:getHeight()
     if not ui:isMouseOver() then
@@ -69,13 +89,39 @@ local function draw(ui, player, name, title, description)
     local lines = {title}
     wrap(lines, tm, font, description, maxWidth)
     for _, line in ipairs(details) do wrap(lines, tm, font, line, maxWidth) end
+    -- Timer lines wrap like the rest, so a large font never runs past the box.
+    local timer = {}
+    for _, row in ipairs(Zen.countdown(player, name) or {}) do
+        if row.text then
+            local wrapped = {}
+            wrap(wrapped, tm, font, row.text, maxWidth)
+            for _, text in ipairs(wrapped) do timer[#timer + 1] = {text = text, muted = row.muted} end
+        else timer[#timer + 1] = row end
+    end
     local width = 0
     for _, line in ipairs(lines) do width = math.max(width, tm:MeasureStringX(font, line)) end
-    local height = lineHeight * #lines + 2 * pad
+    for _, row in ipairs(timer) do if row.text then width = math.max(width, tm:MeasureStringX(font, row.text)) end end
+    width = math.min(width, math.max(maxWidth, 1))
+    local barHeight = math.max(4, math.floor(lineHeight / 3))
+    local extra = 0
+    for _, row in ipairs(timer) do extra = extra + (row.bar and barHeight + 6 or lineHeight) end
+    local height = lineHeight * #lines + 2 * pad + (extra > 0 and extra + 4 or 0)
     local top = math.max(0, math.min(y + math.floor((h - height) / 2), getCore():getScreenHeight() - height)) - y
     ui:drawRect(right - width - 2 * pad, top, width + 2 * pad, height, 0.75, 0, 0, 0)
     for i, line in ipairs(lines) do
         ui:drawTextRight(line, right - pad, top + pad + (i-1) * lineHeight, 1, 1, 1, i == 1 and 1 or 0.85, font)
+    end
+    local cy = top + pad + #lines * lineHeight + 4
+    for _, row in ipairs(timer) do
+        if row.bar then
+            local c = Theme.timeLeft(row.bar)
+            ui:drawRect(right - pad - width, cy + 2, width, barHeight, 0.35, 1, 1, 1)
+            ui:drawRect(right - pad - width, cy + 2, width * row.bar, barHeight, 1, c.r, c.g, c.b)
+            cy = cy + barHeight + 6
+        else
+            ui:drawTextRight(row.text, right - pad, cy, 1, 1, 1, row.muted and 0.6 or 1, font)
+            cy = cy + lineHeight
+        end
     end
     return true
 end

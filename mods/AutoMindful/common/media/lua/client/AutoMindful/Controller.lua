@@ -4077,7 +4077,8 @@ function Controller.updateCarePractice(player,state,head,now,urgent,bedtime)
         local water=criticalNeed(player,"water")
             or (Needs.due(player,"water") and comfortSupplyAvailable(player,state,"water",true,true))
         local food=Needs.due(player,"food") and comfortSupplyAvailable(player,state,"food",true,true)
-        local priority=water or food or (not urgent and sleepAdmitted(bedtime)) or Needs.lowHealth(player)
+        -- Sleep only once Autopilot would really go to bed: the bedtime path waits for the sleep permit too.
+        local priority=water or food or (not urgent and (sleepAdmitted(bedtime) and (not state.recovery or Recovery.permit(player,state,"sleep",now)))) or Needs.lowHealth(player)
         local unblocked=meditationGate(player).ready
         if priority or unblocked or not Tiers.wellnessEnabled() or not Controller.mindfulnessEnabled()
                 or (Options.practiceCare and not Options.practiceCare()) or now-course.startedAt>=course.maxMs then
@@ -4090,7 +4091,7 @@ function Controller.updateCarePractice(player,state,head,now,urgent,bedtime)
     end
     if course.strictTier then
         -- A committed tier stays behind real care, not speculative loot.
-        local priority=urgent or sleepAdmitted(bedtime) or (course.target~="hunger" and Controller.firstHungerCourse(player,state))
+        local priority=urgent or (sleepAdmitted(bedtime) and (not state.recovery or Recovery.permit(player,state,"sleep",now))) or (course.target~="hunger" and Controller.firstHungerCourse(player,state))
             or (Needs.due(player,"food") and comfortSupplyAvailable(player,state,"food",true))
             or (Needs.due(player,"water") and comfortSupplyAvailable(player,state,"water",true))
             or (not state.contextVisible and (painAvailable(player,state,now) or lifestyleReady(player,state,now)
@@ -4108,7 +4109,7 @@ function Controller.updateCarePractice(player,state,head,now,urgent,bedtime)
     local ordinaryCare=state.recovery or minimumActive or hungerCare or bedtime~=nil
     local priority=(urgent and (not hungerCare or criticalNeed(player,"water") and (not state.noEmergencyDrink
             or comfortSupplyAvailable(player,state,"water",true)))) and "critical-food-or-water"
-        or (not urgent and sleepAdmitted(bedtime)) and "sleep"
+        or (not urgent and (sleepAdmitted(bedtime) and (not state.recovery or Recovery.permit(player,state,"sleep",now)))) and "sleep"
         or (not hungerCare and Controller.firstHungerCourse(player,state)) and "hunger-care"
         or (((hungerCare or state.recovery) and Needs.due(player,"food") or Needs.pressing(player,"food")) and comfortSupplyAvailable(player,state,"food",true)) and "food"
         or ((hungerCare or state.recovery) and Needs.due(player,"water") or Needs.pressing(player,"water")) and (comfortSupplyAvailable(player,state,"water",true)) and "water"
@@ -4507,7 +4508,7 @@ function Controller.update(player)
             local reason=urgent and "critical-food-or-water" or drinking and "water" or eating and "food"
                 or Needs.pressing(player,"food") and Controller.firstHungerCourse(player,state) and "hunger-care"
                 or pain and "painkillers-available" or reading and "boredom-reading" or lifestyle and "lifestyle-care"
-                or sleepAdmitted(bedtime) and "sleep" or (meditation >= 10 and not state.backgroundPractice
+                or (sleepAdmitted(bedtime) and (not state.recovery or Recovery.permit(player,state,"sleep",now))) and "sleep" or (meditation >= 10 and not state.backgroundPractice
                     and not state.tierGoal and not enduranceOnly) and "meditation-rank-cap"
             if reason then
                 breakForCare(player, state, "Taking a care break before resuming training.", reason)

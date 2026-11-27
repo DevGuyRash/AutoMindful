@@ -750,6 +750,9 @@ local function ownBatch(player, state, phase, message, addActions)
         Log.event(player,queued and "queue" or "queue.refused","phase",phase,"intent",message,"actions",table.concat(names," > "))
     end
     setPhase(state, phase, message, not queued and trainingPhase(phase) and "admission-retry" or nil)
+    -- Autopilot's own actions are not the player coming back: Presence still
+    -- reads every input meanwhile, so the hands-off clock carries on.
+    if queued and state.recovery then state.idleCarry=true end
     return queued
 end
 
@@ -977,10 +980,16 @@ function Controller.recoveryInterruption(player,state,queue)
     local level,unsafe
     if not square then level,unsafe="engaged","the survivor's area is not loaded"
     else level,unsafe=Recovery.readGuard(player,state) end
+    local clock=getTimestampMs()
     if level=="engaged" or state.guard and Recovery.optionalWork(player,state) then
         Recovery.parkTrip(state)
-        return "Autopilot paused: "..unsafe..".", "recovery-danger"
+        -- Held briefly: a chase reads engaged on one tick and clear on the next.
+        state.dangerHeld={untilMs=clock+3000,text="Autopilot paused: "..unsafe.."."}
+        return state.dangerHeld.text, "recovery-danger"
     end
+    local held=state.dangerHeld
+    if held and (not walking or clock>=held.untilMs or clock<held.untilMs-3000) then state.dangerHeld,held=nil,nil end
+    if walking and held then return held.text,"recovery-danger" end
     if walking then return "Autopilot is waiting for your movement to settle.","walking" end
     if player:isAiming() or (player:pressedAim() and not state.contextVisible and not state.inspectingUI) then
         return "Autopilot is waiting for you to stop aiming.","manual-input"
@@ -1119,12 +1128,13 @@ local function stand(player, state, message)
         else
             setPhase(state, "standing", "Waiting for the game to finish standing up.")
         end
+        state.postureSettling=now
         return false
     end
     if state.standTransitionSince then
         if not player:isSitting() then
             state.standStableSince = state.standStableSince or now
-            if now - state.standStableSince < 120 then return false end
+            if now - state.standStableSince < 120 then state.postureSettling=now; return false end
         end
         state.standTransitionSince, state.standStableSince = nil, nil
     end
@@ -1145,6 +1155,8 @@ local function stand(player, state, message)
                 setPhase(state,repeated and "recovering" or "standing",
                     repeated and "Yoga is waiting for a stable standing posture. Stand normally when ready."
                     or "Waiting for the standing posture to settle before Yoga.")
+                -- A settling moment holds the tick; waiting for the player to stand does not.
+                if not repeated then state.postureSettling=now end
                 return false
             end
             state.yogaStandCompletedAt,state.standStableSince=nil,nil
@@ -1184,6 +1196,8 @@ end
 local function yieldToPlayer(player, state, unexplained, walking, settling, pauseReason, pauseCause)
     local cause=pauseCause or walking and "walking" or state.inspectingUI and "inspection-open"
         or unexplained and "interrupted" or settling and "settling-action" or "current-action"
+    -- The player or danger took over: their time is not Autopilot's to carry on.
+    state.idleCarry=nil
     local entering = not state.yielding
     if entering then
         Controller.count(state,"yields")
@@ -2891,10 +2905,14 @@ local function practiceCare(player,state,now,m,y,meditation,yoga,training,readin
         state.utilityTierRetry=nil
         return Controller.runRecoveryTierCourse(player,state,course,now)
     end
+    state.postureSettling=nil
     if train(player,state,course.kind,false,course) then state.utilityTierRetry=nil; return true end
     -- Posture changes are their own native batches and must settle before
     -- choosing again. Failed admission is not a successful care attempt.
     if state.pending and #state.pending>0 then return true end
+    -- Standing up for this practice and waiting for the posture to settle: the
+    -- tick stops here, or resting would sit the survivor straight back down.
+    if state.recovery and state.postureSettling then return true end
     if (course.target=="hunger" or sleepForRelief or state.recovery)
             and (state.phase=="sitting" or state.phase=="between" and state.cycleUntil) then return true end
     if state.practiceCare then
@@ -2950,8 +2968,16 @@ end
 local function sampleRecoveryIdle(state,now)
     local previous=state.recoveryIdleLast
     if not previous or now<previous or now-previous>=recoveryPolicy.quietGapMs then
-        state.recoveryIdleAt,state.recoverySitAttempted=now,nil
+        -- The pause was one of Autopilot's own actions (standing up, a practice,
+        -- a bite): the player was no more present than before, so the clock
+        -- carries on. A takeover clears idleCarry; a very long gap does not count.
+        if state.idleCarry and state.recoveryIdleAt and now>=state.recoveryIdleAt and previous and now>=previous and now-previous<900000 then
+            state.recoverySitAttempted=nil
+        else
+            state.recoveryIdleAt,state.recoverySitAttempted=now,nil
+        end
     end
+    state.idleCarry=nil
     state.recoveryIdleLast=now
     state.recoveryReadyToScout=Recovery.permit(state.player,state,"early",now)
 end
@@ -2963,7 +2989,9 @@ local function restNaturally(player,state,endurance)
     end
     -- Standing still already allows native recovery near full; don't
     -- toggle posture for the last fraction. Never unseat or hold a queue.
-    if not state.recoverySitAttempted
+    local stoodAt=state.yogaStandCompletedAt
+    local justStood=stoodAt and getTimestampMs()-stoodAt>=0 and getTimestampMs()-stoodAt<5000
+    if not state.recoverySitAttempted and not justStood
             and endurance<recoveryPolicy.sitBelow
             and not player:isSitting() and not player:isSitOnGround() and not player:isSittingOnFurniture()
             and not player:getModData().IsSittingOnSeat and not (player.isGettingUp and player:isGettingUp()) then

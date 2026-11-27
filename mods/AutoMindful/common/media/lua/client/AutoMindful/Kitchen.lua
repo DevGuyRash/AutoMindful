@@ -233,6 +233,8 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
         -- For crafts: every kind of thing around, every container it is in, and the nearest counter.
         types = {}, containers = {}, surface = nil}
     if not player:getSquare() then return result end
+    -- Too spent to work a notched plank, as the game's own menu judges it.
+    result.tired = not select(2, pcall(function() return player:getStats():isAboveMinimum(CharacterStat.ENDURANCE) end)) or nil
     local seen, take = {}, nil
     -- One item, wherever it is: in a container, a bag, or on the floor.
     local function classify(item, container, world, carried, floor, holder, woodOnly, body)
@@ -243,8 +245,8 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             end
             return
         elseif woodOnly then
-            -- From the yard only wood: a woodpile is often outside.
-            if Fire.isFuel(item) then result.fuel[#result.fuel + 1] = Fetch.entry(item, container, world, carried, holder) end
+            -- From the yard only what a fire takes: a woodpile, a branch to rub a plank with, often outside.
+            Fire.collect(item, result, function() return Fetch.entry(item, container, world, carried, holder) end)
             return
         end
         local free = not (rejected and rejected[item:getID()] and now < rejected[item:getID()])

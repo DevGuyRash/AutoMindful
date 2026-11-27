@@ -21,12 +21,13 @@ local ranks = {
     Twigs = 1, Splinters = 1, Pinecone = 1, TreeBranch = 1, TreeBranch2 = 1, WoodenStick = 1, WoodenStick2 = 1,
     LargeBranch = 1, UnusableWood = 1,
     -- Rubbish: yesterday's paper, empty bags, napkins, a tongue depressor.
-    Newspaper = 2, PaperBag = 2, Paperbag_Jays = 2, GroceryBag1 = 2, GroceryBag2 = 2, GroceryBag3 = 2, GroceryBag4 = 2,
-    Plasticbag = 2, PaperNapkins2 = 2, TongueDepressor = 2,
+    Newspaper = 2, PaperBag = 2, Paperbag_Jays = 2, PaperNapkins2 = 2, TongueDepressor = 2,
     -- Made to be burned, but worth keeping for when it is needed.
     Charcoal = 3, CharcoalCrafted = 3, Firewood = 3,
     -- Rags: a dirty one before a clean one, which could still dress a wound.
     RippedSheetsDirty = 4, RippedSheets = 4.5,
+    -- Carrier bags still carry things: after the rags.
+    GroceryBag1 = 4.8, GroceryBag2 = 4.8, GroceryBag3 = 4.8, GroceryBag4 = 4.8, Plasticbag = 4.8,
     Sheet = 5,
     -- Building material: only when nothing else will do.
     Plank = 6, Log = 7,
@@ -55,14 +56,22 @@ end
 -- How little it is worth (lower is burned first); nil: never burned.
 function Fire.rank(item) return ranks[typeOf(item) or ""] end
 
+-- Looked up once: the pre-filter runs on nearly every item in every container.
+local tags
 local function tagged(item, name)
-    local ok, yes = pcall(function() return ItemTag[name] ~= nil and item:hasTag(ItemTag[name]) end)
-    return ok and yes == true
+    if not tags then
+        local ok, found = pcall(function() return {START_FIRE = ItemTag.START_FIRE, PETROL = ItemTag.PETROL} end)
+        tags = ok and found or {}
+    end
+    local tag = tags[name]
+    return tag ~= nil and item.hasTag ~= nil and item:hasTag(tag) == true
 end
 
 -- Starters, the cheapest first: anything the game tags as starting a fire.
 local starterRanks = {Matches = 1, Matchbox = 1, LighterDisposable = 2, MagnesiumFirestarter = 3, Lighter = 4,
     Lighter_Battery = 4, LighterBBQ = 5, CandleLit = 6}
+-- Tagged as starting fires, but wanted for themselves: refills and paint.
+local notStarters = {LighterFluid = true, SprayPaint = true}
 function Fire.starterRank(item) return starterRanks[typeOf(item) or ""] or 5 end
 -- A notched plank and a stick or branch to work it: no starter needed.
 local sticks = {TreeBranch = true, TreeBranch2 = true, WoodenStick = true, WoodenStick2 = true}
@@ -76,8 +85,10 @@ end
 function Fire.isFuel(item) return ranks[typeOf(item) or ""] ~= nil and spare(item) and camping("isValidFuel", item) end
 function Fire.isTinder(item) return tinders[typeOf(item) or ""] == true and spare(item) and camping("isValidTinder", item) end
 function Fire.isStarter(item)
-    if not item or not spare(item) then return false end
+    -- A lighter in the hand is still a lighter; a favourite is kept.
+    if not item or Grid.favorite(item) then return false end
     local kind = typeOf(item)
+    if notStarters[kind or ""] then return false end
     local ok, uses = pcall(function() return item:getCurrentUses() end)
     return (kind == "Lighter" or kind == "Matches" or tagged(item, "START_FIRE")) and ok and type(uses) == "number" and uses > 0
 end
@@ -168,14 +179,20 @@ function Fire.plan(object, minutes, materials)
         if tinder and starter then
             plan.method, plan.tinder, plan.starter = "tinder", tinder, starter
             keep[tinder.item] = true
-            -- Only a campfire gets fuel from its tinder.
-            if Fire.campfire(object) then have = have + Fire.duration(tinder.item) end
+            -- The game adds the tinder's own fuel as it lights, campfire or fireplace.
+            have = have + Fire.duration(tinder.item)
         elseif starter and materials.petrol and materials.petrol[1] then
-            plan.method, plan.starter, plan.petrol = "petrol", starter, materials.petrol[1]
-        elseif materials.kindling and materials.kindling[1] and materials.sticks and materials.sticks[1] then
+            -- The lightest can: lighting takes a splash, not the generator's supply.
+            local petrol = least(materials.petrol, function(item)
+                local ok, weight = pcall(function() return item:getActualWeight() end)
+                return ok and weight or 99
+            end)
+            plan.method, plan.starter, plan.petrol = "petrol", starter, petrol
+        elseif materials.kindling and materials.kindling[1] and materials.sticks and materials.sticks[1] and not materials.tired then
             -- No starter at all: a notched plank, slow and tiring, but it lights.
             plan.method, plan.plank, plan.stick = "kindle", materials.kindling[1], materials.sticks[1]
-            keep[plan.stick.item] = true
+            -- Every stick is kept for rubbing: they break, and the next go needs one.
+            for _, entry in ipairs(materials.sticks) do keep[entry.item] = true end
         else
             return nil
         end
@@ -189,18 +206,30 @@ function Fire.plan(object, minutes, materials)
         end
     end
     -- The least worth first; within that, what burns longest, so fewer go in.
-    table.sort(fuel, function(a, b)
+    -- Should small pieces leave no room under the fire's cap for what is
+    -- needed, the longest-burning first instead, worth or not.
+    local start = have
+    local function fill(order)
+        table.sort(fuel, order)
+        local chosen, total = {}, start
+        for _, piece in ipairs(fuel) do
+            if total >= need then break end
+            if piece.minutes > 0 and total + piece.minutes <= cap then
+                chosen[#chosen + 1] = piece.entry
+                total = total + piece.minutes
+            end
+        end
+        return total >= need and chosen or nil
+    end
+    local chosen = fill(function(a, b)
         if a.rank ~= b.rank then return a.rank < b.rank end
         return a.minutes > b.minutes
+    end) or fill(function(a, b)
+        if a.minutes ~= b.minutes then return a.minutes > b.minutes end
+        return a.rank < b.rank
     end)
-    for _, piece in ipairs(fuel) do
-        if have >= need then break end
-        if piece.minutes > 0 and have + piece.minutes <= cap then
-            plan.fuel[#plan.fuel + 1] = piece.entry
-            have = have + piece.minutes
-        end
-    end
-    if have < need then return nil end
+    if not chosen then return nil end
+    plan.fuel = chosen
     return plan
 end
 
@@ -263,25 +292,64 @@ function Fire.start(player, object, plan, dish, lit)
     else
         return
     end
+    local tries, credited = 0, false
+    local function credit()
+        if lit and not credited then credited = true; lit() end
+    end
     local function queue(action)
-        action = only(action, function() return ours() and not Fire.lit(object) end)
+        tries = tries + 1
+        local plank, stick = action.plank, action.item
+        local start = action.start
+        function action:start(...)
+            self.autoMindfulStarted = true
+            if start then return start(self, ...) end
+        end
+        local valid = action.isValid
+        function action:isValid(...)
+            -- A fireplace's plank lights it mid-action and the game then ends the
+            -- action without finishing it: caught while ours is running, it is ours.
+            if Fire.lit(object) then
+                if self.autoMindfulStarted and method == "kindle" then credit() end
+                return false
+            end
+            -- A plank attempt needs its own stick still in the hands: one that broke is gone.
+            if method == "kindle" and not (stick and stick:getContainer() == inventory and plank:getContainer() == inventory) then return false end
+            return ours() and (not valid or valid(self, ...))
+        end
         local perform = action.perform
         function action:perform(...)
-            local result = perform(self, ...)
+            -- The game's campfire plank queues its own next go, unowned and
+            -- with any stick: ours instead, a few at most.
+            local add, result, args = ISTimedActionQueue.add, nil, {...}
+            if method == "kindle" then
+                ISTimedActionQueue.add = function(next)
+                    if next and next.Type == "ISLightFromKindle" then return nil end
+                    return add(next)
+                end
+            end
+            local ok, failure = pcall(function() result = perform(self, (table.unpack or unpack)(args)) end)
+            ISTimedActionQueue.add = add
+            if not ok then error(failure) end
             -- Ours only if it caught: rubbing a plank may well fail.
-            if lit and (method ~= "kindle" or Fire.lit(object)) then lit() end
+            if method ~= "kindle" or Fire.lit(object) then credit() end
+            if method == "kindle" and not Fire.lit(object) and tries < Fire.policy.kindleTries then
+                local rub = stick and stick:getContainer() == inventory and stick or nil
+                if not rub then
+                    local items = inventory:getItems()
+                    for index = 0, items:size() - 1 do
+                        local candidate = items:get(index)
+                        if not rub and Fire.isStick(candidate) then rub = candidate end
+                    end
+                end
+                if rub and plank:getContainer() == inventory then
+                    queue(campfire and ISLightFromKindle:new(player, plank, rub, campfire) or ISBBQLightFromKindle:new(player, plank, rub, object))
+                end
+            end
             return result
         end
         ISTimedActionQueue.add(action)
     end
     queue(light)
-    -- A plank seldom catches at the first go: a few more, each skipped once it has.
-    if method == "kindle" then
-        local plank, stick = held(plan.plank), held(plan.stick)
-        for _ = 2, Fire.policy.kindleTries do
-            queue(campfire and ISLightFromKindle:new(player, plank, stick, campfire) or ISBBQLightFromKindle:new(player, plank, stick, object))
-        end
-    end
 end
 
 function Fire.stop(player, object)

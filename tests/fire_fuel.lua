@@ -95,6 +95,9 @@ do
     plan = Fire.plan(fire(false, 0), 30, {fuel = {{item = stick}, {item = item("Log")}}, kindling = entries({"PercedWood"}), sticks = {{item = stick}}})
     assert(plan.method == "kindle" and plan.stick.item == stick)
     for _, entry in ipairs(plan.fuel) do assert(entry.item ~= stick, "the stick works the plank, it is not burned") end
+    local spare = item("WoodenStick2")
+    plan = Fire.plan(fire(false, 0), 30, {fuel = {{item = spare}, {item = item("Log")}}, kindling = entries({"PercedWood"}), sticks = {{item = stick}, {item = spare}}})
+    for _, entry in ipairs(plan.fuel) do assert(entry.item ~= spare, "a spare stick is kept for the next go") end
     -- Nothing to light it with: no plan.
     assert(Fire.plan(fire(false, 0), 30, {fuel = entries({"Log"}), tinder = entries({"Newspaper"})}) == nil)
     -- Written down and fetched: everything the method takes.
@@ -107,12 +110,29 @@ do
     -- The game's own actions for each method; a plank's light is ours only if it caught.
     local queued = {}
     ISTimedActionQueue = {add = function(action) queued[#queued + 1] = action end}
-    local function action(name) return {new = function(_, ...) return {Type = name, args = {...}, isValid = function() return true end,
-        perform = function() end} end} end
+    local stockRetry = false
+    local function action(name) return {new = function(_, ...)
+        local made = {Type = name, args = {...}, isValid = function() return true end}
+        if name == "kindle" then made.plank, made.item = select(2, ...) end
+        -- The game's campfire plank queues another go by itself.
+        made.perform = function() if stockRetry then ISTimedActionQueue.add({Type = "ISLightFromKindle"}) end end
+        return made
+    end} end
     ISBBQLightFromPetrol, ISBBQLightFromKindle, ISBBQLightFromLiterature, ISBBQAddFuel = action("petrol"), action("kindle"), action("tinder"), action("fuel")
+    local held = {}
     local inventory = {}
-    local player = {getInventory = function() return {getItemById = function(_, id) return inventory[id] end} end}
-    local function hold(kind, fields) local thing = item(kind, fields); inventory[thing:getID()] = thing; return thing end
+    function inventory:getItemById(id) return held[id] end
+    function inventory:getItems()
+        local list = {}
+        for _, thing in pairs(held) do list[#list + 1] = thing end
+        return {size = function() return #list end, get = function(_, index) return list[index + 1] end}
+    end
+    local player = {getInventory = function() return inventory end}
+    local function hold(kind, fields)
+        local thing = item(kind, fields); held[thing:getID()] = thing
+        function thing:getContainer() return held[self:getID()] and inventory or nil end
+        return thing
+    end
     local lit, burning = 0, false
     local place = {isLit = function() return burning end, getFuelAmount = function() return 0 end,
         getContainer = function() return {contains = function() return true end} end}
@@ -120,12 +140,53 @@ do
     Fire.start(player, place, {method = "petrol", fuel = {}, starter = starter:getID(), petrol = petrol:getID()}, nil, function() lit = lit + 1 end)
     assert(queued[1].Type == "petrol" and queued[1].args[2] == place and queued[1].args[3] == starter and queued[1].args[4] == petrol)
     queued[1]:perform(); assert(lit == 1)
-    queued = {}
+    -- A notched plank: one go at a time, the next only while it has not caught, three at most.
+    queued, stockRetry = {}, true
     local plank, stick = hold("PercedWood"), hold("TreeBranch2")
     Fire.start(player, place, {method = "kindle", fuel = {}, plank = plank:getID(), stick = stick:getID()}, nil, function() lit = lit + 1 end)
-    assert(queued[1].Type == "kindle" and queued[1].args[2] == plank and queued[1].args[3] == stick and queued[1].args[4] == place)
-    assert(#queued == 3, "a plank gets three goes")
-    queued[1]:perform(); assert(lit == 1, "rubbed but did not catch: not ours")
-    burning = true; queued[1]:perform(); assert(lit == 2)
+    assert(#queued == 1 and queued[1].Type == "kindle" and queued[1].args[2] == plank and queued[1].args[3] == stick and queued[1].args[4] == place)
+    queued[1]:perform()
+    assert(lit == 1, "rubbed but did not catch: not ours")
+    assert(#queued == 2 and queued[2].Type == "kindle", "the game's own unowned retry is replaced by ours")
+    -- The stick broke on that go: the next takes another stick in the hands, or there is no next.
+    held[stick:getID()] = nil
+    assert(not queued[2]:isValid(), "a broken stick rubs nothing")
+    local spare = hold("WoodenStick2")
+    queued[2]:perform()
+    assert(#queued == 3 and queued[3].args[3] == spare)
+    burning = true; queued[3]:perform(); assert(lit == 2 and #queued == 3, "caught: ours, and no more goes")
+    -- A fireplace lights mid-action and the game ends it unfinished: still ours.
+    burning, queued = false, {}
+    local plank2, stick2 = hold("PercedWood"), hold("TreeBranch2")
+    Fire.start(player, place, {method = "kindle", fuel = {}, plank = plank2:getID(), stick = stick2:getID()}, nil, function() lit = lit + 1 end)
+    queued[1]:start()
+    burning = true
+    assert(not queued[1]:isValid() and lit == 3, "caught while rubbing: ours")
 end
 print("PASS each way of lighting uses the game's own action")
+
+do
+    -- Twigs first would leave no room under the cap for the log the fire needs:
+    -- then the longest-burning first instead.
+    local plan = Fire.plan(fire(true, 0), 450, {fuel = entries({"Twigs", "Twigs", "Log", "Plank"})})
+    assert(plan and kinds(plan) == "Log,Plank", plan and kinds(plan))
+    -- A fireplace counts its tinder's own fuel, as the game adds it when lighting.
+    plan = Fire.plan(fire(false, 50), 30, {fuel = entries({"Log"}), tinder = entries({"Newspaper"}), starters = {{item = item("Matches")}}})
+    assert(plan and #plan.fuel == 0, "50 minutes there and 15 from the paper cover an hour")
+end
+print("PASS a load that fits under the cap is found, and tinder counts as fuel")
+
+do
+    -- Refills and spray paint carry the game's fire tag but are kept; a lighter in the hand still counts.
+    assert(not Fire.isStarter(item("LighterFluid", {tags = {startfire = true}})) and not Fire.isStarter(item("SprayPaint", {tags = {startfire = true}})))
+    assert(Fire.isStarter(item("Lighter", {worn = true})))
+    -- Too spent to work a plank: no plank plan.
+    local stick = item("TreeBranch2")
+    assert(Fire.plan(fire(false, 0), 30, {fuel = entries({"Log"}), kindling = entries({"PercedWood"}), sticks = {{item = stick}}, tired = true}) == nil)
+    -- The lightest petrol can, not the jerry can.
+    local jerry = item("JerryCan", {petrol = true}); function jerry:getActualWeight() return 20 end
+    local can = item("PetrolCan", {petrol = true}); function can:getActualWeight() return 3 end
+    local plan = Fire.plan(fire(false, 0), 30, {fuel = entries({"Log"}), starters = {{item = item("Lighter")}}, petrol = {{item = jerry}, {item = can}}})
+    assert(plan.petrol.item == can)
+end
+print("PASS refills and paint are kept, no plank when spent, the lightest petrol can")

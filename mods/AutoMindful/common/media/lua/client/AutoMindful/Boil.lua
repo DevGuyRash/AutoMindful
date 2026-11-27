@@ -249,7 +249,9 @@ function Boil.step(player, state, now, entry, stove)
     if entry.stage == "boil-fetch" then
         local missing = {}
         for _, wanted in ipairs(source and source.fetch or {}) do
-            if not inventory:getItemById(wanted.item:getID()) then missing[#missing + 1] = wanted end
+            -- In the main inventory, where the game's actions look; a bag does not count.
+            local item = inventory:getItemById(wanted.item:getID())
+            if not item or item:getContainer() ~= inventory then missing[#missing + 1] = wanted end
         end
         if not source then
             if not pot then return fail(player, state, now, entry, stove, "reloaded") end

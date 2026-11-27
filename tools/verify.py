@@ -110,6 +110,8 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
         compiler = shutil.which("javac")
         if not java.is_file() or not jar.is_file() or not compiler:
             raise RuntimeError("Native check requires the installed game JAR, bundled JVM and JDK 25 javac")
+        # The nutrition rules Nutrition.lua runs forward, against the game's own bytecode.
+        checks.append(check(evidence, "game-nutrition-rules", [sys.executable, "tools/game_rules.py", str(game)]))
         with tempfile.TemporaryDirectory(prefix="automindful-kahlua-") as temporary:
             classes = Path(temporary)
             checks.append(check(evidence, "native-compile", [compiler, "--release", "25", "-cp", str(jar),

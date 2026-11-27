@@ -171,7 +171,16 @@ def derive(root):
         r"if playerData\.LSMoodles\[value\] and \(playerData\.LSMoodles\[value\]\.Value < ([\d.]+)\) then"
         r"\s*playerData\.LSMoodles\[value\]\.Value = 0",
         ten_minutes, "Zen clock step and cutoff"))
-    min_level = float(exact(r"elseif value >= ([\d.]+) then\s*return 1", moodles, "Moodle activation floor"))
+    levels = exact(r"if value >= ([\d.]+) then\s*return 4\s*elseif value >= ([\d.]+) then\s*return 3\s*"
+                   r"elseif value >= ([\d.]+) then\s*return 2\s*elseif value >= ([\d.]+) then\s*return 1",
+                   moodles, "Moodle HUD tiers")
+    min_level = float(levels[3])
+    if [float(level) for level in levels] != sorted((float(level) for level in levels), reverse=True):
+        raise ValueError("Unrecognized Moodle HUD tiers")
+    zen_step, zen_floor = exact(
+        r"\.Value = playerData\.LSMoodles\[value\]\.Value - ([\d.]+)\s*end\s*"
+        r"if playerData\.LSMoodles\[value\] and \(playerData\.LSMoodles\[value\]\.Value < ([\d.]+)\) then",
+        ten_minutes, "Zen clock step and cutoff text")
     if not 0 < delta < min_level <= cutoff <= grant <= 1.0:
         raise ValueError("Unrecognized Zen decay thresholds")
     zen_ticks = {}
@@ -277,6 +286,7 @@ def derive(root):
                f"    meditationEarlyStress={{{disc},{couch},{divisor},{calm_boredom},{calm_buffer},{calm_stress}}},",
                f"    meditationLengths={lua_dict(lengths)},",
                f"    noFallRank={no_fall_rank},", "    zenTickMinutes=10,",
+               f"    zenDecay={{step={zen_step},floor={zen_floor},levels={{{','.join(reversed(levels))}}}}},",
                f"    zenTicks={lua_dict(zen_ticks)},", f"    yogaNewPoses={lua_dict(poses)},",
                f"    yogaFallRoll={lua_dict(hardest_roll)},", f"    yogaFallRankOffset={step},", f"    yogaFallCap={cap},",
                "    yogaFallScale={" + enum_values("getYogaSandboxFailChance") + "},",

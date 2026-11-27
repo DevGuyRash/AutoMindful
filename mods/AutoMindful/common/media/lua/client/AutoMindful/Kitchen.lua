@@ -12,6 +12,7 @@ local Fluids = require "AutoMindful/Fluids"
 local Diet = require "AutoMindful/Diet"
 local Progress = require "AutoMindful/Progress"
 local Dish = require "AutoMindful/Dish"
+local Craft = require "AutoMindful/Craft"
 local Fetch = require "AutoMindful/Fetch"
 local Fire = require "AutoMindful/Fire"
 local Alerts = require "AutoMindful/Alerts"
@@ -31,9 +32,11 @@ end
 
 function Kitchen.bind(parts)
     P = parts
-    Dish.bind({write = function(player, entry) Kitchen.write(player, entry) end, ledger = Kitchen.ledger, heatKind = Kitchen.heatKind, accepts = Kitchen.accepts,
+    local shared = {write = function(player, entry) Kitchen.write(player, entry) end, ledger = Kitchen.ledger, heatKind = Kitchen.heatKind, accepts = Kitchen.accepts,
         fueled = function(object) return Kitchen.isFueled(object) end,
-        place = function(...) return Kitchen.place(...) end}, parts)
+        place = function(...) return Kitchen.place(...) end}
+    Dish.bind(shared, parts)
+    Craft.bind(shared, parts)
 end
 
 -- ------------------------------------------------------------------ the food
@@ -216,7 +219,9 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
     -- heats: every stove or grill seen, on or off, busy or not.
     -- bases: what a dish can start from; ingredients: what recipes take; dishes: made dishes ready to eat.
     local result = {stoves = {}, food = {}, fridges = {}, bases = {}, ingredients = {}, taps = {}, ready = 0, dishes = 0, heats = 0,
-        fuel = {}, tinder = {}, starters = {}, frozen = {}, freezers = {}, heatList = {}}
+        fuel = {}, tinder = {}, starters = {}, frozen = {}, freezers = {}, heatList = {},
+        -- For crafts: every kind of thing around, every container it is in, and the nearest counter.
+        types = {}, containers = {}, surface = nil}
     if not player:getSquare() then return result end
     local seen, take = {}, nil
     -- One item, wherever it is: in a container, a bag, or on the floor.
@@ -233,6 +238,7 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             return
         end
         local free = not (rejected and rejected[item:getID()] and now < rejected[item:getID()])
+        if free then result.types[item:getFullType()] = true end
         -- For a dish: what it starts from (a pot, a pan, bread slices) and what goes in.
         if free and Dish.recipesFor(item) then result.bases[#result.bases + 1] = Fetch.entry(item, container, world, carried, holder) end
         if free and Dish.ingredient(item) then result.ingredients[#result.ingredients + 1] = Fetch.entry(item, container, world, carried, holder) end
@@ -258,6 +264,7 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
     take = function(container, carried)
         if fridgesOnly or not container or seen[container] then return end
         seen[container] = true
+        result.containers[#result.containers + 1] = container
         local items = container:getItems()
         for index = 0, items:size() - 1 do classify(items:get(index), container, nil, carried) end
     end
@@ -281,6 +288,11 @@ function Kitchen.scan(player, rejected, now, fridgesOnly)
             -- Looked up once: the drivers are tried in turn.
             local heat = heatOf(object)
             local outside = yard and not heat
+            -- The nearest place to craft on, as the game judges it (the walk there comes later).
+            if not outside and not fridgesOnly and object.isGenericCraftingSurface and (not result.surface or distance < result.surface.distance) then
+                local ok, usable = pcall(object.isGenericCraftingSurface, object)
+                if ok and usable then result.surface = {object = object, square = square, distance = distance} end
+            end
             if not outside and not fridgesOnly and Dish.isTap(object) then
                 result.taps[#result.taps + 1] = {object = object, square = square, distance = distance}
             end
@@ -495,6 +507,11 @@ function Kitchen.duty(player, state, now, walk)
         if stove then watched[player] = now end
         return Dish.step(player, state, now, entry, stove)
     end
+    -- A craft for a dish: no stove at all.
+    if Craft.handles(entry.stage) then
+        if not state or state.pending then return false end
+        return Craft.step(player, state, now, entry)
+    end
     if not stove then
         -- Nothing lit yet and no stove any more: the plan is over.
         if not entry.lit and state and (entry.stage ~= "cooking" and entry.stage ~= "finishing") then
@@ -676,6 +693,17 @@ function Kitchen.meal(player, state, now, preferring)
         Log.event(player, "dish.none", "reason", "meal", "bases", why.bases, "ingredients", why.ingredients,
             "noWater", why.dry, "noHeat", why.cold, "cooked", why.cooked, "tooFew", why.few)
     end
+    -- A craft first when what it makes leads to a better meal: a pie crust, a pot
+    -- of pasta, an opened can, a hot dog.
+    local prep, look
+    if Options.makeSoup() then prep, look = Craft.best(player, found, plan, dishHeat(found), skip(state), now) end
+    if look and look.options > 0 then
+        Log.event(player, "craft.look", "options", look.options, "best", look.top, "score", look.score, "toBeat", look.bar,
+            "chosen", prep and prep.option.def.name)
+    elseif look then
+        Log.event(player, "craft.look", "options", 0, "surface", look.surface)
+    end
+    if prep and Craft.start(player, state, now, prep) then state.kitchenNotice = nil; return true end
     if plan then
         state.kitchenNotice = nil
         if Dish.start(player, state, now, plan, "meal") then return true end
@@ -919,6 +947,7 @@ function Kitchen.settle(player, state, now, cut)
     local entry = Kitchen.ledger(player)
     if not entry then return end
     if Dish.handles(entry.stage) then return Dish.settle(player, state, now, cut) end
+    if Craft.handles(entry.stage) then return Craft.settle(player, state, now, cut) end
     local stove = stoveAt(entry)
     local dish = dishIn(stove, entry)
     if entry.stage == "fetching" then
@@ -1069,7 +1098,9 @@ function Kitchen.ended(player)
     local entry = Kitchen.ledger(player)
     if not entry then return nil end
     local stove = stoveAt(entry)
-    if entry.stage == "fetching" or entry.stage == "ready" or Dish.handles(entry.stage) then Dish.forget(player); write(player, nil); return nil end
+    if entry.stage == "fetching" or entry.stage == "ready" or Dish.handles(entry.stage) or Craft.handles(entry.stage) then
+        Dish.forget(player); Craft.forget(player); write(player, nil); return nil
+    end
     if not stove or not isOn(stove) or not entry.lit then return nil end
     if adjacent(player, stove:getSquare()) and not player:isDead() then
         toggle(player, stove, false)

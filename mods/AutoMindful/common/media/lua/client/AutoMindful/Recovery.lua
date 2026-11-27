@@ -324,7 +324,10 @@ function Recovery.firstAid(player, state, now)
                 -- move it: held back a while, so something else may serve.
                 local taken
                 if entry.entry.world and player:getInventory():hasRoomFor(player, entry.item) then
-                    taken = Fetch.queue(player, entry.entry) ~= nil
+                    -- Several grabs merge into one action: whether each was
+                    -- taken is read afterwards, from the inventory.
+                    Fetch.queue(player, entry.entry)
+                    taken = true
                 else taken = Supplies.transfer(player, entry.item, loan) end
                 if not taken then
                     state.rejected[entry.item:getID()] = now + 60000

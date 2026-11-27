@@ -463,6 +463,12 @@ function FirstAid.plan(player, options)
             else step = chain[1] end
             step.part, step.danger, step.urgent, step.uses = part, wound.danger, urgent, uses
             step.chain, step.waits = table.concat(kinds, ">"), waits
+            -- What the other wounds will take stays borrowed too.
+            for _, other in ipairs(list) do
+                if other ~= wound then
+                    for _, entry in ipairs(supplies(treatments(player, other.part, fresh()))) do uses[entry.item] = true end
+                end
+            end
             return step
         end
     end

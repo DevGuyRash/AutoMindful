@@ -33,6 +33,7 @@ local ScoutEgress = require "AutoMindful/ScoutEgress"
 local Log = require "AutoMindful/Log"
 local Snap = require "AutoMindful/Snapshot"
 local Recovery = require "AutoMindful/Recovery"
+local Coexist = require "AutoMindful/Coexist"
 require "TimedActions/WalkToTimedAction"
 
 AutoMindful = AutoMindful or {}
@@ -4109,6 +4110,8 @@ function Controller.updateCarePractice(player,state,head,now,urgent,bedtime)
     local ordinaryCare=state.recovery or minimumActive or hungerCare or bedtime~=nil
     local priority=(urgent and (not hungerCare or criticalNeed(player,"water") and (not state.noEmergencyDrink
             or comfortSupplyAvailable(player,state,"water",true)))) and "critical-food-or-water"
+        -- Another automation took the survivor: a relief practice gives way, or its queue never empties.
+        or (state.recovery and not urgent and Coexist.owner(player)) and "other-automation"
         or (not urgent and (sleepAdmitted(bedtime) and (not state.recovery or Recovery.permit(player,state,"sleep",now)))) and "sleep"
         or (not hungerCare and Controller.firstHungerCourse(player,state)) and "hunger-care"
         or (((hungerCare or state.recovery) and Needs.due(player,"food") or Needs.pressing(player,"food")) and comfortSupplyAvailable(player,state,"food",true)) and "food"

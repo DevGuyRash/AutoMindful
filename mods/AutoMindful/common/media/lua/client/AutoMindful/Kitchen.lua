@@ -563,7 +563,8 @@ function Kitchen.duty(player, state, now, walk)
     end
     if not dish and not on then
         Alerts.clear(player, "stove")
-        if entry.cooked and #entry.cooked > 0 then
+        -- A hot drink is for drinking now, not for the fridge.
+        if entry.cooked and #entry.cooked > 0 and entry.reason ~= "drink" then
             -- Added to what is still waiting for the fridge, never in its place.
             local list, seen = {}, {}
             for _, id in ipairs(player:getModData().AutoMindfulLeftovers or {}) do list[#list + 1], seen[id] = id, true end

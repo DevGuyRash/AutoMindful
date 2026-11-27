@@ -356,15 +356,32 @@ function Dish.recipe(player, base, name)
     return nil
 end
 
+-- Keeps for years (a coffee tin, salt, a box of pasta): not for the fridge.
+local function lasting(item)
+    local ok, limit = pcall(function() return item:getOffAgeMax() end)
+    return ok and type(limit) == "number" and limit >= 10000
+end
+
+-- Lasting ingredients borrowed from a cupboard go back there, remainders and
+-- all, once the dish no longer needs them: the controller's loans return them.
+local function giveBack(player, state)
+    local sources = Dish.sources and Dish.sources[player]
+    for _, item in ipairs(sources and sources.lent or {}) do
+        if P and P.lend then P.lend(player, state, item, false) end
+    end
+    if sources then sources.lent = nil end
+end
+
 -- What was fetched for the dish and is still in the pockets goes on the list for
--- the fridge, rather than spoiling there.
+-- the fridge, rather than spoiling there. Lasting things go back to their cupboard instead.
 local function putAway(player, entry)
     local inventory, list, seen = player:getInventory(), {}, {}
     for _, id in ipairs(player:getModData().AutoMindfulLeftovers or {}) do list[#list + 1], seen[id] = id, true end
     local added = false
     for _, group in ipairs({entry.ingredients or {}, entry.dropped or {}}) do
         for _, id in ipairs(group) do
-            if entry.fetched and entry.fetched[tostring(id)] and not seen[id] and inventory:getItemById(id) then
+            local item = inventory:getItemById(id)
+            if entry.fetched and entry.fetched[tostring(id)] and not seen[id] and item and not lasting(item) then
                 list[#list + 1], seen[id], added = id, true, true
             end
         end
@@ -384,6 +401,7 @@ end
 local function fail(player, state, now, entry, why)
     Log.event(player, "dish.giveup", "why", why, "stage", entry.stage, "recipe", entry.recipe)
     putAway(player, entry)
+    giveBack(player, state)
     release(state, entry)
     state.kitchenSkip = state.kitchenSkip or {}
     for _, id in ipairs(entry.ingredients or {}) do state.kitchenSkip[id] = now + Dish.policy.holdMs end
@@ -438,13 +456,19 @@ function Dish.start(player, state, now, plan, reason)
     state.rejected[base.item:getID()] = now + Dish.policy.holdMs
     -- Where things come from, for the fetch batches.
     Dish.sources = Dish.sources or {}
-    Dish.sources[player] = {base = base, ingredients = plan.items}
+    local lent = {}
+    for _, chosen in ipairs(plan.items) do
+        -- Borrowed while still in its cupboard, so the return knows the place.
+        if not chosen.carried and lasting(chosen.item) and P and P.lend and P.lend(player, state, chosen.item, true) then lent[#lent + 1] = chosen.item end
+    end
+    Dish.sources[player] = {base = base, ingredients = plan.items, lent = lent}
     K.write(player, entry)
     Log.event(player, "dish.start", "recipe", def.name, "reason", reason, "count", #ids, "base", Snap.item(base.item),
         "heat", entry.heat, "cooked", plan.cook, "score", math.floor(plan.score))
     if Dish.step(player, state, now, entry, heat) then return true end
     -- The first step could not even be queued: nothing stays held back.
     release(state, entry)
+    giveBack(player, state)
     Dish.sources[player] = nil
     K.write(player, nil)
     return false
@@ -455,6 +479,7 @@ function Dish.forget(player) if Dish.sources then Dish.sources[player] = nil end
 
 local function finished(player, state, entry, dish)
     putAway(player, entry)
+    giveBack(player, state)
     release(state, entry)
     Dish.forget(player)
     K.write(player, nil)
@@ -544,6 +569,7 @@ function Dish.step(player, state, now, entry, stove)
             if not entry.cookable then return finished(player, state, entry, base) end
             -- Ready to cook: nothing is held back any more; leftovers may be eaten.
             putAway(player, entry)
+    giveBack(player, state)
             release(state, entry)
             Dish.forget(player)
             entry.stage, entry.item, entry.items, entry.lit = "ready", entry.base, {entry.base}, nil

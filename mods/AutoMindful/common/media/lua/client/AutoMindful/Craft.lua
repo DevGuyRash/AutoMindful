@@ -529,8 +529,22 @@ function Craft.step(player, state, now, entry)
                 Fetch.queue(player, source)
             end)
         end
-        -- Full enough: the craft itself is chosen again on the next look, with the real pot.
-        if water(vessel) >= entry.amount then return finish(player, state, entry, {entry.vessel}) end
+        -- Full enough: the craft itself now, with the real pot, before anything
+        -- else (eating) can take what it needs.
+        if water(vessel) >= entry.amount then
+            release(state, entry)
+            Craft.forget(player)
+            K.write(player, nil)
+            Log.event(player, "craft.filled", "craft", entry.craft, "litres", water(vessel))
+            local found = K.scan and K.scan(player, state.kitchenSkip, now)
+            for _, option in ipairs(found and Craft.options(player, found, state.kitchenSkip, now) or {}) do
+                if option.def.name == entry.craft then
+                    return Craft.start(player, state, now, {option = option, score = 0, forDish = true})
+                end
+            end
+            state.kitchenNext, state.preferNext = nil, nil
+            return false
+        end
         local square = getCell():getGridSquare(entry.tap.x, entry.tap.y, entry.tap.z)
         local tap
         local objects = square and square:getObjects()

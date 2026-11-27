@@ -397,6 +397,11 @@ local function consider(player, candidate, best, kind, critical)
         end
     end
     if not candidate.plan then return best end
+    -- Worse than nothing (dry pasta that only makes the survivor thirstier): left
+    -- for the kitchen to cook, unless hunger is critical.
+    local dry = kind == "food" and not candidate.transfer and candidate.item and instanceof(candidate.item, "Food")
+        and candidate.item:getThirstChange() > 0
+    if dry and not critical and (candidate.plan.utility or 0) <= 0 then return best end
     local reserve = candidate.transfer and candidate.transfer.source.description or candidate.description
     candidate.reserve = reserve.remainingLiters or reserve.thirstRelief * 2
     candidate.cost = preparationCost(player, candidate)

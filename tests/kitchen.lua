@@ -1353,14 +1353,15 @@ do
     local function batch() run(); Kitchen.settle(p,s,T.now or 0,false); s.pending=nil end
     assert(Kitchen.meal(p,s,1000) and Kitchen.ledger(p).stage=="craft-fill","The empty pot is filled first: "..tostring(Kitchen.ledger(p) and Kitchen.ledger(p).stage))
     assert(s.rejected[pot:getID()],"The pot is held for it")
-    for _=1,4 do
-        if not Kitchen.ledger(p) then break end
+    for _=1,3 do
+        if not Kitchen.ledger(p) or Kitchen.ledger(p).stage~="craft-fill" then break end
         batch()
         if Kitchen.ledger(p) then Kitchen.duty(p,s,2000,true) end
     end
-    assert(filled and pot.fluid.amount>=1.5 and p.inventory:contains(pot) and not Kitchen.ledger(p),"Fetched and filled at the sink, then the step is done")
-    assert(Kitchen.meal(p,s,40000) and Kitchen.ledger(p).craft=="PlacePastaInCookingPot2" and Kitchen.ledger(p).stage~="craft-fill","Then the pasta goes in the real pot")
-    for _=1,4 do
+    assert(Kitchen.ledger(p) and Kitchen.ledger(p).craft=="PlacePastaInCookingPot2" and Kitchen.ledger(p).stage~="craft-fill",
+        "Filled, and the pasta goes in the real pot straight away: "..tostring(Kitchen.ledger(p) and Kitchen.ledger(p).stage))
+    assert(filled and pot.fluid.amount>=1.5 and p.inventory:contains(pot),"Fetched and filled at the sink")
+    for _=1,6 do
         if not Kitchen.ledger(p) then break end
         batch()
         if Kitchen.ledger(p) then Kitchen.duty(p,s,3000,true) end

@@ -10,6 +10,7 @@ local Saved = require "AutoMindful/Saved"
 local Beds = require "AutoMindful/Beds"
 local Danger = require "AutoMindful/Danger"
 local FirstAid = require "AutoMindful/FirstAid"
+local Dressings = require "AutoMindful/Dressings"
 local Fetch = require "AutoMindful/Fetch"
 local Fluids = require "AutoMindful/Fluids"
 local IntakeGuard = require "AutoMindful/IntakeGuard"
@@ -185,13 +186,14 @@ end
 -- Borrowed for this wound stays borrowed until the wound is seen to; then it
 -- goes back where it came from, the floor included (placed, not dropped).
 -- uses: the items the next care still takes; everything else is released.
-local function releaseAid(state, uses)
+local function releaseAid(state, uses, list)
+    list = list or "aidLoans"
     local kept = {}
-    for _, loan in ipairs(state.aidLoans or {}) do
+    for _, loan in ipairs(state[list] or {}) do
         if uses and uses[loan.original] then kept[#kept + 1] = loan
         else loan.defer, loan.aidReturn = nil, true end
     end
-    state.aidLoans = #kept > 0 and kept or nil
+    state[list] = #kept > 0 and kept or nil
 end
 
 -- What the last step was meant to change. A server may refuse it, or answer
@@ -258,6 +260,17 @@ local function goBack(player, state)
     end)
 end
 
+-- Auto All's jobs that look after wounds and dressings themselves.
+local medicalJobs = {medicine = true, sterilize = true, clean = true, wring = true}
+local coexistBleedMs = 30000
+
+local function coexisting(player, state, step, other)
+    local signature = "coexist:" .. other .. ":" .. FirstAid.partName(step.part) .. ":" .. step.kind
+    if state.aidWaiting == signature then return end
+    state.aidWaiting = signature
+    Log.event(player, "firstaid.waiting", "why", other, "part", FirstAid.partName(step.part), "next", step.kind, "chain", step.chain)
+end
+
 -- Said once per change: what waits for safety, so the log shows it.
 local function waiting(player, state, step, why)
     state.aidNotice = FirstAid.describe(step):gsub("%.$", "") .. " waits until it is safe."
@@ -267,30 +280,104 @@ local function waiting(player, state, step, why)
     Log.event(player, "firstaid.waiting", "why", why, "part", FirstAid.partName(step.part), "next", step.kind, "chain", step.chain)
 end
 
+-- Brings what a job takes into the hands, each borrowed until the job is
+-- done (state[list] holds the loans). Lying on the floor: picked up as the
+-- game does, which needs no loot window to have listed it. No room, or the
+-- game will not move it: held back a while, so something else may serve.
+local function takeAll(player, state, now, entries, message, list)
+    local queued = P.ownBatch(player, state, "firstaid", message, function()
+        for _, entry in ipairs(entries) do
+            local loan = P.loanFor(player, state, entry.item)
+            if loan then
+                loan.defer = true
+                state[list] = state[list] or {}
+                local known = false
+                for _, other in ipairs(state[list]) do if other == loan then known = true end end
+                if not known then state[list][#state[list] + 1] = loan end
+            end
+            local taken
+            if entry.entry.world and player:getInventory():hasRoomFor(player, entry.item) then
+                -- Several grabs merge into one action: whether each was
+                -- taken is read afterwards, from the inventory.
+                Fetch.queue(player, entry.entry)
+                taken = true
+            else taken = Supplies.transfer(player, entry.item, loan) end
+            if not taken then
+                state.rejected[entry.item:getID()] = now + 60000
+                if loan then loan.defer = nil end
+            end
+        end
+    end)
+    if not queued then FirstAid.forget(player) end
+    return queued
+end
+
+-- Walks beside what a job takes; first aid's walk back starts from here.
+local function walkFor(player, state, now, step, message)
+    local from = player:getSquare()
+    local queued = P.ownBatch(player, state, "firstaid", message, function() luautils.walkAdj(player, step.square, true) end)
+    -- Nothing to walk: a wall between, or no free square beside it.
+    if not queued then state.rejected[step.entry.item:getID()] = now + 60000; FirstAid.forget(player)
+    elseif not state.aidOrigin and not state.excursion and from then state.aidOrigin = {x = from:getX(), y = from:getY(), z = from:getZ()} end
+    return queued
+end
+
 function Recovery.firstAid(player, state, now)
-    if not Options.firstAid() then releaseAid(state); return false end
+    -- Dressing work nobody carries on (Autopilot switched off, Auto All in
+    -- charge, or no calm moment for a while): its borrowed things go home.
+    if state.dressBusy and (not state.recovery or Coexist.owner(player) or (not state.dressTry and (not state.dressSeen
+            or now < state.dressSeen or now - state.dressSeen > 15000))) then
+        state.dressBusy = nil
+        releaseAid(state, nil, "dressLoans")
+    end
+    if not Options.firstAid() then releaseAid(state); releaseAid(state, nil, "dressLoans"); return false end
     if state.excursion and state.excursion.stage == "outbound" then return false end
     if state.aidNext and now < state.aidNext and state.aidNext - now <= 60000 then return false end
     if not player:getBodyDamage().getBodyParts then return false end
     if not aidSettled(player, state, now) then return false end
     state.aidNext = now + 1000
     local guarded = state.guard and state.guard.level ~= "bleeding"
+    local other = Coexist.owner(player)
+    local medical = other and medicalJobs[other:match("%(([%w_]+)%)")]
     local step, missing = FirstAid.plan(player, {radius = reach(state) and Options.searchRadius() or 0,
-        rejected = state.rejected, now = now, hurry = guarded,
+        rejected = state.rejected, now = now, hurry = guarded or medical,
         blocked = function(part)
             local held = state.aidHeld and state.aidHeld[part]
             return held ~= nil and now < held.at and held.at - now <= setbackLimitMs
         end})
     releaseAid(state, step and step.uses)
+    state.aidIdle = step == nil or nil
     if not step then
+        state.aidBleedSince = nil
         state.aidNotice = missing == "bleeding" and "Bleeding, and there is no bandage within reach."
             or missing == "calming" and "Wounds wait until the panic passes: the sight of blood." or nil
-        if missing then state.aidNext = now + aidRetryMs; return false end
+        if missing then state.aidNext = now + aidRetryMs end
         state.aidWaiting = nil
         if state.guard or not Recovery.permit(player, state, "topUp", now) then return false end
-        return returnTrip(player, state, now) or goBack(player, state)
+        -- Nothing to treat now, or nothing to treat it with: borrowed things still go home.
+        if missing then return returnTrip(player, state, now) end
+        -- A dressing job under way walks back by itself once it is done.
+        return returnTrip(player, state, now) or (not state.dressBusy and goBack(player, state))
     end
     state.aidNotice = nil
+    -- Auto All in charge: its Auto Medicine, Sterilize and Clean do this very
+    -- work, so nothing is started or slipped in between, except a dressing on
+    -- a wound that has bled undressed too long. Its other jobs leave room for
+    -- care of a bleeding wound only.
+    if other then
+        if medical then
+            local since = state.aidBleedSince
+            if step.urgent and not since then state.aidBleedSince = now; since = now end
+            if not (step.urgent and step.chain == "bandage" and now >= since and now - since >= coexistBleedMs) then
+                coexisting(player, state, step, other)
+                return false
+            end
+        elseif not step.urgent then
+            coexisting(player, state, step, other)
+            return false
+        end
+    end
+    if not step.urgent then state.aidBleedSince = nil end
     -- Care for a bleeding wound goes on while someone is at the controls or
     -- something else is due; the rest waits until nobody needs the hands and
     -- no thirst or hunger is critical. Low health is no reason to wait:
@@ -305,43 +392,15 @@ function Recovery.firstAid(player, state, now)
     -- What the dressing leaves for later, said once while danger is near.
     if guarded and step.waits then waiting(player, state, {part = step.part, kind = step.waits:match("^[^>]+"), chain = step.waits}, state.guard.reason or state.guard.level)
     else state.aidWaiting = nil end
-    state.aidTry = {step=step}
+    state.aidTry, state.aidIdle = {step=step}, nil
     local message = FirstAid.describe(step)
     local queued
     if step.kind == "take" then
-        queued = P.ownBatch(player, state, "firstaid", message, function()
-            for _, entry in ipairs(step.entries) do
-                local loan = P.loanFor(player, state, entry.item)
-                if loan then
-                    loan.defer = true
-                    state.aidLoans = state.aidLoans or {}
-                    local known = false
-                    for _, other in ipairs(state.aidLoans) do if other == loan then known = true end end
-                    if not known then state.aidLoans[#state.aidLoans + 1] = loan end
-                end
-                -- Lying on the floor: picked up as the game does, which needs no
-                -- loot window to have listed it. No room, or the game will not
-                -- move it: held back a while, so something else may serve.
-                local taken
-                if entry.entry.world and player:getInventory():hasRoomFor(player, entry.item) then
-                    -- Several grabs merge into one action: whether each was
-                    -- taken is read afterwards, from the inventory.
-                    Fetch.queue(player, entry.entry)
-                    taken = true
-                else taken = Supplies.transfer(player, entry.item, loan) end
-                if not taken then
-                    state.rejected[entry.item:getID()] = now + 60000
-                    if loan then loan.defer = nil end
-                end
-            end
-        end)
-        if not queued then state.aidNext = now + aidRetryMs; FirstAid.forget(player) end
+        queued = takeAll(player, state, now, step.entries, message, "aidLoans")
+        if not queued then state.aidNext = now + aidRetryMs end
     elseif step.kind == "walk" then
-        local from = player:getSquare()
-        queued = P.ownBatch(player, state, "firstaid", message, function() luautils.walkAdj(player, step.square, true) end)
-        -- Nothing to walk: a wall between, or no free square beside it.
-        if not queued then state.rejected[step.entry.item:getID()] = now + 60000; state.aidNext = now + aidRetryMs; FirstAid.forget(player)
-        elseif not state.aidOrigin and not state.excursion and from then state.aidOrigin = {x = from:getX(), y = from:getY(), z = from:getZ()} end
+        queued = walkFor(player, state, now, step, message)
+        if not queued then state.aidNext = now + aidRetryMs end
     else
         queued = P.ownBatch(player, state, "firstaid", message, function()
             local action = FirstAid.action(player, step)
@@ -354,6 +413,113 @@ function Recovery.firstAid(player, state, now)
     if queued then return true end
     state.aidTry = nil
     state.pending = nil
+    return false
+end
+
+-- ---------------------------------------------------------------- dressings
+
+-- Between wounds, in a calm moment: a dirty dressing washed in clean water, a
+-- clean one sterilized with alcohol, with the game's own crafts. A step is
+-- done once the dressing it started from has turned into something else.
+local function dressDone(player, try)
+    local inventory = player:getInventory()
+    if try.kind == "walk" then return Grid.reachable(player:getSquare(), try.square) end
+    if try.kind == "take" then
+        for _, entry in ipairs(try.entries) do
+            local item = inventory:getItemById(entry.item:getID())
+            if not item or item:getContainer() ~= inventory then return false end
+        end
+        return true
+    end
+    return not inventory:getItemById(try.id)
+end
+
+local function dressSettled(player, state, now)
+    local try = state.dressTry
+    if not try then return true end
+    if dressDone(player, try) then state.dressTry = nil; return true end
+    try.endedAt = try.endedAt or now
+    if now >= try.endedAt and now - try.endedAt < aidConfirmMs then return false end
+    state.dressTry = nil
+    -- A walk or fetch that changed nothing: what it was for is passed over a while.
+    if try.kind == "walk" or try.kind == "take" then
+        for _, entry in ipairs(try.entries or {try.entry}) do state.rejected[entry.item:getID()] = now + 60000 end
+        FirstAid.forget(player)
+        Log.event(player, "dressing.refused", "step", try.kind, "cutShort", try.cut)
+        return true
+    end
+    -- Stopped (darkness, the player): tried again later, and not for ever.
+    state.dressCuts = try.cut and (state.dressCuts or 0) + 1 or 0
+    if not try.cut or state.dressCuts >= 3 then state.rejected[try.id] = now + 600000; state.dressCuts = 0
+    else state.dressNext = now + 30000 end
+    Log.event(player, "dressing.refused", "step", try.kind, "cutShort", try.cut)
+    return true
+end
+
+function Recovery.dressings(player, state, now)
+    if not state.recovery or not Options.firstAid() then state.dressBusy = nil; releaseAid(state, nil, "dressLoans"); return false end
+    -- Auto All in charge: its own Sterilize and Clean may be at it.
+    if Coexist.owner(player) then return false end
+    if state.guard or state.excursion or not player:getBodyDamage().getBodyParts then return false end
+    -- Never in the middle of a wound: only while first aid has nothing under way.
+    if not state.aidIdle or state.aidTry then return false end
+    state.dressSeen = now
+    if state.dressNext and now < state.dressNext and state.dressNext - now <= 600000 then return false end
+    if not dressSettled(player, state, now) then return false end
+    state.dressNext = now + 2000
+    local job = Dressings.plan(player, function(radius) return FirstAid.picker(player, radius, state.rejected, now) end,
+        reach(state) and Options.searchRadius() or 0)
+    state.dressBusy = job ~= nil or nil
+    if not job then
+        releaseAid(state, nil, "dressLoans")
+        state.dressNext = now + 30000
+        return false
+    end
+    -- What the game would craft with from what is carried decides first: a
+    -- carried vessel it would use is used, and water someone may need to
+    -- drink is never washed with. Only when nothing carried serves is the
+    -- planned one fetched, and then it is the one the game takes.
+    local logic, why = Dressings.logic(player, job.recipe, job.anchor.item)
+    if why == "last-drink" then
+        state.dressNext, state.dressBusy = now + 600000, nil
+        releaseAid(state, nil, "dressLoans")
+        Log.event(player, "dressing.waiting", "why", why)
+        return false
+    end
+    local uses, far, near = {}, nil, {}
+    for _, entry in ipairs(logic and {} or job.uses) do
+        uses[entry.item] = true
+        -- In a bag: into the hands with a loan, so it goes back to its bag.
+        if not entry.carried then
+            if entry.reach then near[#near + 1] = entry elseif not far then far = entry end
+        end
+    end
+    releaseAid(state, uses, "dressLoans")
+    local queued, message
+    if #near > 0 then
+        message = "Getting " .. near[1].item:getDisplayName() .. " for the dressings."
+        queued = takeAll(player, state, now, near, message, "dressLoans")
+        if queued then state.dressTry = {kind = "take", entries = near} end
+    elseif far then
+        message = "Going for " .. far.item:getDisplayName() .. " for the dressings."
+        queued = walkFor(player, state, now, {square = far.square, entry = far}, message)
+        if queued then state.dressTry = {kind = "walk", square = far.square, entry = far} end
+    else
+        if not logic then
+            state.rejected[job.anchor.item:getID()] = now + 600000
+            Log.event(player, "dressing.cannot", "step", job.kind, "item", Snap.item(job.anchor.item))
+            return false
+        end
+        message = job.kind == "wash" and ("Washing " .. job.anchor.item:getDisplayName() .. ".")
+            or ("Sterilizing " .. job.anchor.item:getDisplayName() .. ".")
+        state.dressTry = {id = job.anchor.item:getID(), kind = job.kind}
+        queued = P.ownBatch(player, state, "firstaid", message, function() Dressings.craft(player, logic) end)
+        if not queued then state.dressTry = nil end
+    end
+    Log.event(player, "dressing", "step", job.kind, "item", Snap.item(job.anchor.item), "with", Snap.item(job.uses[1].item), "queued", queued)
+    if queued then return true end
+    state.pending = nil
+    state.dressNext = now + 30000
     return false
 end
 
@@ -747,6 +913,7 @@ function Recovery.advance(player, state, now)
     local pain = P.painAvailable(player, state, now)
     if pain and P.supply(player, state, "pain") then return end
     if Recovery.permit(player, state, "topUp", now) and P.earlySupply(player, state, true) then return end
+    if Recovery.permit(player, state, "topUp", now) and Recovery.dressings(player, state, now) then return end
     local boredom = P.stat(player, "BOREDOM")
     local wantsReading = calm and boredom >= policy.readAt
     if wantsReading and P.supply(player, state, "literature", false, nil, nil, true, true) then return end

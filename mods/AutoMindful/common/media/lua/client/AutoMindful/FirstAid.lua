@@ -271,6 +271,7 @@ local function picker(player, found, rejected, now)
             local item = entry.item
             local held = rejected and rejected[item:getID()]
             if not used[item] and not (held and now and now < held) and (not options or not options.near or entry.reach)
+                    and (not options or not options.carried or entry.carried or (entry.reach and entry.square == nil))
                     and role.match(item) and Fetch.present(entry.entry) then
                 local candidate = key(entry, role.grade and role.grade(item) or 1)
                 if not best or before(candidate, bestKey) then best, bestKey = entry, candidate end
@@ -553,6 +554,19 @@ function FirstAid.describe(step)
     if step.kind == "walk" then return "Going for " .. step.entry.item:getDisplayName() .. "." end
     if step.kind == "glass" and step.hands then return "Pulling glass out by hand: " .. FirstAid.partName(step.part) .. "." end
     return (phrases[step.kind] or "First aid") .. ": " .. FirstAid.partName(step.part) .. "."
+end
+
+-- Other care's roles, found in the same look around (Dressings).
+function FirstAid.addRoles(more)
+    for name, role in pairs(more) do roles[name] = role end
+    looks = {}
+end
+
+-- A picker over what is carried and within radius, for other care.
+-- options.near: within reach; options.carried: carried, bags included;
+-- options.peek: not counted as used.
+function FirstAid.picker(player, radius, rejected, now)
+    return picker(player, collect(player, radius or 0), rejected, now)
 end
 
 -- Whether any clean dressing is carried or within radius (for the outlook).

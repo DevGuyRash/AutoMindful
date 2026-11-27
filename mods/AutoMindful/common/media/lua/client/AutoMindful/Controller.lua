@@ -380,7 +380,8 @@ function Controller.stop(player, reason, cause, nativeReason)
     MaskRestore.observe(player,state.maskRestore,queueFor(player))
     if cause ~= "switch" then Recovery.remember(player, false) end
     Recovery.ended(player)
-    state.parkedTrip, state.aidTry, state.bedTry, state.lastResort = nil, nil, nil, nil
+    state.parkedTrip, state.aidTry, state.bedTry, state.lastResort, state.dressTry = nil, nil, nil, nil, nil
+    state.dressBusy, state.dressLoans, state.aidLoans, state.aidIdle = nil, nil, nil, nil
     state.guard, state.aidNotice, state.setbacks, state.interject = nil, nil, nil, nil
     state.active, state.trainingStopReason, state.trainingKind = false, nil, nil
     state.turnTier,state.recoveryTier,state.restroomDrain=nil,nil,nil
@@ -1238,7 +1239,7 @@ local function yieldToPlayer(player, state, unexplained, walking, settling, paus
         -- care target, item or portion. A failed walk is retained as read-only
         -- evidence of the draining Java handle, not an action to replay.
         local trip = state.excursion
-        state.bedTry, state.aidTry = nil, nil
+        state.bedTry, state.aidTry, state.dressTry = nil, nil, nil
         if trip and trip.egressPlan then
             state.excursion=nil
         elseif trip then
@@ -3575,9 +3576,10 @@ local function finishPending(player, state, now)
     end
     if state.phase=="firstaid" or state.phase=="refilling" then
         -- Judged by what changed on the survivor, not by how the action ended.
-        if state.aidTry then
-            for _, action in ipairs(state.pending) do
-                if not action.autoMindfulFinished or action.autoMindfulStopped then state.aidTry.cut=true end
+        for _, action in ipairs(state.pending) do
+            if not action.autoMindfulFinished or action.autoMindfulStopped then
+                if state.aidTry then state.aidTry.cut=true end
+                if state.dressTry then state.dressTry.cut=true end
             end
         end
         local trip=state.excursion

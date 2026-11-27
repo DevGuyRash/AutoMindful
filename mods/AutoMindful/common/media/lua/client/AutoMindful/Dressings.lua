@@ -48,14 +48,19 @@ Dressings.roles = {
 
 local recipes = {wash = "CleanBandage", spirit = "DisinfectRag", boil = "DisinfectBandage"}
 
--- The survivor's own containers: the main inventory and the bags in it.
+-- The survivor's own containers: the main inventory and the bags in it,
+-- as deep as first aid looks.
 local function carried(player)
-    local inventory = player:getInventory()
-    local list, items = {inventory}, inventory:getItems()
-    for index = 0, items:size() - 1 do
-        local item = items:get(index)
-        if instanceof(item, "InventoryContainer") then list[#list + 1] = item:getInventory() end
+    local list = {}
+    local function add(container, depth)
+        list[#list + 1] = container
+        local items = container:getItems()
+        for index = 0, items:size() - 1 do
+            local item = items:get(index)
+            if depth < 3 and instanceof(item, "InventoryContainer") then add(item:getInventory(), depth + 1) end
+        end
     end
+    add(player:getInventory(), 0)
     return list
 end
 

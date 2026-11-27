@@ -325,8 +325,8 @@ end
 function Recovery.firstAid(player, state, now)
     -- Dressing work nobody carries on (Autopilot switched off, Auto All in
     -- charge, or no calm moment for a while): its borrowed things go home.
-    if state.dressBusy and (not state.recovery or Coexist.owner(player) or not state.dressSeen
-            or now < state.dressSeen or now - state.dressSeen > 15000) then
+    if state.dressBusy and (not state.recovery or Coexist.owner(player) or (not state.dressTry and (not state.dressSeen
+            or now < state.dressSeen or now - state.dressSeen > 15000))) then
         state.dressBusy = nil
         releaseAid(state, nil, "dressLoans")
     end
@@ -337,8 +337,10 @@ function Recovery.firstAid(player, state, now)
     if not aidSettled(player, state, now) then return false end
     state.aidNext = now + 1000
     local guarded = state.guard and state.guard.level ~= "bleeding"
+    local other = Coexist.owner(player)
+    local medical = other and medicalJobs[other:match("%(([%w_]+)%)")]
     local step, missing = FirstAid.plan(player, {radius = reach(state) and Options.searchRadius() or 0,
-        rejected = state.rejected, now = now, hurry = guarded,
+        rejected = state.rejected, now = now, hurry = guarded or medical,
         blocked = function(part)
             local held = state.aidHeld and state.aidHeld[part]
             return held ~= nil and now < held.at and held.at - now <= setbackLimitMs
@@ -362,14 +364,11 @@ function Recovery.firstAid(player, state, now)
     -- work, so nothing is started or slipped in between, except a dressing on
     -- a wound that has bled undressed too long. Its other jobs leave room for
     -- care of a bleeding wound only.
-    local other = Coexist.owner(player)
     if other then
-        local kind = other:match("%(([%w_]+)%)")
-        if medicalJobs[kind] then
+        if medical then
             local since = state.aidBleedSince
             if step.urgent and not since then state.aidBleedSince = now; since = now end
-            if not (step.urgent and (step.kind == "bandage" or step.kind == "take" and step.chain == "bandage")
-                    and now >= since and now - since >= coexistBleedMs) then
+            if not (step.urgent and step.chain == "bandage" and now >= since and now - since >= coexistBleedMs) then
                 coexisting(player, state, step, other)
                 return false
             end
@@ -426,7 +425,10 @@ local function dressDone(player, try)
     local inventory = player:getInventory()
     if try.kind == "walk" then return Grid.reachable(player:getSquare(), try.square) end
     if try.kind == "take" then
-        for _, entry in ipairs(try.entries) do if not inventory:getItemById(entry.item:getID()) then return false end end
+        for _, entry in ipairs(try.entries) do
+            local item = inventory:getItemById(entry.item:getID())
+            if not item or item:getContainer() ~= inventory then return false end
+        end
         return true
     end
     return not inventory:getItemById(try.id)
@@ -462,7 +464,7 @@ function Recovery.dressings(player, state, now)
     -- Never in the middle of a wound: only while first aid has nothing under way.
     if not state.aidIdle or state.aidTry then return false end
     state.dressSeen = now
-    if state.dressNext and now < state.dressNext and state.dressNext - now <= 60000 then return false end
+    if state.dressNext and now < state.dressNext and state.dressNext - now <= 600000 then return false end
     if not dressSettled(player, state, now) then return false end
     state.dressNext = now + 2000
     local job = Dressings.plan(player, function(radius) return FirstAid.picker(player, radius, state.rejected, now) end,
@@ -479,7 +481,8 @@ function Recovery.dressings(player, state, now)
     -- planned one fetched, and then it is the one the game takes.
     local logic, why = Dressings.logic(player, job.recipe, job.anchor.item)
     if why == "last-drink" then
-        state.dressNext = now + 600000
+        state.dressNext, state.dressBusy = now + 600000, nil
+        releaseAid(state, nil, "dressLoans")
         Log.event(player, "dressing.waiting", "why", why)
         return false
     end

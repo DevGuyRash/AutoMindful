@@ -291,6 +291,17 @@ do
     assert(count(p,"bandage")==2,"and is dressed once Auto All is done")
     C.stop(p)
 end
+do
+    -- Auto Medicine running, a deep wound bleeding and a suture needle carried:
+    -- after half a minute it still gets a dressing, not a wait behind the stitches.
+    local p=survivor(); local arm=part({deep=true,blood=true,open=true}); wounded(p,{arm}); bandage(p,"Bandage")
+    local needle=T.add(p.inventory,T.item("Normal",{})); needle.getType=function() return "SutureNeedle" end
+    AutoAll={isRunning=function() return true end,tasks={[0]={kind="medicine"}}}
+    function p:getPlayerNum() return 0 end
+    begin(p); C.setAway(p,true); seconds(p,45)
+    assert(count(p,"bandage")==1,"bleeding that cannot wait is dressed even with stitches at hand")
+    AutoAll=nil; C.stop(p)
+end
 for _,mode in ipairs({"recovery","meditation"}) do
     -- Hurt on an errand: nothing may wait for the end of a trip that cannot go on.
     scout=true

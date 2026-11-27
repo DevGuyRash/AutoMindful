@@ -183,9 +183,14 @@ end
 
 -- Borrowed for this wound stays borrowed until the wound is seen to; then it
 -- goes back where it came from, the floor included (placed, not dropped).
-local function releaseAid(state)
-    for _, loan in ipairs(state.aidLoans or {}) do loan.defer, loan.aidReturn = nil, true end
-    state.aidLoans = nil
+-- uses: the items the next care still takes; everything else is released.
+local function releaseAid(state, uses)
+    local kept = {}
+    for _, loan in ipairs(state.aidLoans or {}) do
+        if uses and uses[loan.original] then kept[#kept + 1] = loan
+        else loan.defer, loan.aidReturn = nil, true end
+    end
+    state.aidLoans = #kept > 0 and kept or nil
 end
 
 -- What the last step was meant to change. A server may refuse it, or answer
@@ -246,36 +251,39 @@ local function waiting(player, state, step, why)
 end
 
 function Recovery.firstAid(player, state, now)
-    if not Options.firstAid() or state.excursion and state.excursion.stage == "outbound" then return false end
+    if not Options.firstAid() then releaseAid(state); return false end
+    if state.excursion and state.excursion.stage == "outbound" then return false end
     if state.aidNext and now < state.aidNext and state.aidNext - now <= 60000 then return false end
     if not player:getBodyDamage().getBodyParts then return false end
     if not aidSettled(player, state, now) then return false end
     state.aidNext = now + 1000
+    local guarded = state.guard and state.guard.level ~= "bleeding"
     local step, missing = FirstAid.plan(player, {radius = reach(state) and Options.searchRadius() or 0,
+        rejected = state.rejected, now = now, hurry = guarded,
         blocked = function(part)
             local held = state.aidHeld and state.aidHeld[part]
             return held ~= nil and now < held.at and held.at - now <= setbackLimitMs
         end})
+    releaseAid(state, step and step.uses)
     if not step then
         state.aidNotice = missing == "bleeding" and "Bleeding, and there is no bandage within reach."
             or missing == "calming" and "Wounds wait until the panic passes: the sight of blood." or nil
         if missing then state.aidNext = now + aidRetryMs; return false end
         state.aidWaiting = nil
-        releaseAid(state)
         return not state.guard and Recovery.permit(player, state, "topUp", now) and returnTrip(player, state, now)
     end
     state.aidNotice = nil
-    -- Only stopping blood comes before everything; the rest waits until it is
-    -- safe, nobody needs the hands, and no thirst or hunger is critical. Low
-    -- health is no reason to wait: treating the wounds is how it comes back.
-    local guarded = state.guard and state.guard.level ~= "bleeding"
+    -- Care for a bleeding wound goes on while someone is at the controls or
+    -- something else is due; the rest waits until nobody needs the hands and
+    -- no thirst or hunger is critical. Low health is no reason to wait:
+    -- treating the wounds is how it comes back.
     if not step.urgent and (Needs.critical(player, "water") or Needs.critical(player, "food")
-            or guarded or not Recovery.permit(player, state, "topUp", now)) then
-        if guarded then waiting(player, state, step, state.guard.reason or state.guard.level) end
+            or not Recovery.permit(player, state, "topUp", now)) then return false end
+    -- With danger near only a dressing on a bleeding wound, where it stands.
+    if guarded and not (step.urgent and step.kind == "bandage") then
+        waiting(player, state, step, state.guard.reason or state.guard.level)
         return false
     end
-    -- Walking somewhere is not for a moment with zombies in view.
-    if step.kind == "walk" and guarded then waiting(player, state, step, state.guard.reason or state.guard.level); return false end
     state.aidWaiting = nil
     state.aidTry = {step=step}
     local message = FirstAid.describe(step)
@@ -289,9 +297,15 @@ function Recovery.firstAid(player, state, now)
                     state.aidLoans = state.aidLoans or {}
                     state.aidLoans[#state.aidLoans + 1] = loan
                 end
-                Supplies.transfer(player, entry.item, loan)
+                -- No room, or the game will not move it: held back a while,
+                -- so something else may serve.
+                if not Supplies.transfer(player, entry.item, loan) then
+                    state.rejected[entry.item:getID()] = now + 60000
+                    if loan then loan.defer = nil end
+                end
             end
         end)
+        if not queued then state.aidNext = now + aidRetryMs; FirstAid.forget(player) end
     elseif step.kind == "walk" then
         queued = P.ownBatch(player, state, "firstaid", message, function() luautils.walkAdj(player, step.square, true) end)
     else

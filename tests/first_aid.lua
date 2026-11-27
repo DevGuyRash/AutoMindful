@@ -58,6 +58,7 @@ local function item(kind, fields)
     function i:getCurrentUsesFloat() return self.uses or 1 end
     function i:getContainer() return self.container end
     function i:getWorldItem() return nil end
+    function i:getID() return self.id or 0 end
     return i
 end
 
@@ -67,26 +68,33 @@ local function put(where, it)
     return it
 end
 
+-- As the game keeps a body part: a dressing hides the bleeding, cut,
+-- scratch, bite, deep-wound and stitched flags; their timers stay.
 local function part(kind, fields)
     local b = fields or {}
     b.kind = kind
+    local function shown(value) return value == true and not b.cover end
     function b:getType() return self.kind end
-    function b:bleeding() return self.blood == true end
     function b:bandaged() return self.cover == true end
     function b:isBandageDirty() return self.filthy == true end
-    function b:scratched() return self.scratch == true end
-    function b:isCut() return self.cut == true end
-    function b:deepWounded() return self.deep == true end
-    function b:bitten() return self.bite == true end
+    function b:bleeding() return shown(self.blood) end
+    function b:getBleedingTime() return self.blood and 10 or 0 end
+    function b:scratched() return shown(self.scratch) end
+    function b:getScratchTime() return self.scratch and 10 or 0 end
+    function b:isCut() return shown(self.cut) end
+    function b:getCutTime() return self.cut and 10 or 0 end
+    function b:deepWounded() return shown(self.deep) end
+    function b:getDeepWoundTime() return self.deep and 10 or 0 end
+    function b:bitten() return shown(self.bite) end
+    function b:getBiteTime() return self.bite and 10 or 0 end
+    function b:stitched() return shown(self.stitches) end
+    function b:getStitchTime() return self.stitches and (self.stitchTime or 5) or 0 end
     function b:getBurnTime() return self.burn or 0 end
     function b:isNeedBurnWash() return self.wash == true end
-    function b:getBleedingTime() return self.blood and 10 or 0 end
     function b:haveGlass() return self.glass == true end
     function b:haveBullet() return self.bullet == true end
     function b:isInfectedWound() return self.infected == true end
     function b:getWoundInfectionLevel() return self.infection or 0 end
-    function b:stitched() return self.stitches == true end
-    function b:getStitchTime() return self.stitchTime or 0 end
     function b:getFractureTime() return self.fracture or 0 end
     function b:getSplintFactor() return self.splint or 0 end
     function b:getAlcoholLevel() return self.alcohol or 0 end
@@ -135,7 +143,7 @@ local function run(p, limit)
             local made = FirstAid.action(p, step)
             assert(made, "the game would refuse " .. step.kind)
             if step.kind == "unbandage" then b.cover, b.filthy = nil, nil
-            elseif step.kind == "bandage" then b.cover, b.blood = true, nil; use(step.item)
+            elseif step.kind == "bandage" then b.cover = true; use(step.item)
             elseif step.kind == "glass" then b.glass = nil
             elseif step.kind == "bullet" then b.bullet = nil
             elseif step.kind == "disinfect" then b.alcohol = 4
@@ -301,3 +309,49 @@ do
     assert(joined(run(r)) == "burn>bandage")
 end
 print("PASS missing tools are worked around, and the right supply is used for each job")
+
+do
+    -- Under a dressing the game hides the deep wound; it is still stitched.
+    local neck = part("Neck", {deep = true, blood = true, cover = true})
+    local p = survivor({neck})
+    kit(p)
+    local kinds = run(p)
+    assert(joined(kinds) == "unbandage>disinfect>stitch>bandage", joined(kinds))
+    -- Glass in a dressed, bleeding neck: out once, not a dressing on and off for ever.
+    local throat = part("Neck", {deep = true, blood = true, glass = true, cover = true})
+    local q = survivor({throat})
+    kit(q); carry(q, "Bandage", {power = 4})
+    kinds = run(q, 12)
+    assert(joined(kinds) == "unbandage>glass>disinfect>stitch>bandage", joined(kinds))
+end
+print("PASS a dressing hides the wound from the eye, not from the planner")
+
+do
+    -- A dressed burn that needs cleaning, with one cloth: the dressing stays
+    -- on rather than leave the burn bare once the cloth is used.
+    local hand = part("Hand_R", {burn = 50, wash = true, cover = true})
+    local p = survivor({hand})
+    carry(p, "RippedSheets", {power = 2})
+    assert(FirstAid.plan(p, {radius = 0}) == nil)
+    carry(p, "Bandage", {power = 4})
+    local kinds = run(p)
+    assert(joined(kinds) == "unbandage>burn>bandage", joined(kinds))
+end
+print("PASS a dressing comes off for a small job only with another to follow")
+
+do
+    -- Danger near: a bleeding wound gets a dressing where it stands, nothing slower.
+    local arm = part("ForeArm_R", {deep = true, glass = true, blood = true})
+    local p = survivor({arm})
+    kit(p)
+    local step = FirstAid.plan(p, {radius = 0, hurry = true})
+    assert(step.kind == "bandage" and step.urgent)
+    -- Something the game would not move is passed over for a while.
+    local leg = part("ForeArm_L", {cut = true})
+    local q = survivor({leg})
+    local first = carry(q, "Bandage", {power = 4}); first.getID = function() return 1 end
+    local second = carry(q, "Bandage", {power = 4}); second.getID = function() return 2 end
+    step = FirstAid.plan(q, {radius = 0, rejected = {[1] = 100}, now = 10})
+    assert(step.kind == "bandage" and step.item.item == second)
+end
+print("PASS danger keeps it to a dressing, and refused supplies are passed over")

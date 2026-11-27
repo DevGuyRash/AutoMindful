@@ -150,6 +150,10 @@ local function part(fields)
     function b:isInfectedWound() return false end
     function b:stitched() return false end
     function b:getStitchTime() return 0 end
+    function b:getDeepWoundTime() return self.deep and 10 or 0 end
+    function b:getCutTime() return self.open and 10 or 0 end
+    function b:getScratchTime() return self.scratch and 10 or 0 end
+    function b:getBiteTime() return 0 end
     function b:getFractureTime() return 0 end
     function b:getSplintFactor() return 0 end
     function b:isNeedBurnWash() return false end

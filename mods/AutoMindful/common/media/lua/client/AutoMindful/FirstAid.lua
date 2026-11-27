@@ -44,10 +44,16 @@ end
 
 -- HDisinfect's own test: a bottle at least 40% alcohol with more than a sip
 -- left, or a drainable as strong as disinfectant (wipes, doused cotton).
+-- A bottle lying on the floor keeps its fluid on the world object.
+local function fluidOf(item)
+    local world = item:getWorldItem()
+    return world and world:getFluidContainer() or item:getFluidContainer()
+end
+
 local function disinfectant(item)
     return read(function()
         if item:hasComponent(ComponentType.FluidContainer) then
-            local fluid = item:getFluidContainer()
+            local fluid = fluidOf(item)
             local amount = fluid:getAmount()
             return amount > 0.15 and fluid:getProperties():getAlcohol() / amount + 0.001 >= 0.4
         end
@@ -77,7 +83,7 @@ local roles = {
     alcohol = {match = disinfectant, grade = function(item)
         return read(function()
             if not item:hasComponent(ComponentType.FluidContainer) then return 1 end
-            local fluid = item:getFluidContainer()
+            local fluid = fluidOf(item)
             return fluid:getProperties():getAlcohol() / fluid:getAmount() >= 0.9 and 1 or 2
         end, 2)
     end},
@@ -106,15 +112,28 @@ end
 
 -- --------------------------------------------------------------- the wounds
 
+-- A dressing hides the wound: the game's setBandaged clears the bleeding,
+-- cut, scratch, bite, deep-wound and stitched flags, and puts each back from
+-- its timer when the dressing comes off. Under a dressing, the timers tell.
+local function has(part, flag, timer)
+    if part:bandaged() then return read(function() return part[timer](part) > 0 end, false) == true end
+    return part[flag](part) == true
+end
+local function isDeep(part) return has(part, "deepWounded", "getDeepWoundTime") end
+local function isStitched(part) return has(part, "stitched", "getStitchTime") end
+local function isCut(part) return has(part, "isCut", "getCutTime") end
+local function isScratched(part) return has(part, "scratched", "getScratchTime") end
+local function isBitten(part) return has(part, "bitten", "getBiteTime") end
+
 local function open(part)
-    return part:scratched() or part:isCut() or part:deepWounded() or part:bitten() or part:getBurnTime() > 0
+    return isScratched(part) or isCut(part) or isDeep(part) or isBitten(part) or part:getBurnTime() > 0
 end
 FirstAid.open = open
 
 -- What the survivor would see on the health panel: only a good doctor knows
--- early that a wound has turned. Under a dressing nobody sees it.
--- Once seen, an infection is remembered under the dressing that went on
--- after it, until it is treated or has gone.
+-- early that a wound has turned. Under a dressing nobody sees it; once seen,
+-- an infection is remembered under the dressing that went on after it, until
+-- it has gone.
 local seenInfected = setmetatable({}, {__mode = "k"})
 local function infectionKnown(player, part)
     if not read(function() return part:isInfectedWound() end, false) then seenInfected[part] = nil; return false end
@@ -132,32 +151,33 @@ local weights = {Neck = 30, Head = 20, Torso_Upper = 15, Torso_Lower = 12, Groin
 local unsplintable = {Head = true, Neck = true, Torso_Upper = true, Torso_Lower = true}
 
 local function bleedingOpen(part) return part:bleeding() and not part:bandaged() end
-local function goodStitches(part) return part:stitched() and part:getStitchTime() > FirstAid.policy.goodStitch end
+local function goodStitches(part) return isStitched(part) and part:getStitchTime() > FirstAid.policy.goodStitch end
+local function unstitched(part) return isDeep(part) and not isStitched(part) end
 local function fractured(part)
     return part:getFractureTime() > 0 and part:getSplintFactor() <= 0 and not unsplintable[typeName(part)]
 end
 local function poulticed(part)
     return read(function() return part:getPlantainFactor() > 0 or part:getComfreyFactor() > 0 or part:getGarlicFactor() > 0 end, true)
 end
+local function dressable(part)
+    return open(part) or (isStitched(part) and part:getStitchTime() <= FirstAid.policy.goodStitch)
+end
 -- A dirty dressing on a wound that still bleeds or is not stitched is dirty
 -- again in moments: changing it would only use up every clean one.
-local function dressable(part)
-    return open(part) or (part:stitched() and part:getStitchTime() <= FirstAid.policy.goodStitch)
-end
 local function worthChanging(part)
-    return part:bandaged() and part:isBandageDirty() and dressable(part) and not part:deepWounded() and part:getBleedingTime() <= 0
+    return part:bandaged() and part:isBandageDirty() and dressable(part) and not unstitched(part) and part:getBleedingTime() <= 0
 end
 
 -- How dangerous a wound is now. Bleeding first, and where it kills fastest.
 function FirstAid.danger(player, part)
     local weight = weights[typeName(part)] or 0
-    if bleedingOpen(part) then return 100 + weight + (part:deepWounded() and 5 or 0) end
+    if bleedingOpen(part) then return 100 + weight + (isDeep(part) and 5 or 0) end
     if part:haveGlass() or part:haveBullet() then return 60 + weight end
     if infectionKnown(player, part) then return 50 end
-    if part:deepWounded() and not part:stitched() then return 45 + weight / 2 end
+    if unstitched(part) then return 45 + weight / 2 end
     if fractured(part) then return 40 end
-    if part:isNeedBurnWash() and part:getBurnTime() > 0 and not part:bandaged() then return 35 end
-    if dressable(part) and not part:bandaged() then return 30 + (part:bitten() and 3 or 0) + (part:isCut() and 1 or 0) end
+    if part:isNeedBurnWash() and part:getBurnTime() > 0 then return 35 end
+    if dressable(part) and not part:bandaged() then return 30 + (isBitten(part) and 3 or 0) + (isCut(part) and 1 or 0) end
     if worthChanging(part) then return 20 end
     if goodStitches(part) then return 5 end
     if part:getSplintFactor() > 0 and part:getFractureTime() <= 0 then return 4 end
@@ -231,7 +251,7 @@ function FirstAid.forget(player) looks[player] = nil end
 -- A picker over what was found: anything at hand before anything to walk
 -- for; at hand, the better grade, carried first; to walk for, the better
 -- grade, then the nearest. Consumables serve once.
-local function picker(player, found)
+local function picker(player, found, rejected, now)
     local used, here = {}, player:getSquare()
     local function key(entry, grade)
         if entry.carried then return {0, grade, 0, 0} end
@@ -248,7 +268,9 @@ local function picker(player, found)
         local best, bestKey
         for _, entry in ipairs(found) do
             local item = entry.item
-            if not used[item] and (not options or not options.near or entry.reach) and role.match(item) and Fetch.present(entry.entry) then
+            local held = rejected and rejected[item:getID()]
+            if not used[item] and not (held and now and now < held) and (not options or not options.near or entry.reach)
+                    and role.match(item) and Fetch.present(entry.entry) then
                 local candidate = key(entry, role.grade and role.grade(item) or 1)
                 if not best or before(candidate, bestKey) then best, bestKey = entry, candidate end
             end
@@ -268,19 +290,20 @@ local needsUncovered = {glass = true, bullet = true, disinfect = true, stitch = 
 local function treatments(player, part, pick)
     local list = {}
     local function add(step) list[#list + 1] = step end
-    local glass, deep, stitched = part:haveGlass(), part:deepWounded(), part:stitched()
-    local triggers = false
+    local covered = part:bandaged()
+    local glass, deep, stitched = part:haveGlass(), isDeep(part), isStitched(part)
+    -- major: worth the dressing coming off even without a fresh one to follow.
+    local major = false
     if glass then
         -- Bare hands hurt twice as long, but glass left in keeps cutting.
         local tool = pick("tweezers")
         add({kind = "glass", tool = tool, hands = tool == nil})
-        glass, triggers = false, true
+        glass, major = false, true
     end
     if part:haveBullet() then
         local tool = pick("extractor")
-        if tool then add({kind = "bullet", tool = tool}); triggers = true end
+        if tool then add({kind = "bullet", tool = tool}); major = true end
     end
-    local herb
     if fractured(part) and not stitched then
         local splint = pick("splint")
         if splint then add({kind = "splint", plank = splint})
@@ -289,7 +312,6 @@ local function treatments(player, part, pick)
             if plank and sheet then add({kind = "splint", plank = plank, sheet = sheet}) end
         end
     end
-    local infected = infectionKnown(player, part)
     local stitch
     if deep and not stitched and not glass then
         local suture = pick("suture")
@@ -297,24 +319,32 @@ local function treatments(player, part, pick)
         local thread = needle and pick("thread") or nil
         if suture or (needle and thread) then
             stitch = {kind = "stitch", thread = suture or thread, needle = needle, holder = pick("holder")}
-            triggers = true
+            major = true
         end
     end
-    local burn
-    if part:isNeedBurnWash() and part:getBurnTime() > 0 then
-        local rag = pick("burn")
-        if rag then burn = {kind = "burn", rag = rag}; triggers = true end
-    end
-    -- An infection is treated for itself, the dressing off if need be, and
-    -- again once the alcohol has worn off. Otherwise disinfecting rides along
-    -- only while the wound is bare anyway.
+    -- An infection is treated for itself, and again once the alcohol wears off.
+    local infected = infectionKnown(player, part)
     local alcohol
     if infected and part:getAlcoholLevel() < 1 then
         alcohol = pick("alcohol")
-        if alcohol then triggers = true end
+        if alcohol then major = true end
     end
-    local bare = not part:bandaged() or triggers
-    if not alcohol and bare and (stitch or deep or part:isCut() or part:bitten()) and part:getAlcoholLevel() <= 0
+    local stillOpen = part:bleeding() or part:getBleedingTime() > 0 or isScratched(part) or isCut(part)
+        or (deep and not stitch) or isBitten(part) or part:getBurnTime() > 0
+        or ((stitched or stitch) and part:getStitchTime() <= FirstAid.policy.goodStitch)
+    -- Under a dressing, the one to follow it is secured before cloth goes to a burn.
+    local dress
+    local function pickDress() return pick((part:bleeding() or part:getBleedingTime() > 0) and "dressing" or "clean") end
+    if covered and stillOpen then dress = pickDress() end
+    local burn
+    if part:isNeedBurnWash() and part:getBurnTime() > 0 then
+        local rag = pick("burn")
+        if rag then burn = {kind = "burn", rag = rag} end
+    end
+    -- Riding along: only when the wound is bare, or coming bare anyway.
+    local bare = not covered or major or (dress ~= nil and (burn ~= nil or worthChanging(part)))
+    if not bare then burn = nil end
+    if not alcohol and bare and (stitch or deep or isCut(part) or isBitten(part)) and part:getAlcoholLevel() <= 0
             and not pick("sterile", {peek = true}) then
         alcohol = pick("alcohol")
     end
@@ -322,23 +352,17 @@ local function treatments(player, part, pick)
     if stitch then add(stitch); deep, stitched = false, true end
     if burn then add(burn) end
     if bare and not poulticed(part) then
+        local herb
         if infected then herb = pick("garlic")
         elseif part:getFractureTime() > 0 then herb = pick("comfrey")
-        elseif deep or part:isCut() then herb = pick("plantain") end
+        elseif deep or isCut(part) then herb = pick("plantain") end
         if herb then add({kind = "poultice", herb = herb}) end
     end
     local uncover = false
     for _, step in ipairs(list) do if needsUncovered[step.kind] then uncover = true end end
-    local covered = part:bandaged()
-    local stillOpen = part:bleeding() or part:scratched() or part:isCut() or deep or part:bitten() or part:getBurnTime() > 0
-        or (stitched and part:getStitchTime() <= FirstAid.policy.goodStitch)
-    local dress
-    if (not covered or uncover) and stillOpen then dress = pick(part:bleeding() and "dressing" or "clean")
-    elseif covered and not uncover and worthChanging(part) then
-        dress = pick("clean")
-        if dress then uncover = true end
-    end
-    if covered and uncover then table.insert(list, 1, {kind = "unbandage"}) end
+    if not covered and stillOpen then dress = pickDress() end
+    if covered and not uncover and not (dress and worthChanging(part)) then dress = nil end
+    if covered and (uncover or dress) then table.insert(list, 1, {kind = "unbandage"}) end
     if dress then add({kind = "bandage", item = dress}) end
     if #list == 0 then
         if goodStitches(part) then add({kind = "unstitch"})
@@ -368,9 +392,12 @@ end
 
 -- The next thing to do for the most dangerous wound, or nil and why not.
 -- options.radius: how far to look and walk (0: carried and within reach);
--- options.blocked(part): a wound whose last treatment did not take.
--- A step: {kind, part, danger, urgent, chain} plus what it uses; "walk"
--- (square) and "take" (entries) come before anything is unwrapped.
+-- options.blocked(part): a wound whose last treatment did not take;
+-- options.rejected, options.now: items held back until a time;
+-- options.hurry: danger is near, so a bleeding wound gets only a dressing.
+-- A step: {kind, part, danger, urgent, chain, uses} plus what it takes;
+-- "walk" (square) and "take" (entries) come before anything is unwrapped.
+-- urgent: for a wound that bleeds; uses: every item the wound's care takes.
 function FirstAid.plan(player, options)
     options = options or {}
     local parts = player:getBodyDamage():getBodyParts()
@@ -387,43 +414,42 @@ function FirstAid.plan(player, options)
     if #list == 0 then return nil end
     table.sort(list, function(a, b) return a.danger > b.danger end)
     local found = collect(player, options.radius or 0)
+    local function fresh() return picker(player, found, options.rejected, options.now) end
     local missing, waiting
     for _, wound in ipairs(list) do
         local part = wound.part
-        local pick = picker(player, found)
-        local chain = treatments(player, part, pick)
+        local chain = treatments(player, part, fresh())
         local urgent = bleedingOpen(part)
-        -- With more than one wound bleeding, or anything to walk for, the
-        -- blood is stopped first; the rest of the care can follow.
+        -- More than one wound bleeding, a walk, or danger near: the blood is
+        -- stopped first, the rest of the care can follow.
         if urgent and #chain > 1 then
-            local quick = picker(player, found)("dressing")
+            local quick = fresh()("dressing")
             local walk = false
             for _, entry in ipairs(supplies(chain)) do if not entry.reach then walk = true end end
-            if quick and (bleeders > 1 or walk or (weights[typeName(part)] or 0) >= 20) then
-                chain = {{kind = "bandage", item = quick}}
-            end
+            if quick and (bleeders > 1 or walk or options.hurry) then chain = {{kind = "bandage", item = quick}} end
         end
         if #chain == 0 then
             if urgent and not missing then missing = "bleeding" end
         elseif bloody[chain[1].kind] and not urgent and panicked(player) then
             waiting = waiting or "calming"
         else
-            local kinds = {}
+            local kinds, uses = {}, {}
             for _, step in ipairs(chain) do kinds[#kinds + 1] = step.kind end
-            local base = {part = part, danger = wound.danger, urgent = urgent, chain = table.concat(kinds, ">")}
-            -- Fetch first: nothing is unwrapped until all of it is at hand.
             local far, near = nil, {}
             for _, entry in ipairs(supplies(chain)) do
+                uses[entry.item] = true
                 if not entry.carried then
                     if entry.reach then near[#near + 1] = entry
                     elseif not far then far = entry end
                 end
             end
+            -- Fetch first: nothing is unwrapped until all of it is at hand.
             local step
             if #near > 0 then step = {kind = "take", entries = near}
             elseif far then step = {kind = "walk", square = far.square, entry = far}
             else step = chain[1] end
-            for key, value in pairs(base) do step[key] = value end
+            step.part, step.danger, step.urgent, step.uses = part, wound.danger, urgent, uses
+            step.chain = table.concat(kinds, ">")
             return step
         end
     end

@@ -1584,9 +1584,15 @@ do
     assert(not Kitchen.ledger(p),"The salad is made")
     -- Eaten meanwhile: the salad leaves room again.
     for i=#p.inventory.items,1,-1 do if p.inventory.items[i].fullType=="Base.Salad" then table.remove(p.inventory.items,i) end end
+    assert(s.reclaimNext,"Not picked up again before the dish has had its chance")
+    s.reclaimNext=nil
     assert(Kitchen.reclaim(p,s,90000),"The hammer is picked up again")
     run(); s.pending=nil
-    assert(p.inventory:contains(hammer) and not counter:contains(hammer) and not p:getModData().AutoMindfulSetAside,"Back in the pockets, nothing left to remember")
+    assert(p.inventory:contains(hammer) and not counter:contains(hammer),"Back in the pockets")
+    s.reclaimNext=nil
+    Kitchen.reclaim(p,s,200000)
+    local left=p:getModData().AutoMindfulSetAside
+    assert(not left or #left==0,"And forgotten only once it is really back")
     p.inventory.hasRoomFor=roomy
     Options.makeSoup=function() return false end
     passed("too much carried for a dish: things are set down near the kitchen and picked up again afterwards")

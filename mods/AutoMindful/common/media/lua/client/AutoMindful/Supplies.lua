@@ -388,6 +388,12 @@ local function better(candidate, best, kind, critical)
     return candidate.item and best.item and candidate.item:getID() < best.item:getID() or false
 end
 
+-- Whether the kitchen may cook (read when needed: Options loads the game's settings).
+local function kitchenCooks()
+    local ok, options = pcall(require, "AutoMindful/Options")
+    return ok and type(options) == "table" and type(options.cookMeals) == "function" and options.cookMeals() == true
+end
+
 local function consider(player, candidate, best, kind, critical)
     if not candidate.plan then
         candidate.plan = Consumables.plan(player, candidate.description, kind)
@@ -401,7 +407,9 @@ local function consider(player, candidate, best, kind, critical)
     -- for the kitchen to cook, unless hunger is critical.
     local dry = kind == "food" and not candidate.transfer and candidate.item and instanceof(candidate.item, "Food")
         and candidate.item:getThirstChange() > 0
-    if dry and not critical and (candidate.plan.utility or 0) <= 0 then return best end
+    -- Only when the kitchen may cook it instead; with cooking off it is still food.
+    local cooks = dry and kitchenCooks()
+    if dry and cooks and not critical and (candidate.plan.utility or 0) <= 0 then return best end
     local reserve = candidate.transfer and candidate.transfer.source.description or candidate.description
     candidate.reserve = reserve.remainingLiters or reserve.thirstRelief * 2
     candidate.cost = preparationCost(player, candidate)

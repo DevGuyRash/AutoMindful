@@ -300,10 +300,10 @@ end
 -- The best meal a chain of crafts leads to, each further craft paying the
 -- step penalty again. kinds: everything the chain has made so far. depth: how
 -- many crafts it has. budget: dish plans left for this look. seen: crafts in it.
-local function chain(player, found, kinds, gone, heatFor, skipped, now, depth, budget, seen)
+local function chain(player, found, kinds, gone, heatFor, skipped, now, depth, budget, seen, spent)
     if depth >= Craft.policy.depth or budget.left <= 0 then return nil end
     local types = {}
-    for kind in pairs(found.types or {}) do types[kind] = true end
+    for kind in pairs(found.types or {}) do if not (spent and spent[kind]) then types[kind] = true end end
     for _, kind in ipairs(kinds) do types[kind] = true end
     local best
     for _, next in ipairs(Craft.catalog().list) do
@@ -315,8 +315,16 @@ local function chain(player, found, kinds, gone, heatFor, skipped, now, depth, b
             for _, kind in ipairs(next.outputs) do made[#made + 1] = kind end
             local here = trial(player, found, virtuals(next.outputs), gone, heatFor, skipped, now)
             if here then here = here - (depth + 1) * Craft.policy.penalty end
+            -- What this craft uses up is not there for the next one.
+            local used = {}
+            for kind in pairs(spent or {}) do used[kind] = true end
+            for _, choices in ipairs(next.inputs) do
+                for _, kind in ipairs(choices) do
+                    if types[kind] and not next.keep[kind] then used[kind] = true; break end
+                end
+            end
             seen[next.name] = true
-            local further = chain(player, found, made, gone, heatFor, skipped, now, depth + 1, budget, seen)
+            local further = chain(player, found, made, gone, heatFor, skipped, now, depth + 1, budget, seen, used)
             seen[next.name] = nil
             for _, score in ipairs({here or false, further or false}) do
                 if score and (not best or score > best) then best = score end
@@ -639,7 +647,14 @@ function Craft.settle(player, state, now, cut)
     local inventory = player:getInventory()
     if entry.stage == "craft-fill" then
         local vessel = inventory:getItemById(entry.vessel)
-        if cut or not vessel then return end
+        if cut then return end
+        if not vessel then
+            -- Not fetched, again and again: the pot stays where it is.
+            entry.tries = (entry.tries or 0) + 1
+            if entry.tries >= Craft.policy.tries then return fail(player, state, now, entry, "vessel-not-fetched") end
+            K.write(player, entry)
+            return
+        end
         -- No more water than before, again and again: the tap or the pot will not do.
         local before = entry.before and entry.before[1]
         if before and water(vessel) <= before then

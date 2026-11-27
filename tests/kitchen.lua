@@ -1092,7 +1092,10 @@ do
     shelf.square.objects={{getContainerCount=function() return 1 end,getContainerByIndex=function() return shelf end}}
     T.add(shelf,food({name="Chicken",rotsAt=1}))
     T.add(shelf,material("Log"))
+    Options.makeSoup=function() return true end
     local summary=Kitchen.summary(p,1000)
+    Options.makeSoup=function() return false end
+    assert(summary.dishes and #summary.dishes==0 and summary.reason=="no pot, pan, bowl, bread or crust nearby","No dish, and why: no base")
     local states={}
     for _,heat in ipairs(summary.heats) do states[heat.tiles]=heat.state end
     assert(states[1]=="No power" and states[3]=="Something is already inside","Stove states: "..tostring(states[1]).." / "..tostring(states[3]))

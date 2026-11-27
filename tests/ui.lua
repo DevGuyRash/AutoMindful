@@ -252,9 +252,10 @@ package.loaded["AutoMindful/ZenMoodle"] = {install=function() end, watch=functio
 Clipboard = {setClipboard=function(text) Clipboard.text = text end}
 
 local summaries = 0
-local kitchenSummary = {radius=10, soonDays=3, raw=3, ready=1, frozen=2, soon=1, fridges=1, freezers=0, wood=4, tinder=1, starters=0,
+local kitchenSummary = {radius=10, soonDays=3, crafts={"Prepare Omelette"},
+    dishes={{name="Soup", base="Cooking Pot", count=3, heat="stove"}, {name="Salad", base="Bowl", count=1}}, raw=3, ready=1, frozen=2, soon=1, fridges=1, freezers=0, wood=4, tinder=1, starters=0,
     heats={{name="stove", state="No power", tone="bad", tiles=2}, {name="fireplace", state="Not lit: needs a lighter or matches", tone="warn", tiles=5, fueled=true}}}
-package.loaded["AutoMindful/Kitchen"] = {summary=function() summaries = summaries + 1; return kitchenSummary end}
+package.loaded["AutoMindful/Kitchen"] = {summary=function() summaries = summaries + 1; return kitchenSummary end, lookAgain=function() end}
 require "AutoMindful_Main"
 assert(zenWatched, "The Zen hover watch starts when the file loads, not only when a player is created")
 if not AutoMindful.UI then error("window did not load") end
@@ -431,8 +432,17 @@ assert(summaries - looked <= 2, "Looked over every two seconds, not twice a seco
 window:show("log"); looked = summaries
 for _ = 1, 8 do now = now + 500; window:update() end
 assert(summaries == looked, "Not at all while another tab is open")
+assert(kitchen:find("Soup in Cooking Pot, 3 ingredients, on the stove", 1, true) and kitchen:find("Salad in Bowl, 1 ingredient, no cooking", 1, true),
+    "What it could make, and how")
+assert(kitchen:find("Crafts it could do: Prepare Omelette.", 1, true))
+kitchenSummary.dishes, kitchenSummary.reason = {}, "no pot, pan, bowl, bread or crust nearby"
+window:show("log"); window:show("kitchen")
+assert(text(window):find("No dish yet: no pot, pan, bowl, bread or crust nearby.", 1, true), "Says why there is no dish")
+kitchenSummary.dishes, kitchenSummary.crafts = nil, nil
+window:show("log"); window:show("kitchen")
+assert(text(window):find("Dishes are off: turn on ", 1, true) and not text(window):find("Crafts it could do", 1, true))
 kitchenSummary.heats = {}
-window:show("kitchen")
+window:show("log"); window:show("kitchen")
 assert(text(window):find("No stove, microwave, grill, fireplace or campfire nearby.", 1, true) and not text(window):find("Lighters", 1, true))
 passed("the Kitchen tab shows each heat source and what it needs, the food and the cold, and looks only while open")
 

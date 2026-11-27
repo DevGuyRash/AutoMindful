@@ -453,6 +453,11 @@ end
 -- Rebuild now. `reset` also lets an unsized window shrink to the new content.
 function Window:invalidate(reset)
     self.nextRefresh = 0
+    -- A click on the Kitchen tab (a setting) is seen at once.
+    if self.view == "kitchen" then
+        self.kitchenAt = nil
+        if Kitchen.lookAgain then Kitchen.lookAgain(self.player) end
+    end
     if reset then self.resetFit = true end
     if self:getIsVisible() and self.body then self:refresh() end
 end

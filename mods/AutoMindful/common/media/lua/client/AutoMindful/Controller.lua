@@ -395,7 +395,7 @@ function Controller.stop(player, reason, cause, nativeReason)
     clearOwned(player, state)
     Recovery.kitchenStopped(player)
     Supplies.finishLoan(player, state.supplyLoan)
-    for _, loan in ipairs(state.loans) do loan.defer = nil end
+    for _, loan in ipairs(state.loans) do if not loan.held then loan.defer = nil end end
     state.supplyItem, state.supplyKind, state.supplyLoan, state.supplySource = nil, nil, nil, nil
     state.supplyStop = nil
     state.supplyBaseline, state.preparation, state.collectingItem, state.fluidSupply = nil, nil, nil, nil

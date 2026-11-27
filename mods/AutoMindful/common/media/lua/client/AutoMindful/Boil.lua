@@ -95,7 +95,7 @@ function Boil.forget(player) homeward(player) end
 -- Ours on the heat: the pot in the heat's container, or a heat we lit still
 -- on. Out of sight, a heat we lit counts as on.
 local function onHeat(entry, stove)
-    if not stove then return (entry.lit or entry.litHere) == true end
+    if not stove then return (entry.lit or entry.litHere or entry.placed) == true end
     local inside = stove:getContainer():getItemById(entry.item)
     return inside ~= nil or ((entry.lit or entry.litHere) and K.isOn(stove)) == true
 end
@@ -134,7 +134,7 @@ function Boil.start(player, state, now, count, pots)
     -- The others this heat takes, best first: one out of reach makes way for the next.
     local spares = {}
     for _, candidate in ipairs(pots) do
-        if heat and candidate ~= pot and not candidate.carried and K.accepts(heat.object, candidate.item) then spares[#spares + 1] = candidate end
+        if heat and candidate ~= pot and K.accepts(heat.object, candidate.item) then spares[#spares + 1] = candidate end
     end
     local fluid = pot and fluidOf(pot.item)
     -- Taps, sinks and barrels, nearest first: never a bottle or pot of water lying on the floor.
@@ -226,6 +226,7 @@ function Boil.step(player, state, now, entry, stove)
             return false
         end
         local fire = entry.after == "fill" and K.fueled(stove)
+        if not container:getItemById(entry.item) then entry.placed = nil end
         if container:getItemById(entry.item) or (not fire and onHeat(entry, stove)) then
             if entry.waitUntil and now < entry.waitUntil and entry.waitUntil - now <= 120000 then return false end
             if (entry.tries or 0) >= Boil.policy.tries then
@@ -267,7 +268,9 @@ function Boil.step(player, state, now, entry, stove)
         if square and not adjacent(player, square) and first.item == source.pot and (entry.walks or 0) >= Boil.policy.tries
                 and source.spares and #source.spares > 0 then
             local spare = table.remove(source.spares, 1)
-            for index, wanted in ipairs(source.fetch) do if wanted == first then source.fetch[index] = spare.entry end end
+            for index, wanted in ipairs(source.fetch) do if wanted == first then table.remove(source.fetch, index); break end end
+            -- Already in the hands, a spare needs no fetch (and no loan).
+            if not spare.carried then table.insert(source.fetch, 1, spare.entry) else source.loan = nil end
             source.pot, entry.item, entry.walks = spare.item, spare.item:getID(), 0
             K.write(player, entry)
             return Boil.step(player, state, now, entry, stove)
@@ -296,6 +299,8 @@ function Boil.step(player, state, now, entry, stove)
         -- A little over what is left to sterilize, so the last one still has its half litre.
         local need = math.min(fluid:getCapacity(), Boil.policy.liters * remaining + 0.1)
         local tap, square = tapAt(source and source.taps and source.taps[1])
+        -- Dry or gone: the next tap before settling for less water.
+        if not tap and source and source.taps and #source.taps > 1 then table.remove(source.taps, 1); return Boil.step(player, state, now, entry, stove) end
         if enough(fluid:getAmount(), need) or (enough(fluid:getAmount()) and not tap) then
             entry.stage, entry.walks = "boil-place", 0
             K.write(player, entry)
@@ -392,7 +397,7 @@ function Boil.settle(player, state, now, cut)
             local on = K.isOn(stove)
             if K.fueled(stove) then entry.lit = entry.litHere or nil
             elseif not on then entry.grace = now + 5000 end
-            entry.stage, entry.tries = "boil-heat", 0
+            entry.stage, entry.tries, entry.placed = "boil-heat", 0, true
         elseif not cut then
             entry.tries = (entry.tries or 0) + 1
             if entry.tries > Boil.policy.tries then K.write(player, entry); return fail(player, state, now, entry, stove, "not-placed", true) end
@@ -409,7 +414,13 @@ function Boil.settle(player, state, now, cut)
         local fluid = pot and fluidOf(pot)
         if not (fluid and fluid:getAmount() > entry.before) and not cut then
             entry.tries = (entry.tries or 0) + 1
-            if entry.tries > Boil.policy.tries then entry.before = nil; K.write(player, entry); return fail(player, state, now, entry, stove, "not-filled", true) end
+            if entry.tries > Boil.policy.tries then
+                entry.before = nil
+                local source = sources[player]
+                -- This one will not give water: the next, if any.
+                if source and source.taps and #source.taps > 1 then table.remove(source.taps, 1); entry.tries = 0; K.write(player, entry); return end
+                K.write(player, entry); return fail(player, state, now, entry, stove, "not-filled", true)
+            end
         end
         entry.before = nil
     elseif entry.stage == "boil-fetch" and entry.fetched then
@@ -424,7 +435,7 @@ function Boil.settle(player, state, now, cut)
         end
         entry.fetched = nil
     elseif entry.stage == "boil-off" then
-        if onHeat(entry, stove) and not cut then entry.tries = (entry.tries or 0) + 1 end
+        if onHeat(entry, stove) then entry.tries = (entry.tries or 0) + 1 end
     end
     K.write(player, entry)
 end
@@ -438,9 +449,10 @@ function Boil.ended(player, entry, stove)
         K.write(player, nil)
         return nil
     end
-    if not stove then return "A heat with a pot of water may still be on, out of sight." end
+    -- Never resumed as a boil: the next start only finishes taking it off.
     entry.stage, entry.after = "boil-off", "stopped"
     K.write(player, entry)
+    if not stove then return "A heat with a pot of water may still be on, out of sight." end
     if not adjacent(player, stove:getSquare()) or player:isDead() then
         return "The " .. K.heatName(stove) .. " is still on with a pot of water."
     end
@@ -448,8 +460,8 @@ function Boil.ended(player, entry, stove)
     local inside = container:getItemById(entry.item)
     if (entry.lit or entry.litHere) and K.isOn(stove) then K.toggle(player, stove, false) end
     if inside then ISTimedActionQueue.add(ISInventoryTransferUtil.newInventoryTransferAction(player, inside, container, player:getInventory())) end
-    -- Off the heat now: the pot goes home with the other borrowed things.
-    homeward(player)
+    -- The pot's loan stays held until the next start closes the plan, so no
+    -- return pass mistakes a pot still on its way off the heat for one used up.
     return "Turning the " .. K.heatName(stove) .. " off and taking the water off it."
 end
 

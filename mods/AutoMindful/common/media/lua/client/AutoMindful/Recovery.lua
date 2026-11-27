@@ -113,7 +113,7 @@ function Recovery.optionalWork(player, state)
         local entry = Kitchen.ledger(player)
         -- Boiling water for dressings can wait too, except taking it off the heat.
         return entry ~= nil and ((entry.reason == "practice" and entry.stage ~= "cooking" and entry.stage ~= "finishing")
-            or (entry.kind == "boil" and entry.stage ~= "boil-off"))
+            or (entry.kind == "boil" and (entry.stage ~= "boil-off" or entry.after == "fill")))
     end
     if state.phase == "collecting" then return state.supplyKind == "literature" or state.lifestylePickup ~= nil end
     return not essential[state.phase]

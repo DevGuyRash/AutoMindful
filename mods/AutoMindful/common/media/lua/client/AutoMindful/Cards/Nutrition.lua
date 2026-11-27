@@ -204,7 +204,7 @@ function Card.rows(window, s, rows)
         math.floor(s.burnHour + 0.5), s.warmth > 1.05 and string.format(" (keeping warm x%.1f)", s.warmth) or "")
     if s.fitnessBlocked then facts[#facts + 1] = "Fitness XP is blocked at this weight." end
     for _, fact in ipairs(facts) do rows[#rows + 1] = {kind = "text", bullet = true, text = fact, color = colors.muted} end
-    for _, id in ipairs({"dietGoal"}) do
+    for _, id in ipairs({"dietGoal", "foodHover"}) do
         local entry, text = Options.choice(id), Options.windowText[id]
         rows[#rows + 1] = {kind = "setting", label = text[1], value = entry.short or entry.label, menu = true,
             tip = entry.help or text[2], onClick = function() window:openChoiceMenu(id) end}

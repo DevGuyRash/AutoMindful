@@ -19,6 +19,7 @@ Options.windowText = {
     recoveryAway = {"Away after", "Without any input. While you are away, Autopilot does everything it can."},
     cyclePolicy = {"Training both"},
     dietGoal = {"Diet goal"},
+    foodHover = {"Nutrition on food", "What hovering over food shows: what eating it does to this survivor now."},
     cookTraining = {"Cooking practice", "When nobody is hungry, cooks raw food from the cupboards for Cooking XP and puts it back cold. What you carry is left alone."},
     logLevel = {"Log detail"},
 }
@@ -173,6 +174,25 @@ function Options.dietIndex()
 end
 choices("dietGoal", diets, Options.dietIndex)
 function Options.dietGoal() return diets[Options.dietIndex()].id end
+
+-- PZ stores the combo's index. Keep this order stable.
+local hovers = {
+    {id="always", label="Always", help="Calories, macros and what eating it would change, for any food."},
+    {id="label", label="When the label can be read", help="As the game shows nutrition: packaged food you can read, or with the Nutritionist trait."},
+    {id="off", label="Off", help="Food tooltips stay as the game and other mods make them."},
+}
+local hover = settings:getOption("foodHover")
+if not hover then
+    hover = settings:addComboBox("foodHover", "Nutrition on food tooltips", "What hovering over food shows about eating it.")
+    for _, entry in ipairs(hovers) do hover:addItem(entry.label) end
+    hover:setValue(1)
+end
+function Options.foodHoverIndex()
+    local index = tonumber(hover:getValue())
+    return index and hovers[index] and index or 1
+end
+choices("foodHover", hovers, Options.foodHoverIndex)
+function Options.foodHover() return hovers[Options.foodHoverIndex()].id end
 
 function Options.cycleIndex()
     local index = tonumber(cycle:getValue())

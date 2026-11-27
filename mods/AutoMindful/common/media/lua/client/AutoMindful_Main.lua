@@ -9,6 +9,9 @@ require("AutoMindful/SkillsPane").install()
 local ZenMoodle = require "AutoMindful/ZenMoodle"
 ZenMoodle.install()
 ZenMoodle.watch()
+require "ISUI/ISToolTipInv"
+local FoodHover = require "AutoMindful/FoodHover"
+FoodHover.install()
 Log.setLevelSource(Options.logLevel)
 
 local function version(id)
@@ -21,6 +24,8 @@ local function onGameStart()
     Theme.preload()
     ZenMoodle.onPlayerReady()
     WorldMenu.install()
+    -- Mods loaded after this one may have replaced it since: wrap what is there now.
+    FoodHover.install()
 end
 
 local function keyPressed(key)

@@ -8,7 +8,9 @@ for _, name in ipairs({"TimedActions/ISTimedActionQueue", "TimedActions/ISReadAB
 end
 package.preload["Vehicles/TimedActions/ISPathFindAction"] = function() return true end
 package.preload["TimedActions/WalkToTimedAction"] = function() return true end
-package.preload["TimedActions/ISApplyBandage"] = function() return true end
+for _, name in ipairs({"ISApplyBandage", "ISRemoveGlass", "ISRemoveBullet", "ISDisinfect", "ISStitch", "ISSplint", "ISCleanBurn", "ISComfreyCataplasm", "ISGarlicCataplasm", "ISPlantainCataplasm"}) do
+    package.preload["TimedActions/" .. name] = function() return true end
+end
 package.preload["TimedActions/ISQueueActionsAction"] = function() return true end
 local roaming = {enabled=false, radius=10}
 -- Recovery's waiting times have their own test; here every mechanism is on and

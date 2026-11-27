@@ -82,8 +82,8 @@ choices("recoveryAway", awayEntries, Options.awayIndex)
 local recoveryTicks = {}
 -- {id, Options > Mods label, its help, window label, window tip}
 for _, row in ipairs({
-    {"recoveryFirstAid", "Bandage wounds", "Uses the best dressing carried or within reach. Also during training.",
-        "Bandage wounds", "Uses the best dressing carried or within reach. Also during training."},
+    {"recoveryFirstAid", "First aid", "Stops bleeding, then pulls glass and bullets, disinfects, stitches, splints and dresses wounds with what is carried or nearby, and puts borrowed supplies back. Also during training.",
+        "First aid", "Stops bleeding, then pulls glass and bullets, disinfects, stitches, splints and dresses wounds with what is carried or nearby, and puts borrowed supplies back. Also during training."},
     {"recoveryBetween", "Autopilot: eat and drink between your actions", "While you or another mod keep the action queue busy, a carried bite or sip goes between two actions.",
         "Eat and drink between actions", "While you or another mod keep the queue busy, a carried bite or sip goes between two actions."},
     {"recoveryRefill", "Autopilot: keep carried bottles full", "Refills bottles you carry at clean water. The game drinks from them by itself.",

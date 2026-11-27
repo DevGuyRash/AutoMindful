@@ -585,6 +585,42 @@ Events.OnPlayerUpdate.Add(function(player)
             elseif command == "wound" then
                 player:getBodyDamage():getBodyPart(BodyPartType.ForeArm_L):setCut(true)
                 player:getBodyDamage():getBodyPart(BodyPartType.ForeArm_L):setBleedingTime(20)
+            elseif command == "injure" then
+                -- Scripted injuries for first aid: "injure <kind> [BodyPartType]", as the game's own
+                -- cheat menu sets them (ISHealthPanel.onCheatCurrentPlayer).
+                local kind, where = line:match("^%S+%s+(%S+)%s*(%a*_?%a*)")
+                local part = player:getBodyDamage():getBodyPart(BodyPartType[where ~= "" and where or "ForeArm_L"])
+                if kind == "bleeding" then part:setCut(true); part:setBleedingTime(20)
+                elseif kind == "deep" then part:generateDeepWound()
+                elseif kind == "glass" then part:generateDeepShardWound()
+                elseif kind == "bullet" then part:setHaveBullet(true, 0)
+                elseif kind == "fracture" then part:setFractureTime(21)
+                elseif kind == "infected" then part:setCut(true); part:setInfectedWound(true); part:setWoundInfectionLevel(10)
+                elseif kind == "burn" then part:setBurned(); part:setNeedBurnWash(true)
+                elseif kind == "scratch" then part:setScratched(true, true)
+                elseif kind == "bite" then part:SetBitten(true)
+                elseif kind == "dirty" then part:setBandaged(true, 0, false, "Base.Bandage"); part:setCut(true)
+                elseif kind == "goodstitch" then part:setStitched(true); part:setStitchTime(45)
+                elseif kind == "healedsplint" then part:setSplint(true, 2); part:setSplintItem("Base.Splint"); part:setFractureTime(0)
+                elseif kind == "heal" then player:getBodyDamage():RestoreToFullHealth() end
+                print("[AutoMindfulFixture] INJURED " .. kind .. " " .. tostring(part:getType()))
+            elseif command == "body" then
+                -- What the health panel would show, part by part.
+                local parts = player:getBodyDamage():getBodyParts()
+                for index = 0, parts:size() - 1 do
+                    local b = parts:get(index)
+                    if b:HasInjury() or b:bandaged() or b:stitched() or b:getSplintFactor() > 0 or b:getFractureTime() > 0 then
+                        print(string.format("[AutoMindfulFixture] BODY %s bleed=%s bandaged=%s dirty=%s sterile=%s cut=%s scratch=%s deep=%s glass=%s bullet=%s stitched=%s stitchTime=%.1f fracture=%.1f splint=%.1f burn=%.1f wash=%s infected=%s alcohol=%.2f herbs=%.1f/%.1f/%.1f",
+                            tostring(b:getType()), tostring(b:bleeding()), tostring(b:bandaged()), tostring(b:isBandageDirty()), tostring(b:getBandageType()),
+                            tostring(b:isCut()), tostring(b:scratched()), tostring(b:deepWounded()), tostring(b:haveGlass()), tostring(b:haveBullet()),
+                            tostring(b:stitched()), b:getStitchTime(), b:getFractureTime(), b:getSplintFactor(), b:getBurnTime(), tostring(b:isNeedBurnWash()),
+                            tostring(b:isInfectedWound()), b:getAlcoholLevel(), b:getPlantainFactor(), b:getComfreyFactor(), b:getGarlicFactor()))
+                    end
+                end
+                local items = {}
+                local inventory = player:getInventory():getItems()
+                for index = 0, inventory:size() - 1 do items[#items + 1] = inventory:get(index):getFullType() end
+                print("[AutoMindfulFixture] BODY inventory " .. table.concat(items, ","))
             elseif command == "work" then
                 -- A row of ordinary actions nobody in AutoMindful owns, like chopping a row of trees.
                 local Work = ISBaseTimedAction:derive("FixtureWork")

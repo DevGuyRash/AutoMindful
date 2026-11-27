@@ -145,6 +145,18 @@ local function part(fields)
     function b:HasInjury() return self.open or self.scratch or self.blood or false end
     function b:getType() return 1 end
     function b:getStiffness() return 0 end
+    function b:haveGlass() return false end
+    function b:haveBullet() return false end
+    function b:isInfectedWound() return false end
+    function b:stitched() return false end
+    function b:getStitchTime() return 0 end
+    function b:getFractureTime() return 0 end
+    function b:getSplintFactor() return 0 end
+    function b:isNeedBurnWash() return false end
+    function b:getAlcoholLevel() return 0 end
+    function b:getPlantainFactor() return 0 end
+    function b:getComfreyFactor() return 0 end
+    function b:getGarlicFactor() return 0 end
     return b
 end
 local function bandage(p,name,alcohol)

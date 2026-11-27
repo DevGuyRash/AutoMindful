@@ -181,36 +181,68 @@ local function reach(state)
     return not (state.guard and state.guard.level == "vehicle") and (state.collectNearby or Options.searchNearby())
 end
 
+-- Borrowed for this wound stays borrowed until the wound is seen to; then it
+-- goes back where it came from, the floor included (placed, not dropped).
+local function releaseAid(state)
+    for _, loan in ipairs(state.aidLoans or {}) do loan.defer, loan.aidReturn = nil, true end
+    state.aidLoans = nil
+end
+
 -- What the last step was meant to change. A server may refuse it, or answer
 -- late; neither is a reason to use up another bandage or to skip dinner.
 local function aidSettled(player, state, now)
     local try = state.aidTry
     if not try then return true end
-    local part, done = try.part, false
-    if try.step == "fetch" then done = Supplies.inventoryItem(player, try.item) ~= nil
-    elseif try.step == "remove" then done = not part:bandaged()
-    else done = part:bandaged() end
-    if done then
+    if FirstAid.done(player, try.step) then
         state.aidTry = nil
-        if try.step == "apply" then state.aidHeld = nil end
+        if try.step.kind == "bandage" and state.aidHeld then state.aidHeld[try.step.part] = nil end
         return true
     end
     try.endedAt = try.endedAt or now
     if now >= try.endedAt and now - try.endedAt < aidConfirmMs then return false end
     state.aidTry = nil
+    local part = try.step.part
     local held = state.aidHeld or {}
     state.aidHeld = held
     local record = held[part] or {count=0}
     held[part] = record
-    -- Cut short says nothing about the bandage. Finished without effect does.
+    -- Cut short says nothing about the supplies. Finished without effect does.
     if try.cut then record.at = now + 10000
     else
         record.count = record.count + 1
         record.at = now + math.min(setbackLimitMs, 30000 * 2 ^ (record.count - 1))
-        state.rejected[try.item:getID()] = now + 60000
+        local item = try.step.item or try.step.tool or try.step.thread
+        if item then state.rejected[item.item:getID()] = now + 60000 end
     end
-    Log.event(player, "firstaid.refused", "step", try.step, "part", FirstAid.partName(part), "count", record.count, "cutShort", try.cut)
+    FirstAid.forget(player)
+    Log.event(player, "firstaid.refused", "step", try.step.kind, "part", FirstAid.partName(part), "count", record.count, "cutShort", try.cut)
     return true
+end
+
+-- A borrowed thing whose shelf is out of reach: walk back to it, so the
+-- ordinary return can put it there.
+local function returnTrip(player, state, now)
+    for _, loan in ipairs(state.loans) do
+        if loan.aidReturn and not loan.defer and (loan.aidWalks or 0) < 2 then
+            local square = loan.floor and loan.floor.square or loan.origin and Supplies.sourceSquare(loan.origin)
+            if square and not Grid.reachable(player:getSquare(), square) then
+                loan.aidWalks = (loan.aidWalks or 0) + 1
+                return P.ownBatch(player, state, "firstaid", "Taking borrowed first aid supplies back.", function()
+                    luautils.walkAdj(player, square, true)
+                end)
+            end
+        end
+    end
+    return false
+end
+
+-- Said once per change: what waits for safety, so the log shows it.
+local function waiting(player, state, step, why)
+    state.aidNotice = FirstAid.describe(step):gsub("%.$", "") .. " waits until it is safe."
+    local signature = why .. ":" .. FirstAid.partName(step.part) .. ":" .. step.chain
+    if state.aidWaiting == signature then return end
+    state.aidWaiting = signature
+    Log.event(player, "firstaid.waiting", "why", why, "part", FirstAid.partName(step.part), "next", step.kind, "chain", step.chain)
 end
 
 function Recovery.firstAid(player, state, now)
@@ -219,37 +251,60 @@ function Recovery.firstAid(player, state, now)
     if not player:getBodyDamage().getBodyParts then return false end
     if not aidSettled(player, state, now) then return false end
     state.aidNext = now + 1000
-    local part, rank = FirstAid.wound(player, function(part)
-        local held = state.aidHeld and state.aidHeld[part]
-        return held ~= nil and now < held.at and held.at - now <= setbackLimitMs
-    end)
-    if not part then state.aidNotice = nil; return false end
-    -- A dirty bandage or a scratch can wait until nobody needs the hands.
-    if rank < 4 and (state.lowHealth or Needs.critical(player, "water") or Needs.critical(player, "food")
-            or state.guard and state.guard.level ~= "bleeding" or not Recovery.permit(player, state, "topUp", now)) then return false end
-    local plan, missing = FirstAid.next(player, reach(state), part, rank)
-    if not plan then
-        state.aidNext = now + aidRetryMs
-        state.aidNotice = missing == "bleeding" and "Bleeding, and there is no bandage within reach." or nil
-        return false
+    local step, missing = FirstAid.plan(player, {radius = reach(state) and Options.searchRadius() or 0,
+        blocked = function(part)
+            local held = state.aidHeld and state.aidHeld[part]
+            return held ~= nil and now < held.at and held.at - now <= setbackLimitMs
+        end})
+    if not step then
+        state.aidNotice = missing == "bleeding" and "Bleeding, and there is no bandage within reach."
+            or missing == "calming" and "Wounds wait until the panic passes: the sight of blood." or nil
+        if missing then state.aidNext = now + aidRetryMs; return false end
+        state.aidWaiting = nil
+        releaseAid(state)
+        return not state.guard and Recovery.permit(player, state, "topUp", now) and returnTrip(player, state, now)
     end
     state.aidNotice = nil
-    if not plan.remove and plan.item:getContainer() ~= player:getInventory() then
-        state.aidTry = {step="fetch", part=part, item=plan.item}
-        local queued = P.ownBatch(player, state, "firstaid", "Getting a bandage.", function() Supplies.transfer(player, plan.item) end)
-        if queued then return true end
-        state.pending = nil
+    -- Only stopping blood comes before everything; the rest waits until it is
+    -- safe, nobody needs the hands, and no thirst or hunger is critical. Low
+    -- health is no reason to wait: treating the wounds is how it comes back.
+    local guarded = state.guard and state.guard.level ~= "bleeding"
+    if not step.urgent and (Needs.critical(player, "water") or Needs.critical(player, "food")
+            or guarded or not Recovery.permit(player, state, "topUp", now)) then
+        if guarded then waiting(player, state, step, state.guard.reason or state.guard.level) end
         return false
     end
-    state.aidTry = {step=plan.remove and "remove" or "apply", part=part, item=plan.item}
-    local name = FirstAid.partName(plan.part)
-    local queued = P.ownBatch(player, state, "firstaid",
-        plan.remove and ("Taking a dirty bandage off: " .. name .. ".") or ("Bandaging: " .. name .. "."), function()
-        local action = FirstAid.action(player, plan)
-        if action then ISTimedActionQueue.add(action) end
-    end)
-    Log.event(player, "firstaid", "part", name, "item", Snap.item(plan.item), "remove", plan.remove, "bleeding", plan.bleeding, "queued", queued)
+    -- Walking somewhere is not for a moment with zombies in view.
+    if step.kind == "walk" and guarded then waiting(player, state, step, state.guard.reason or state.guard.level); return false end
+    state.aidWaiting = nil
+    state.aidTry = {step=step}
+    local message = FirstAid.describe(step)
+    local queued
+    if step.kind == "take" then
+        queued = P.ownBatch(player, state, "firstaid", message, function()
+            for _, entry in ipairs(step.entries) do
+                local loan = P.loanFor(player, state, entry.item)
+                if loan then
+                    loan.defer = true
+                    state.aidLoans = state.aidLoans or {}
+                    state.aidLoans[#state.aidLoans + 1] = loan
+                end
+                Supplies.transfer(player, entry.item, loan)
+            end
+        end)
+    elseif step.kind == "walk" then
+        queued = P.ownBatch(player, state, "firstaid", message, function() luautils.walkAdj(player, step.square, true) end)
+    else
+        queued = P.ownBatch(player, state, "firstaid", message, function()
+            local action = FirstAid.action(player, step)
+            if action then ISTimedActionQueue.add(action) end
+        end)
+    end
+    local item = step.item or step.tool or step.thread or step.plank or step.alcohol or step.rag or step.herb
+    Log.event(player, "firstaid", "step", step.kind, "part", FirstAid.partName(step.part), "chain", step.chain,
+        "item", item and Snap.item(item.item), "urgent", step.urgent, "queued", queued)
     if queued then return true end
+    state.aidTry = nil
     state.pending = nil
     return false
 end

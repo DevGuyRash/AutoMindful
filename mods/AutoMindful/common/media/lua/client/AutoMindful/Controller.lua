@@ -857,11 +857,12 @@ local function excursionMotion(player, state)
     local current = queueFor(player)[1]
     -- Our own care action moving the survivor is not the player walking off.
     if current and current.autoMindfulOwner == state and fixtureCare[state.phase] then return true end
-    -- The kitchen walks to the stove and back without a trip of its own.
-    if not (state.excursion or state.phase == "kitchen") then return false end
+    -- The kitchen walks to the stove and back without a trip of its own, and
+    -- first aid to a first aid kit and back to its shelf.
+    if not (state.excursion or state.phase == "kitchen" or state.phase == "firstaid") then return false end
     if current then return current.autoMindfulOwner == state and routeAction(current) end
     -- Native motion can outlive the queued walk by a frame at completion or path failure.
-    if state.phase == "travelling" or state.phase == "bed" or state.phase == "kitchen" then
+    if state.phase == "travelling" or state.phase == "bed" or state.phase == "kitchen" or state.phase == "firstaid" then
         for _, action in ipairs(state.pending or {}) do
             if routeAction(action) and (action.autoMindfulFinished or action.autoMindfulStopped) then return true end
         end
@@ -5030,7 +5031,7 @@ Events.OnPlayerDeath.Add(function(player)
 end)
 Events.OnGameStart.Add(function() states, resumed = {}, {} end)
 
-Recovery.bind({policy=recoveryPolicy, stat=stat, levels=levels, queueFor=queueFor, setPhase=setPhase, ownBatch=ownBatch, supply=supply,
+Recovery.bind({policy=recoveryPolicy, stat=stat, levels=levels, queueFor=queueFor, setPhase=setPhase, ownBatch=ownBatch, supply=supply, loanFor=loanFor,
     care=care, lifestyleCare=lifestyleCare, lifestyleReady=lifestyleReady, painAvailable=painAvailable, earlySupply=earlyRecoverySupply,
     practiceCare=practiceCare, meditationGate=meditationGate, yogaAdmission=yogaAdmission, waitForSleep=waitForSleep,
     restNaturally=restNaturally, sampleIdle=sampleRecoveryIdle, rememberOrigin=rememberOrigin, endurance=Endurance.read,

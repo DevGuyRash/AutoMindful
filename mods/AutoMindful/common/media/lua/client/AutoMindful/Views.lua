@@ -10,6 +10,11 @@ local Progress = require "AutoMindful/Progress"
 local Theme = require "AutoMindful/Theme"
 local Tiers = require "AutoMindful/TierTargets"
 local Wellness = require "AutoMindful/WellnessInfo"
+local Clock = require "AutoMindful/Clock"
+local Dashboard = require "AutoMindful/Dashboard"
+Dashboard.register(require "AutoMindful/Cards/Wounds")
+Dashboard.register(require "AutoMindful/Cards/Nutrition")
+Dashboard.register(require "AutoMindful/Cards/Lifestyle")
 
 local Views = {}
 local colors = Theme.colors
@@ -149,6 +154,7 @@ end
 
 function Views.now(window)
     local player, status, rows = window.player, window.status, {}
+    Views.glances(rows, window, true)
     if status.active or status.switching then
         local label, detail, tone = activity(status)
         rows[#rows + 1] = {kind="title", text=Jobs.title(status), right=status.elapsed and elapsed(status.elapsed),
@@ -195,6 +201,7 @@ function Views.now(window)
             {text="Switch", menu=true, color=colors.muted, onClick=function() window:openSwitchMenu() end,
                 tip="Change to another job without stopping first."},
         }}
+        Views.glances(rows, window, false)
         appendNotices(rows, notices(player, status, window.report, window.startError, said))
         return rows
     end
@@ -215,6 +222,7 @@ function Views.now(window)
                 onClick=function() window:chooseJob(job) end}
         end
     end
+    Views.glances(rows, window, false)
     appendNotices(rows, notices(player, status, window.report, window.startError))
     return rows
 end
@@ -446,8 +454,91 @@ function Views.settings(window)
     return rows
 end
 
+local glanceTones = {good=colors.good, warn=colors.warn, bad=colors.bad, muted=colors.muted}
+
+-- The Body tab: what is coming up across every card, then each card.
+function Views.body(window)
+    local player, rows = window.player, {}
+    local collected = Views.collect(window)
+    if #collected == 0 then
+        rows[#rows + 1] = {kind="text", text="Nothing to show for this survivor yet.", color=colors.muted}
+        return rows
+    end
+    -- A card in danger (bleeding) comes before anything else, the timeline included.
+    local urgent, calm = {}, {}
+    for _, entry in ipairs(collected) do
+        local list = entry.pill and entry.pill.urgent and urgent or calm
+        list[#list + 1] = entry
+    end
+    local function cards(list)
+        for _, entry in ipairs(list) do
+            local card, pill = entry.card, entry.pill
+            -- Something dangerous never stays folded away.
+            local folded = Preferences.folded(player, card.id) and not (pill and pill.urgent)
+            rows[#rows + 1] = {kind="card", title=card.title, collapsed=folded,
+                pill=pill and {text=pill.text, color=glanceTones[pill.tone] or colors.muted},
+                color=pill and glanceTones[pill.tone] or colors.muted, label=card.id,
+                onClick=function() Preferences.setFolded(player, card.id, not folded); window:invalidate(true) end}
+            if not folded and card.rows then
+                local ok, err = pcall(card.rows, window, entry.model, rows)
+                if not ok then Log.detail(player, "ui.card", "card", card.id, "part", "rows", "error", tostring(err)) end
+            end
+            gap(rows, 8)
+        end
+    end
+    cards(urgent)
+    local events = Dashboard.timeline(collected, 24 * 60)
+    if #events > 0 then
+        head(rows, "Coming up", "next 24 in-game hours")
+        local all = {}
+        for index, event in ipairs(events) do
+            all[#all + 1] = Clock.game(event.minutes) .. ": " .. event.text
+            if index <= 5 then
+                rows[#rows + 1] = {kind="event", text=event.text, right=Clock.column(event.minutes),
+                    color=glanceTones[event.tone] or colors.muted, tip="In " .. Clock.both(event.minutes) .. " at normal speed."}
+            end
+        end
+        if #events > 5 then
+            rows[#rows + 1] = {kind="text", text="And " .. (#events - 5) .. " more.", color=colors.faint,
+                tip=table.concat(all, " <LINE> ")}
+        end
+        gap(rows, 6)
+    end
+    cards(calm)
+    return rows
+end
+
+-- What the cards have to say, read once per refresh (the window clears it)
+-- for every part of the view that asks.
+function Views.collect(window)
+    if not window.collected then window.collected = Dashboard.collect(window.player, window) end
+    return window.collected
+end
+
+-- The Now tab's line per card that has something worth knowing.
+-- urgent: true for the lines that go first (a wound bleeding), false for the rest.
+local function glances(rows, window, urgent)
+    local list = {}
+    for _, entry in ipairs(Views.collect(window)) do
+        if entry.glance and (entry.glance.urgent == true) == urgent then list[#list + 1] = entry end
+    end
+    if #list == 0 then return end
+    if not urgent then gap(rows, 4); head(rows, "Body") end
+    for _, entry in ipairs(list) do
+        local g = entry.glance
+        local buttons = {{text="Open", color=colors.muted, tip="See it in the Body tab.",
+            onClick=function() window.focusCard = entry.card.id; window:show("body") end}}
+        -- Something to do about it, right here (stop the bleeding).
+        if g.action then table.insert(buttons, 1, {text=g.action.text, color=glanceTones[g.tone], tip=g.action.tip,
+            disabled=g.action.disabled, onClick=g.action.onClick}) end
+        rows[#rows + 1] = {kind="wound", title=g.text, color=glanceTones[g.tone], buttons=buttons}
+    end
+    if urgent then gap(rows, 4) end
+end
+Views.glances = glances
+
 Views.order = {
-    {id="now", title="Now"}, {id="supplies", title="Supplies"}, {id="kitchen", title="Kitchen"}, {id="log", title="Log"},
+    {id="now", title="Now"}, {id="body", title="Body"}, {id="supplies", title="Supplies"}, {id="kitchen", title="Kitchen"}, {id="log", title="Log"},
     {id="guide", title="Guide"}, {id="settings", title="Settings"},
 }
 

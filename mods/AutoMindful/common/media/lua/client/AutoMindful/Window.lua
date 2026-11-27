@@ -486,6 +486,7 @@ function Window:refresh()
     if running then self.startError = nil end
     self.accent = running and Jobs.colors[self.status.mode] or "recovery"
     self.title = self.geometry.mini and running and Jobs.title(self.status) or Theme.brand
+    self.collected = nil
     self.body:setRows(Views[self.view](self))
     local reset = self.resetFit
     self.resetFit = nil
@@ -493,6 +494,15 @@ function Window:refresh()
     self:fit(reset)
     self.body:measure()
     self:fit(reset)
+    -- Opened from a line on the Now tab or the Health panel: that card in view.
+    if self.focusCard and self.view == "body" then
+        for _, entry in ipairs(self.body.layout) do
+            if entry.row.kind == "card" and entry.row.label == self.focusCard then
+                self.body:setYScroll(-math.min(entry.y, math.max(0, self.body.contentHeight - self.body.height)))
+            end
+        end
+        self.focusCard = nil
+    end
 end
 
 function Window:update()

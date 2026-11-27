@@ -6,6 +6,10 @@ package.loaded["PZAPI/ModOptions"] = true
 package.loaded["ISMeditation/ZenWellnessContextMenu"] = true
 package.loaded["TimedActions/WalkToTimedAction"] = true
 package.loaded["XpSystem/ISUI/ISCharacterInfo"] = true
+package.loaded["XpSystem/ISUI/ISHealthPanel"] = true
+package.loaded["ISUI/ISToolTipInv"] = true
+for _, name in ipairs({"ISApplyBandage", "ISRemoveGlass", "ISRemoveBullet", "ISDisinfect", "ISStitch", "ISSplint", "ISCleanBurn",
+        "ISComfreyCataplasm", "ISGarlicCataplasm", "ISPlantainCataplasm"}) do package.loaded["TimedActions/" .. name] = true end
 local function passed(text) print("PASS " .. text) end
 
 UIFont = {Small=1, Medium=2}
@@ -299,7 +303,7 @@ end
 files["AutoMindful/window-0.txt"] = "1 62 25 538 828 1\n"
 local before
 local window = Window.open(player)
-assert(window:getX() == 62 and window:getY() == 25 and window.width < 400 and window.height < 420, "The old position carries over, the old size does not")
+assert(window:getX() == 62 and window:getY() == 25 and window.width < 500 and window.height < 420, "The old position carries over, the old size does not")
 assert(job(window, "Yoga") and job(window, "Meditation") and job(window, "Yoga and Meditation") and job(window, "Autopilot"))
 assert(job(window, "Yoga").sub == "Level 5, 40 of 100 XP" and #rows(window, "title") == 0 and not button(window, "Stop"))
 assert(job(window, "Autopilot").sub:find("while you play or are away", 1, true) and #rows(window, "chips") == 0, "No need, no chips")
@@ -598,6 +602,98 @@ end
 charWidth, lineHeight, window.view, state.active, state.mode = 7, 16, "now", false, nil
 window:invalidate(true)
 passed("text stays inside the window at every font size, in every tab, idle and running")
+
+-- The Body tab: real card rows over survivor models, at every font size --------
+do
+    local Treat = require "AutoMindful/Treat"
+    local asked = {}
+    Treat.request = function(_, part, choice) asked[#asked + 1] = {part=part, choice=choice}; return true end
+    Treat.bleedingElsewhere = function() return nil end
+    Treat.dressings = function() return {{item={}, name="Bandage (Sterilized)", where="carried"}} end
+    local function bodyPart(bleeding, covered)
+        return {bleeding=function() return bleeding end, bandaged=function() return covered end, isBandageDirty=function() return covered end}
+    end
+    local plan = {steps={"Take the old dressing off", "Pull the glass out with Tweezers", "Disinfect with Bottle of Disinfectant",
+        "Stitch with Suture Needle", "Put on a fresh dressing: Bandage (Sterilized) (walks for it)"}, missing={}, items={"Tweezers", "Disinfectant",
+        "Suture Needle", "Bandage (Sterilized)"}, walk=true, count=4, danger=120}
+    local wounds = {player=player, care=2, worst="bad", allowed=true, health=41, bleeding=1, list={
+        {part=bodyPart(true, false), name="Right Lower Leg", danger=120, tone="bad", covered=false, plan=plan,
+            tags={{text="Bleeding", tone="bad"}, {text="Glass in it", tone="bad"}, {text="Deep wound", tone="bad"}, {text="Infected", tone="bad"}}},
+        {part=bodyPart(false, true), name="Left Hand", danger=20, tone="warn", covered=true, dirtyIn=200, heal=1500,
+            plan={steps={}, missing={"a suture needle, or a needle and thread"}, items={}, count=0, danger=20},
+            tags={{text="Dirty dressing", tone="warn"}, {text="Laceration", tone="warn"}}},
+        {part=bodyPart(false, true), name="Upper Torso", danger=0, tone="good", covered=true, heal=3000,
+            tags={{text="Stitched", tone="good"}, {text="Dressed", tone="good"}}},
+    }}
+    require("AutoMindful/Cards/Wounds").read = function() return wounds end
+    local Nutrition = require "AutoMindful/Nutrition"
+    local band = Nutrition.band(76.4)
+    local nutrition = {weight=76.4, calories=-640, carbs=-120, fat=410, protein=30, lossLine=-30, gainLine=880, perDay=-0.4,
+        band=band, bandIndex=4, goal="balanced", setGoal="auto", restHour=55, burnHour=55, activity="resting", warmth=1.2,
+        week=73.6, slow=true, fast=false, fitnessBlocked=true, proteinEffect=nil,
+        hover={food={calories=720, carbs=72, fat=45, protein=5}},
+        events={{id="band3", text="Underweight", minutes=2900, tone="warn"}, {id="penaltyStarts", text="Low protein starts slowing Strength XP", minutes=7000, tone="bad"},
+            {id="band2", text="Very underweight", minutes=25000, tone="bad"}}}
+    require("AutoMindful/Cards/Nutrition").read = function() return nutrition end
+    require("AutoMindful/Cards/Lifestyle").read = function()
+        return {{name="Zen", label="Zen III", timer={tier=3, left=40, gone=200, span=100, next=2}},
+            {name="MindfulState", label="Strong Mindfulness", timer={tier=2, left=12, gone=42, span=31, next=1, name="Strong Mindfulness"}}}
+    end
+    window.cardDetail = {nutrition=true}
+    for _, font in ipairs({{5, 13}, {7, 16}, {10, 22}, {14, 30}}) do
+        charWidth, lineHeight = font[1], font[2]
+        window:show("body"); window:invalidate(true)
+        drawn = {}
+        window.body.pointer = nil
+        window.body:prerender()
+        local texts = {}
+        for _, item in ipairs(drawn) do
+            texts[item.text] = true
+            assert(item.left >= -1 and item.right <= item.width + 1, "body at font " .. font[2] .. ": " .. item.text .. " " .. item.left .. ".." .. item.right .. " of " .. item.width)
+        end
+        drawn = nil
+        assert(texts["Wounds"], "the card in danger is drawn first")
+    end
+    charWidth, lineHeight = 7, 16
+    window:invalidate(true)
+    -- What a survivor would read: the plan, the cost, the forecast with real time.
+    local kinds = {}
+    for _, row in ipairs(window.body.rows) do kinds[row.kind] = (kinds[row.kind] or 0) + 1 end
+    assert(kinds.card == 3 and kinds.wound == 3 and kinds.headline == 1 and kinds.meter == 2 and kinds.gauges == 1, "three cards, three parts, the meters")
+    -- Bleeding comes before the timeline; the calm cards after it.
+    local order = {}
+    for _, row in ipairs(window.body.rows) do
+        if row.kind == "card" then order[#order + 1] = row.title elseif row.kind == "head" then order[#order + 1] = row.text end
+    end
+    assert(table.concat(order, ",") == "Wounds,Coming up,Nutrition,Zen and Mindfulness", table.concat(order, ","))
+    assert(rows(window, "text")[1].text == "Health 41%, bleeding from 1 part.", "the whole body first")
+    local leg = rows(window, "wound")[1]
+    assert(leg.sub == "Next: Take the old dressing off, then 4 more" and leg.buttons[1].text == "Treat")
+    assert(leg.buttons[1].tip:find("1. Take the old dressing off", 1, true) and leg.tip:find("4 steps, uses Tweezers", 1, true))
+    local hand = rows(window, "wound")[2]
+    assert(hand.sub == "Needs a suture needle, or a needle and thread, none nearby." and hand.buttons[1].text == "Dressing")
+    -- 2900 in-game minutes is 2 days and 20 minutes; at the default hour-long day, 2 h 1 min real.
+    local timeline = rows(window, "event")
+    assert(timeline[1].text == "Strong Mindfulness fades a tier" and timeline[1].right == "12 min, 30 s real", "soonest first, from every card")
+    local under
+    for _, event in ipairs(timeline) do if event.text == "Underweight" then under = under or event end end
+    assert(under.right == "2 d, 2 h 1 min real", under.right)
+    local headline = rows(window, "headline")[1]
+    assert(headline.big == "76.4 kg" and headline.right == "-0.40 kg/day" and headline.sub:find("^Underweight in 2 d, 2 h 1 min real"), headline.sub)
+    local calories = rows(window, "meter")[1]
+    assert(calories.ghost == 80 and calories.right == "-640 kcal  to 80", "the hovered food's ghost on the scale")
+    -- One click treats the part; Treat all treats everything.
+    click(window, leg.buttons[1]); assert(asked[#asked].part == wounds.list[1].part and not asked[#asked].choice)
+    -- Folding a card hides its rows; a card in danger opens itself again.
+    local head = rows(window, "card")[2]
+    assert(head.title == "Nutrition"); click(window, head)
+    assert(#rows(window, "headline") == 0 and rows(window, "card")[2].collapsed)
+    click(window, rows(window, "card")[2]); assert(#rows(window, "headline") == 1)
+    click(window, rows(window, "card")[1]); assert(#rows(window, "wound") == 3, "bleeding never folds away")
+    window.cardDetail = nil
+    window:show("now")
+end
+passed("the Body tab: every card's rows fit at every font size and say what to do")
 
 -- Right-click menu ---------------------------------------------------------------
 local function worldMenu(objects, p)

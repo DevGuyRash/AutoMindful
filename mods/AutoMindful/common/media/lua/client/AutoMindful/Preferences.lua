@@ -32,6 +32,14 @@ function Preferences.setRange(player, id)
     Options.setSearchNearby(id == "walk")
 end
 
+-- Body tab cards the player folded away, by card id.
+function Preferences.folded(player, id) return saved(player).folded and saved(player).folded[id] == true end
+function Preferences.setFolded(player, id, folded)
+    local data = saved(player)
+    data.folded = data.folded or {}
+    data.folded[id] = folded and true or nil
+end
+
 local function file(player) return "AutoMindful/window-" .. tostring(player:getPlayerNum()) .. ".txt" end
 
 local function integer(text, minimum)

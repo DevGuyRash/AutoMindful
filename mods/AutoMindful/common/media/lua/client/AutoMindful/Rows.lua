@@ -233,6 +233,198 @@ kinds.entry = {
     end,
 }
 
+-- A card's head: title, a short status in its colour, and a chevron. A click
+-- folds the card away or opens it.
+kinds.card = {
+    click=true,
+    measure=function() return Theme.line() + pad() + 4 end,
+    draw=function(self, row, x, y, w, h, hovered)
+        local line = Theme.line()
+        if hovered then self:drawRect(x - 4, y, w + 8, h - 2, color(colors.hover)) end
+        local accent = row.color or colors.muted
+        self:drawRect(x, y + 3, 3, line, color(accent))
+        self:text(row.collapsed and "+" or "-", x + w - Theme.width("+"), y + 3, hovered and colors.text or colors.muted)
+        local room = w - 12 - Theme.width("+") - 8
+        if row.pill then
+            local text = Theme.fit(row.pill.text, math.floor(room * 0.55))
+            local pw = Theme.width(text) + 10
+            local pc = row.pill.color or colors.muted
+            local px = x + w - Theme.width("+") - 10 - pw
+            self:drawRect(px, y + 2, pw, line + 2, 0.18, pc.r, pc.g, pc.b)
+            self:text(text, px + 5, y + 3, pc)
+            room = px - x - 20
+        end
+        self:text(Theme.fit(row.title, room, UIFont.Medium), x + 10, y + 3 - math.floor((Theme.line(UIFont.Medium) - line) / 2), colors.text, UIFont.Medium)
+        self:drawRect(x, y + h - 3, w, 1, color(colors.line))
+    end,
+}
+
+-- A big figure, a word about it in colour, and what it means in a sentence.
+kinds.headline = {
+    measure=function(row, w)
+        row.lines = row.sub and Theme.wrap(row.sub, w) or {}
+        return Theme.line(UIFont.Large) + #row.lines * Theme.line() + 4
+    end,
+    draw=function(self, row, x, y, w)
+        local big, line = Theme.line(UIFont.Large), Theme.line()
+        self:text(row.big, x, y, colors.text, UIFont.Large)
+        local bx = x + Theme.width(row.big, UIFont.Large) + 10
+        local base = y + big - line - 2
+        if row.word then self:text(Theme.fit(row.word, x + w - bx - (row.right and Theme.width(row.right) + 10 or 0)), bx, base, row.wordColor or colors.muted) end
+        if row.right then self:textRight(row.right, x + w, base, row.rightColor or colors.muted) end
+        for index, value in ipairs(row.lines) do self:text(value, x, y + big + 2 + (index - 1) * line, row.subColor or colors.muted) end
+    end,
+}
+
+-- One value on a scale with shaded zones (each named underneath when there is
+-- room), its marker in colour, and a hollow "ghost" where it would be after
+-- something (the food being hovered). zones: {from, to, color, label}.
+local function scaleX(row, x, w, value)
+    local span = row.high - row.low
+    return x + math.floor(w * math.max(0, math.min(1, (value - row.low) / span)) + 0.5)
+end
+
+kinds.meter = {
+    measure=function(row)
+        local line = Theme.line()
+        return line + 3 + 8 + (row.zoneLabels == false and 0 or line) + 6
+    end,
+    draw=function(self, row, x, y, w)
+        local line = Theme.line()
+        local room = w - (row.right and Theme.width(row.right) + 8 or 0)
+        self:text(Theme.fit(row.label or "", room), x, y, row.labelColor or colors.text)
+        if row.right then self:textRight(row.right, x + w, y, row.rightColor or colors.muted) end
+        local by, bh = y + line + 3, 8
+        self:drawRect(x, by, w, bh, color(colors.line))
+        for _, zone in ipairs(row.zones or {}) do
+            local zx, zr = scaleX(row, x, w, zone.from), scaleX(row, x, w, zone.to)
+            if zr > zx then self:drawRect(zx, by, zr - zx, bh, zone.alpha or 0.32, zone.color.r, zone.color.g, zone.color.b) end
+            if row.zoneLabels ~= false and zone.label then
+                local label = zone.label
+                if Theme.width(label) + 4 <= zr - zx then
+                    self:text(label, zx + math.floor((zr - zx - Theme.width(label)) / 2), by + bh + 2, colors.faint)
+                end
+            end
+        end
+        for _, tick in ipairs(row.ticks or {}) do
+            self:drawRect(scaleX(row, x, w, tick), by - 2, 1, bh + 4, 0.7, colors.muted.r, colors.muted.g, colors.muted.b)
+        end
+        if row.ghost then
+            local gx = scaleX(row, x, w, row.ghost)
+            local vx = scaleX(row, x, w, row.value)
+            local lo, hi = math.min(gx, vx), math.max(gx, vx)
+            if hi > lo then self:drawRect(lo, by + 2, hi - lo, bh - 4, 0.45, colors.text.r, colors.text.g, colors.text.b) end
+            self:drawRectBorder(gx - 3, by - 3, 7, bh + 6, 0.9, colors.text.r, colors.text.g, colors.text.b)
+        end
+        local mc = row.color or colors.text
+        local mx = scaleX(row, x, w, row.value)
+        self:drawRect(mx - 2, by - 3, 5, bh + 6, 1, 0, 0, 0)
+        self:drawRect(mx - 1, by - 2, 3, bh + 4, 1, mc.r, mc.g, mc.b)
+    end,
+}
+
+-- Side by side small gauges: a label, a value, a short bar and a note each.
+-- cells: {label, value, fraction, color, note, noteColor}.
+kinds.gauges = {
+    measure=function(row) return Theme.line() * (row.notes == false and 1 or 2) + 9 + 4 end,
+    draw=function(self, row, x, y, w)
+        local line, count, gap = Theme.line(), #row.cells, 10
+        local each = math.floor((w - gap * (count - 1)) / count)
+        for index, cell in ipairs(row.cells) do
+            local cx = x + (index - 1) * (each + gap)
+            local value = cell.value or ""
+            self:text(Theme.fit(cell.label, each - Theme.width(value) - 6), cx, y, colors.muted)
+            self:textRight(value, cx + each, y, cell.valueColor or colors.text)
+            local c = cell.color or colors.muted
+            self:drawRect(cx, y + line + 2, each, 4, color(colors.line))
+            self:drawRect(cx, y + line + 2, each * math.max(0, math.min(1, cell.fraction or 0)), 4, 1, c.r, c.g, c.b)
+            if cell.mark then self:drawRect(cx + math.floor(each * cell.mark), y + line, 1, 8, 0.8, colors.text.r, colors.text.g, colors.text.b) end
+            if cell.ghost then
+                local gx = cx + math.floor(each * math.max(0, math.min(1, cell.ghost)))
+                self:drawRectBorder(gx - 2, y + line, 5, 8, 0.9, colors.text.r, colors.text.g, colors.text.b)
+            end
+            if row.notes ~= false and cell.note then
+                self:text(Theme.fit(cell.note, each), cx, y + line + 8, cell.noteColor or colors.faint)
+            end
+        end
+    end,
+}
+
+-- Something that will happen: a coloured mark, what, and when.
+kinds.event = {
+    measure=function(row, w)
+        row.whenWidth = row.right and Theme.width(row.right) + 10 or 0
+        row.lines = Theme.wrap(row.text, w - 14 - row.whenWidth)
+        return math.max(1, #row.lines) * Theme.line() + 3
+    end,
+    draw=function(self, row, x, y, w)
+        local line, c = Theme.line(), row.color or colors.muted
+        self:drawRect(x + 1, y + math.floor(line / 2) - 3, 6, 6, color(c))
+        for index, value in ipairs(row.lines) do self:text(value, x + 14, y + (index - 1) * line, row.textColor or colors.text) end
+        if row.right then self:textRight(row.right, x + w, y, row.rightColor or colors.muted) end
+    end,
+}
+
+-- A body part: its name, each condition in its own colour, a line on what
+-- comes next, and buttons at the right (Treat, Dressing).
+kinds.wound = {
+    measure=function(row, w)
+        local line = Theme.line()
+        local buttons = 0
+        for _, button in ipairs(row.buttons or {}) do buttons = buttons + Theme.width(button.text .. (button.menu and "  >" or "")) + 16 + 6 end
+        row.buttonWidth = buttons
+        local room = w - 10
+        -- The tags flow like words on the lines under the name.
+        local tx, rows = 0, 1
+        for _, tag in ipairs(row.tags or {}) do
+            local tw = Theme.width(tag.text) + 12
+            if tx > 0 and tx + tw > room then tx, rows = 0, rows + 1 end
+            tag.x, tag.row = tx, rows
+            tx = tx + tw
+        end
+        row.tagRows = #(row.tags or {}) > 0 and rows or 0
+        row.lines = row.sub and Theme.wrap(row.sub, room) or {}
+        return line + 2 + row.tagRows * line + #row.lines * line + pad()
+    end,
+    zones=function(row, x, y, w)
+        local zones, bx = {}, x + w
+        local line = Theme.line()
+        for index = #(row.buttons or {}), 1, -1 do
+            local button = row.buttons[index]
+            local bw = Theme.width(button.text .. (button.menu and "  >" or "")) + 16
+            bx = bx - bw
+            zones[#zones + 1] = {x=bx, y=y, w=bw, h=line + 4, target=button}
+            bx = bx - 6
+        end
+        return zones
+    end,
+    draw=function(self, row, x, y, w, h, hovered, zones)
+        local line = Theme.line()
+        if hovered then self:drawRect(x - 4, y - 1, w + 8, h - 2, color(colors.raised)) end
+        self:drawRect(x, y, 3, h - pad() + 2, color(row.color or colors.muted))
+        local tx = x + 10
+        self:text(Theme.fit(row.title, w - 10 - (row.buttonWidth or 0)), tx, y + 1, colors.text)
+        for _, tag in ipairs(row.tags or {}) do
+            self:text(tag.text, tx + tag.x, y + 3 + tag.row * line, tag.color or colors.muted)
+        end
+        local sy = y + 2 + line + row.tagRows * line
+        for index, value in ipairs(row.lines) do self:text(value, tx, sy + (index - 1) * line, row.subColor or colors.muted) end
+        for _, zone in ipairs(zones or {}) do
+            local button = zone.target
+            -- A quiet button shows only while the row is under the pointer.
+            if hovered or not button.hoverOnly then
+                local over = hovered and self:over(zone.x, zone.y, zone.w, zone.h)
+                local live = not button.disabled
+                local c = button.color or colors.recovery
+                self:drawRect(zone.x, zone.y, zone.w, zone.h, color(over and live and colors.hover or colors.raised))
+                self:drawRectBorder(zone.x, zone.y, zone.w, zone.h, live and 0.8 or 0.25, c.r, c.g, c.b)
+                local label = button.text .. (button.menu and "  >" or "")
+                self:text(label, zone.x + math.floor((zone.w - Theme.width(label)) / 2), zone.y + 2, live and colors.text or colors.faint)
+            end
+        end
+    end,
+}
+
 function Rows:over(x, y, w, h)
     local mx, my = self:getMouseX(), self:getMouseY()
     return mx >= x and mx < x + w and my >= y and my < y + h
@@ -314,6 +506,8 @@ local function identity(self)
 end
 
 function Rows:updateTip(entry)
+    -- A menu opened from a row has the pointer now.
+    if ISContextMenu and ISContextMenu.instance and ISContextMenu.instance.visibleCheck then entry = nil end
     local target = targetAt(self, entry) or (entry and entry.row)
     local tip = target and target.tip
     if tip then

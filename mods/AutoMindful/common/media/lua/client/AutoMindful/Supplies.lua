@@ -83,6 +83,22 @@ end
 
 local containerSquare = Grid.containerSquare
 
+-- Where a container is: its own square, the bag lying there, the vehicle it
+-- belongs to or the body whose pockets it is. nil when none of those (a
+-- vehicle that is moving or shut counts as nowhere).
+local function sourceSquare(container)
+    local square = containerSquare(container)
+    if square then return square end
+    local part = Storage.partFor(container)
+    if part then
+        local _, vehicleSquare = Storage.vehiclePart(part)
+        return vehicleSquare
+    end
+    local body = Storage.corpseFor(container)
+    return body and body:getSquare() or nil
+end
+Supplies.sourceSquare = sourceSquare
+
 local function canCollect(player, entry)
     return entry.worldSource ~= nil or entry.owned or entry.item:getContainer() == player:getInventory()
         or player:getInventory():hasRoomFor(player, entry.item)
@@ -131,8 +147,11 @@ function Supplies.scan(player, includeNearby, useNearbyTools)
             if not floor or (world and reachable(player, world:getSquare())) then
                 local entry = {item = item, owned = owned}
                 if PainCare.eligible(item) then
-                    if owned or Storage.permitted(player, world and world:getSquare() or containerSquare(container)) then
+                    if owned or Storage.permitted(player, world and world:getSquare() or sourceSquare(container)) then
                         result.pain[#result.pain + 1] = entry
+                    else
+                        -- Seen, but not to be taken from here: said, never silently dropped.
+                        result.painBlocked = (result.painBlocked or 0) + 1
                     end
                 else
                     local consumable = Consumables.inspect(player, item, useNearbyTools)
@@ -517,12 +536,28 @@ function Supplies.choose(player, kind, includeNearby, rejected, worldOnly, exact
     end
     local best
     if kind == "pain" then
+        -- Only the painkillers' own story: the general notes above are about drinks and food.
+        if explain then for index = #explain, 1, -1 do explain[index] = nil end end
+        if explain and (scan.painBlocked or 0) > 0 then
+            explain[#explain + 1] = scan.painBlocked .. " painkillers seen where taking them is not allowed (safehouse rules, or the place is unknown)"
+        end
+        local inspected = false
         for _, entry in ipairs(scan.pain) do
-            if selected(entry) and not rejectedItem(rejected, entry.item:getID()) and canCollect(player, entry)
-                    and PainCare.eligible(entry.item) then
+            local blocked = not selected(entry) and "not-in-the-inspected-container"
+                or rejectedItem(rejected, entry.item:getID()) and "rejected-earlier"
+                or not canCollect(player, entry) and "no-room-to-carry"
+                or not PainCare.eligible(entry.item) and "not-plain-painkillers"
+            inspected = inspected or selected(entry)
+            if blocked then
+                note(entry, blocked)
+            else
+                note(entry, "eligible")
                 if entry.owned then return entry end
                 best = best or entry
             end
+        end
+        if explain and exactContainer and not inspected then
+            explain[#explain + 1] = "no painkillers visible in the inspected container from here (not in the loot list, not reachable, or not permitted)"
         end
         return best
     end

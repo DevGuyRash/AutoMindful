@@ -65,6 +65,7 @@ local function put(c,kind,medication,empty)
     function i:getContainer()return self.container end
     function i:getID()return self.id end
     function i:hasModData()return false end
+    function i:getFullType()return "Base."..self.kind end
     c.items[#c.items+1]=i
     return i
 end
@@ -173,3 +174,41 @@ assert(action and action.dest==adjacent and action:isValid())
 online=true;adjacent.noLoot=true
 assert(not action:isValid() and not S.returnAction(p,ground))
 print("PASS ground-item pickup and return use the original permitted square")
+
+-- A parked van's truck bed: its container has no square of its own, so the
+-- van's says where it is. Painkillers there are found, and when they cannot be
+-- taken the choice says why instead of dropping them silently.
+local vanSquare=square(1,1,0)
+local van={}
+function van:getCurrentAbsoluteSpeedKmHour()return 0 end
+function van:getPartById()return nil end
+function van:getSquareForArea()return vanSquare end
+function van:getSquare()return vanSquare end
+function van:canAccessContainer()return true end
+local bedPart={}
+local bed=container(nil,"TruckBed")
+function bedPart:getItemContainer()return bed end
+function bedPart:getVehicle()return van end
+function bedPart:getArea()return "TruckBed" end
+function bedPart:getId()return "TruckBedOpen" end
+function bedPart:getIndex()return 0 end
+function bedPart:isInventoryItemUninstalled()return false end
+function bedPart:getContainerCapacity()return 100 end
+function bed:getVehiclePart()return bedPart end
+local inBed=put(bed,"Drainable",true)
+areaContainers={bed}
+ISInventoryPaneContextMenu.getContainers=function()return list(areaContainers)end
+assert(S.sourceSquare(bed)==vanSquare,"The truck bed is where the van is")
+assert(S.choose(p,"pain",true,{},nil,bed).item==inBed,"Painkillers in the truck bed are taken")
+online=true;vanSquare.noLoot=true
+local why={}
+assert(not S.choose(p,"pain",true,{},nil,bed,why))
+assert(table.concat(why,"; "):find("no painkillers visible in the inspected container",1,true),"A van that may not be looted is said, not silent: "..table.concat(why,"; "))
+vanSquare.noLoot=false
+-- A cupboard that is reachable but not to be looted: seen, and said.
+areaContainers={cabinet};adjacent.noLoot=true
+why={}
+assert(not S.choose(p,"pain",true,{},nil,cabinet,why))
+assert(table.concat(why,"; "):find("not allowed",1,true),"Says the painkillers are there but may not be taken: "..table.concat(why,"; "))
+online=false;adjacent.noLoot=false;areaContainers={}
+print("PASS painkillers in a vehicle are found where the vehicle is, and a refusal says why")

@@ -442,6 +442,8 @@ function Views.settings(window)
         toggle(window, rows, id)
         if id == "recoveryCook" then choice(window, rows, "cookTraining") end
     end
+    head(rows, "Body")
+    choice(window, rows, "foodHover")
     head(rows, "Window and menu")
     rows[#rows + 1] = {kind="setting", label="Open and close key", value=window.capturing and (window.keyTaken and (window.keyTaken .. " is in use. Try another") or "Press a key, Esc to cancel")
         or Options.windowKeyLabel(),

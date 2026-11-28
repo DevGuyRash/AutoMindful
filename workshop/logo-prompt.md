@@ -1,5 +1,7 @@
 # AutoMindful logo
 
+The generated logo below read "AutoMindful". For 0.7.0 its lettering was replaced with "Second Nature" in Noto Sans Black, colour #FCEAC1; the artwork is unchanged.
+
 Generated with the built-in image generation tool. The selected artwork is saved as [logo.png](logo.png); [preview.png](preview.png) is the 256 × 256 Workshop export. The preview is also used in the repository README. The export only resamples the selected artwork and removes metadata; it does not redraw it.
 
 ## Initial generation prompt

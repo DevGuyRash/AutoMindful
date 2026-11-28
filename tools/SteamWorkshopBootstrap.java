@@ -8,7 +8,6 @@ import java.time.Duration;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
-import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
@@ -73,50 +72,78 @@ public final class SteamWorkshopBootstrap {
         return Linker.nativeLinker().downcallHandle(SymbolLookup.loaderLookup().find(name).orElseThrow(), descriptor);
     }
 
+    private static MemorySegment ugc() throws Throwable {
+        var ugc = (MemorySegment) steamFunction("SteamAPI_SteamUGC_v021", FunctionDescriptor.of(ValueLayout.ADDRESS)).invokeExact();
+        if (ugc.equals(MemorySegment.NULL)) throw new IllegalStateException("Steam interface unavailable");
+        return ugc;
+    }
+
     private static void addDependency(long parent, long child) throws Throwable {
+        var pointer = ValueLayout.ADDRESS;
+        var number = ValueLayout.JAVA_LONG;
+        long call = (long) steamFunction("SteamAPI_ISteamUGC_AddDependency", FunctionDescriptor.of(number, pointer, number, number)).invokeExact(ugc(), parent, child);
+        if (call == 0) throw new IllegalStateException("Steam refused the required-item request");
+        // Steamworks packs POSIX callbacks to 4 bytes, including the two 64-bit IDs.
+        var response = callResult(call, 3412, 20, "Required-item update");
+        if (response[0] != 1 || response[1] != parent || response[2] != child) {
+            throw new IllegalStateException("Steam did not confirm the required-item dependency");
+        }
+    }
+
+    // DeleteItemResult_t: the result, then the deleted item's ID.
+    private static void deleteItem(long item) throws Throwable {
+        var pointer = ValueLayout.ADDRESS;
+        var number = ValueLayout.JAVA_LONG;
+        long call = (long) steamFunction("SteamAPI_ISteamUGC_DeleteItem", FunctionDescriptor.of(number, pointer, number)).invokeExact(ugc(), item);
+        if (call == 0) throw new IllegalStateException("Steam refused the delete request");
+        var response = callResult(call, 3417, 12, "Delete");
+        if (response[0] != 1 || response[1] != item) {
+            throw new IllegalStateException("Steam did not confirm the deletion (result " + response[0] + ")");
+        }
+    }
+
+    // Waits for a Steam call result laid out as an int result followed by packed 64-bit IDs.
+    private static long[] callResult(long call, int callback, int size, String what) throws Throwable {
         var pointer = ValueLayout.ADDRESS;
         var integer = ValueLayout.JAVA_INT;
         var number = ValueLayout.JAVA_LONG;
         var bool = ValueLayout.JAVA_BOOLEAN;
-        var ugc = (MemorySegment) steamFunction("SteamAPI_SteamUGC_v021", FunctionDescriptor.of(pointer)).invokeExact();
         var utils = (MemorySegment) steamFunction("SteamAPI_SteamUtils_v010", FunctionDescriptor.of(pointer)).invokeExact();
-        if (ugc.equals(MemorySegment.NULL) || utils.equals(MemorySegment.NULL)) throw new IllegalStateException("Steam interface unavailable");
-        long call = (long) steamFunction("SteamAPI_ISteamUGC_AddDependency", FunctionDescriptor.of(number, pointer, number, number)).invokeExact(ugc, parent, child);
-        if (call == 0) throw new IllegalStateException("Steam refused the required-item request");
+        if (utils.equals(MemorySegment.NULL)) throw new IllegalStateException("Steam interface unavailable");
         var completed = steamFunction("SteamAPI_ISteamUtils_IsAPICallCompleted", FunctionDescriptor.of(bool, pointer, number, pointer));
         var result = steamFunction("SteamAPI_ISteamUtils_GetAPICallResult", FunctionDescriptor.of(bool, pointer, number, pointer, integer, integer, pointer));
         try (Arena arena = Arena.ofConfined()) {
             var failed = arena.allocate(bool);
             long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
             while (!(boolean) completed.invokeExact(utils, call, failed)) {
-                if (System.nanoTime() >= deadline) throw new IllegalStateException("Required-item update timed out");
+                if (System.nanoTime() >= deadline) throw new IllegalStateException(what + " timed out");
                 SteamUtils.runLoop();
                 Thread.sleep(100);
             }
-            // Steamworks packs POSIX callbacks to 4 bytes, including the two 64-bit IDs.
             var storedNumber = number.withByteAlignment(4);
-            var layout = MemoryLayout.structLayout(integer, storedNumber, storedNumber);
-            var response = arena.allocate(layout);
-            boolean received = (boolean) result.invokeExact(utils, call, response, (int) layout.byteSize(), 3412, failed);
-            if (!received || failed.get(bool, 0) || response.get(integer, 0) != 1
-                    || response.get(storedNumber, 4) != parent || response.get(storedNumber, 12) != child) {
-                throw new IllegalStateException("Steam did not confirm the required-item dependency");
-            }
+            var response = arena.allocate(size, 4);
+            boolean received = (boolean) result.invokeExact(utils, call, response, size, callback, failed);
+            if (!received || failed.get(bool, 0)) throw new IllegalStateException(what + " got no answer from Steam");
+            long[] values = new long[1 + (size - 4) / 8];
+            values[0] = response.get(integer, 0);
+            for (int index = 1; index < values.length; index++) values[index] = response.get(storedNumber, 4 + 8 * (index - 1));
+            return values;
         }
     }
 
     public static void main(String[] args) throws Throwable {
         boolean update = args.length == 5 && args[0].equals("update");
-        boolean listing = args.length == 5 && args[0].equals("publish-listing");
-        if (!update && !listing && (args.length != 3 || !java.util.Set.of("probe", "create", "resume").contains(args[0]))) {
-            throw new IllegalArgumentException("Usage: SteamWorkshopBootstrap probe|create|resume STAGE CACHE; update STAGE CACHE ITEM_ID NOTES_FILE; publish-listing STAGE CACHE ITEM_ID REQUIRED_ITEM_ID");
+        boolean listing = (args.length == 4 || args.length == 5) && args[0].equals("publish-listing");
+        boolean delete = args.length == 4 && args[0].equals("delete");
+        if (!update && !listing && !delete && (args.length != 3 || !java.util.Set.of("probe", "create", "resume").contains(args[0]))) {
+            throw new IllegalArgumentException("Usage: SteamWorkshopBootstrap probe|create|resume STAGE CACHE; update STAGE CACHE ITEM_ID NOTES_FILE; publish-listing STAGE CACHE ITEM_ID [REQUIRED_ITEM_ID]; delete STAGE CACHE ITEM_ID");
         }
-        if ((update || listing) && !args[3].matches("[1-9][0-9]*")) throw new IllegalArgumentException("An existing positive Workshop item ID is required");
-        if (listing && !args[4].matches("[1-9][0-9]*")) throw new IllegalArgumentException("A positive required item ID is required");
+        if ((update || listing || delete) && !args[3].matches("[1-9][0-9]*")) throw new IllegalArgumentException("An existing positive Workshop item ID is required");
+        if (listing && args.length == 5 && !args[4].matches("[1-9][0-9]*")) throw new IllegalArgumentException("A positive required item ID is required");
         Path source = Path.of(args[1]).toRealPath();
         Path cache = Path.of(args[2]).toAbsolutePath();
         Files.createDirectories(cache);
-        Path stage = cache.resolve("Workshop/AutoMindful");
+        Path stage = cache.resolve("Workshop/SecondNature");
         Files.createDirectories(stage);
         copy(source.resolve("Contents"), stage.resolve("Contents"));
         for (String name : new String[]{"workshop.txt", "preview.png"}) {
@@ -151,7 +178,7 @@ public final class SteamWorkshopBootstrap {
             if (lock == null) throw new IllegalStateException("Another bootstrap owns this staging folder");
             Files.copy(source.resolve("workshop.txt"), stage.resolve("workshop.txt"), StandardCopyOption.REPLACE_EXISTING);
             SteamWorkshopItem item = new SteamWorkshopItem(stage.toString());
-            if (!item.readWorkshopTxt() || (!update && !listing && !"private".equals(item.getVisibility()))) {
+            if (!item.readWorkshopTxt() || (!update && !listing && !delete && !"private".equals(item.getVisibility()))) {
                 throw new IllegalArgumentException("Initial upload metadata must use visibility=private");
             }
             String error = item.validateContents();
@@ -162,7 +189,7 @@ public final class SteamWorkshopBootstrap {
             if (args[0].equals("resume") && item.getID() == null) {
                 throw new IllegalStateException("Resume requires the existing item ID in workshop.txt");
             }
-            if (update || listing) item.setID(args[3]);
+            if (update || listing || delete) item.setID(args[3]);
             SteamUtils.init();
             if (!SteamUtils.isSteamModeEnabled()) throw new IllegalStateException("Sign in to the desktop Steam client first");
             SteamWorkshop.init();
@@ -174,12 +201,17 @@ public final class SteamWorkshopBootstrap {
                     System.out.println("STEAM_WORKSHOP_READY");
                     return;
                 }
+                if (delete) {
+                    deleteItem(SteamUtils.convertStringToSteamID(item.getID()));
+                    System.out.println("WORKSHOP_ITEM_DELETED=" + item.getID());
+                    return;
+                }
                 if (listing) {
                     long id = SteamUtils.convertStringToSteamID(item.getID());
-                    addDependency(id, SteamUtils.convertStringToSteamID(args[4]));
+                    if (args.length == 5) addDependency(id, SteamUtils.convertStringToSteamID(args[4]));
                     if (!request("n_StartItemUpdate", long.class, id)
                             || !request("n_SetItemVisibility", int.class, 0)
-                            || !request("n_SubmitItemUpdate", String.class, "Publish AutoMindful with its required Lifestyle item")) {
+                            || !request("n_SubmitItemUpdate", String.class, "Publish Second Nature")) {
                         throw new IllegalStateException("Steam refused publication of the listing");
                     }
                     await(false);
@@ -208,7 +240,7 @@ public final class SteamWorkshopBootstrap {
                     System.out.println("WORKSHOP_ITEM_ID=" + createdId);
                     if (legalRequired) throw new IllegalStateException("Owner must accept the Steam Workshop agreement at https://steamcommunity.com/sharedfiles/workshoplegalagreement");
                 }
-                item.setChangeNote(update ? Files.readString(Path.of(args[4])) : "Initial AutoMindful release");
+                item.setChangeNote(update ? Files.readString(Path.of(args[4])) : "Initial Second Nature release");
                 boolean accepted = update ? updateContents(item) : SteamWorkshop.instance.SubmitWorkshopItem(item);
                 if (!accepted) throw new IllegalStateException("Steam refused the upload request");
                 await(false);

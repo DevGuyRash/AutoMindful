@@ -56,10 +56,19 @@ def preview_bytes() -> bytes:
 
 
 def workshop_assets() -> dict[str, bytes]:
-    metadata = (ROOT / "workshop/workshop.txt").read_bytes()
-    if re.search(rb"(?m)^id=", metadata):
+    template = (ROOT / "workshop/workshop.txt").read_text(encoding="utf-8")
+    if re.search(r"(?m)^id=", template):
         raise ValueError("The tracked Workshop template must not contain an item ID")
-    return {"workshop.txt": metadata, "preview.png": preview_bytes()}
+    if re.search(r"(?m)^description=", template):
+        raise ValueError("The listing text belongs in workshop/description.txt, not the template")
+    # The listing text has one source; a first upload takes it from workshop.txt.
+    description = (ROOT / "workshop/description.txt").read_text(encoding="utf-8").rstrip("\n")
+    if len(description.encode("utf-8")) > 8000:
+        raise ValueError("Steam limits a Workshop description to 8000 bytes")
+    lines = template.splitlines()
+    title = next(index for index, line in enumerate(lines) if line.startswith("title="))
+    lines[title + 1:title + 1] = ["description=" + line for line in description.splitlines()]
+    return {"workshop.txt": ("\n".join(lines) + "\n").encode("utf-8"), "preview.png": preview_bytes()}
 
 
 def stage(archive: Path, manifest_path: Path, tag: str, output: Path, notes: str = "") -> Path:

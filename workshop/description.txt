@@ -12,22 +12,32 @@ Second Nature (formerly AutoMindful) looks after your survivor: food, water, rea
 [*][b]Knows whether you are there.[/b] While you or another mod keep the action queue busy, a carried bite or sip goes between two actions; nothing is cancelled or reordered. While you stand around it does small things. Once you are away (3 minutes without input, or [i]I am going AFK[/i]) it does everything it can.
 [*][b]Danger in degrees.[/b] Being chased, touched or on fire: hands off. A zombie in view, a wound or a parked car: it stays where it is but still eats, drinks and bandages.
 [*][b]First aid.[/b] Wounds are treated in the order of the game's doctor menu, the most dangerous first: bleeding, glass and bullets, infections, deep wounds, fractures, burns and dirty dressings. Tweezers, disinfectant, needle and thread, a splint and clean or sterile dressings are fetched first, and stitches and splints come off when the game allows. Between wounds it washes dirty bandages and sterilizes clean ones with alcohol or, with none around, by boiling them in the largest pot nearby on any heat the kitchen can use. Everything borrowed goes back where it came from.
+[*][b]One-click first aid.[/b] Treat one wound, or all of them, in one click from the Body tab or the Health tab's right-click menu, or replace a dressing with the clean one you choose. Everything it needs is fetched first.
 [*][b]Looks ahead.[/b] Shows how long known food and drink last in real time and what would go wrong first, warns you as you leave, and plays a sound only you hear when it cannot keep the survivor safe.
 [*][b]Water on the survivor.[/b] Keeps carried bottles full; the game drinks from them by itself.
 [*][b]Sleeps in a bed[/b] in the same building and walks back.
 [*][b]Never quietly gives up.[/b] Only Stop or death ends it. Problems back off and retry, and it carries on after you load in again.
 [*][b]Diet goal.[/b] Auto keeps a healthy weight; or prefer high protein, more or fewer calories, low carb or low fat when choices are close.
 [*][b]Cooks.[/b] When only raw food is left, it cooks it on a powered stove or oven, a microwave (never anything metal), a propane grill, or, with no power, a fireplace, antique stove, charcoal grill or campfire that it fuels, lights and puts out again. Food comes from any cupboard, bag, the floor or a dead body's pockets indoors. Each dish comes out cooked, never burnt, and the heat goes off with the last one. It makes every dish the game has from what is nearby: soups, stews, stir fries, salads, sandwiches, burgers, pies, cakes, pasta, rice, omelettes and the rest, using the game's cooking crafts too (dough, a crust, a pot of pasta filled at the sink first). Rotten food goes in only from Cooking 7, as the game allows. While mildly thirsty it makes coffee or tea. Tools and lasting ingredients go back to their cupboard; when there is too much to carry it sets a few things down near the kitchen and picks them up afterwards. Raw food that would spoil soon cooks in the same batch, leftovers go into a powered fridge or freezer, and frozen food is taken out to thaw ahead of the next meal. Stoves and fires someone else is using are left alone.
+[*][b]Fires.[/b] Burns the least valuable fuel first (twigs and scrap before planks and logs), never books, money, clothes or keepsakes, and lights with any starter, petrol, or a notched plank and a stick.
 [*][b]Cooking practice.[/b] When nobody is hungry it cooks spare raw food that would spoil for Cooking XP, and shows the time to the next level.
 [*][b]Beside Auto All.[/b] While one of Auto All's jobs runs, Autopilot keeps to urgent needs and never holds up its exercise loop or other jobs.
 [*][b]Last resort:[/b] plain unsafe water after a minute of Dying of Thirst with nothing clean left. It never eats rotten or poisonous food.
 [/list]
 Each of these has a switch under Settings > Autopilot.
 
+[h2]Body, food and health at a glance[/h2]
+[list]
+[*][b]Body tab.[/b] Wounds, nutrition and what is coming up, read live from the game: each wound's next step and the item it needs, in colour; the weight, its trend and how many in-game days (and real hours) until the next weight line; the calories that stop a loss or gain; carbs, fat and protein and what they do.
+[*][b]Food tooltips.[/b] Hover any food to see what eating it does to this survivor now: calories, whether it starts or stops weight gain, the protein bonus, and where its energy comes from.
+[*][b]Health tab.[/b] A Second Nature button, the weight trend, and treat, dress and treat all on each body part's right-click menu.
+[*][b]Moodle timers.[/b] Hover Zen or Mindfulness for how long the tier lasts, live, in game and real time.
+[/list]
+
 [h2]How to use[/h2]
 Right-click the ground, open Lifestyle's [b]Wellness[/b] menu and choose [b]Second Nature[/b], or press [b]0[/b] for the window. While a job runs, right-click your survivor for Stop, Switch and I am going AFK.
 
-The window has [b]Now[/b] (what it is doing and why), [b]Supplies[/b] (what it knows of nearby), [b]Kitchen[/b] (every stove, grill and fire nearby and what it needs, food, fridges and freezers), [b]Log[/b] (recent decisions and Copy report), [b]Guide[/b] and [b]Settings[/b]. Drag a corner to resize; double-click it to fit.
+The window has [b]Now[/b] (what it is doing and why), [b]Body[/b] (wounds, nutrition, what is coming up), [b]Supplies[/b] (what it knows of nearby), [b]Kitchen[/b] (every stove, grill and fire nearby and what it needs, food, fridges and freezers), [b]Log[/b] (recent decisions and Copy report), [b]Guide[/b] and [b]Settings[/b]. Drag a corner to resize; double-click it to fit.
 
 Under Supplies, choose how far care may reach: only what you carry, what is within arm's reach, or a short walk to nearby supplies (default 10 tiles). Borrowed items go back where they came from.
 
@@ -39,4 +49,4 @@ Project Zomboid Build 42.22+. Yoga and Meditation also need [url=https://steamco
 
 All Second Nature code runs on the client. On a server it must still be in the server's mod list, and the server's rules and, with Lifestyle, its own requirements apply.
 
-Mod ID: SecondNature. Saves made before 0.7.0 use the old ID, AutoMindful: the mod is included under it too, as "Second Nature (legacy ID)", so those saves keep working and get a one-time note on how to switch. New saves only need Second Nature.
+Mod ID: SecondNature. Coming from the old AutoMindful item? It has been replaced by this one. Subscribe here, then in your save's mods (Load, select the save, More, Mods) turn on Second Nature in place of the missing AutoMindful. Settings and progress carry over. Servers: Mods=SecondNature with this item in WorkshopItems.

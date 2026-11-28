@@ -82,29 +82,17 @@ class PreviewTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
-    def test_legacy_id_carries_the_same_mod(self):
+    def test_only_the_secondnature_id_ships(self):
         with zipfile.ZipFile(self.archive) as package:
             names = package.namelist()
-            new = {n for n in names if n.startswith("Contents/mods/SecondNature/")}
-            old = {n for n in names if n.startswith("Contents/mods/AutoMindful/")}
-            self.assertEqual({n.replace("/SecondNature/", "/AutoMindful/", 1) for n in new}, old, "every file under both IDs")
-            for name in new:
-                twin = name.replace("/SecondNature/", "/AutoMindful/", 1)
-                if name.endswith("mod.info"):
-                    info = package.read(twin).decode()
-                    self.assertIn("id=AutoMindful", info.splitlines())
-                    self.assertIn("legacy ID", info)
-                    self.assertIn("id=SecondNature", package.read(name).decode().splitlines())
-                else:
-                    self.assertEqual(package.read(name), package.read(twin), name)
+            self.assertTrue(names and all(n.startswith("Contents/mods/SecondNature/") for n in names), names[:3])
+            for name in ("42/mod.info", "mod.info", "common/mod.info"):
+                self.assertIn("id=SecondNature", package.read("Contents/mods/SecondNature/" + name).decode().splitlines())
 
     def test_context_menu_art_in_the_actual_archive(self):
         with zipfile.ZipFile(self.archive) as package:
             icons = {p for p in package.namelist() if p.endswith(".png")}
-            expected = {"Contents/" + name for name in build.MENU_ICONS}
-            # The same art under the legacy ID, for saves made before 0.7.0.
-            expected |= {name.replace("/mods/SecondNature/", "/mods/AutoMindful/") for name in expected}
-            self.assertEqual(icons, expected)
+            self.assertEqual(icons, {"Contents/" + name for name in build.MENU_ICONS})
             images = set()
             for name in icons:
                 data = package.read(name)
@@ -216,6 +204,7 @@ class ReleaseTests(unittest.TestCase):
         assets = self.root / "workshop"
         assets.mkdir()
         (assets / "workshop.txt").write_bytes((ROOT / "workshop/workshop.txt").read_bytes())
+        (assets / "description.txt").write_bytes((ROOT / "workshop/description.txt").read_bytes())
         (assets / "preview.png").write_bytes(preview_png([b"not a zlib stream"]))
         output = self.root / "rejected-stage"
         with mock.patch.object(workshop, "ROOT", self.root), self.assertRaisesRegex(ValueError, "compressed image data"):
@@ -226,6 +215,7 @@ class ReleaseTests(unittest.TestCase):
         assets = self.root / "workshop"
         assets.mkdir()
         metadata = (ROOT / "workshop/workshop.txt").read_bytes()
+        (assets / "description.txt").write_bytes((ROOT / "workshop/description.txt").read_bytes())
         (assets / "workshop.txt").write_bytes(metadata + b"id=1234\n")
         with mock.patch.object(workshop, "ROOT", self.root), self.assertRaisesRegex(ValueError, "must not contain an item ID"):
             workshop.workshop_assets()
@@ -236,6 +226,15 @@ class ReleaseTests(unittest.TestCase):
         (assets / "preview.png").write_bytes(data)
         with mock.patch.object(workshop, "ROOT", self.root), self.assertRaisesRegex(ValueError, "256 by 256"):
             workshop.workshop_assets()
+
+    def test_listing_text_comes_from_description_txt(self):
+        metadata = workshop.workshop_assets()["workshop.txt"].decode()
+        lines = metadata.splitlines()
+        source = (ROOT / "workshop/description.txt").read_text().rstrip("\n").splitlines()
+        self.assertEqual([line[len("description="):] for line in lines if line.startswith("description=")], source)
+        self.assertEqual(lines[1], "title=Second Nature - Autopilot and Training [B42]")
+        self.assertIn("visibility=private", lines)
+        self.assertNotIn("AutoMindful", "\n".join(line for line in lines if line.startswith("title=")))
 
     def test_existing_workshop_id_is_required(self):
         self.assertEqual(workshop.workshop_id("3837554362"), "3837554362")

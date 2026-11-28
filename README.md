@@ -11,7 +11,7 @@ Second Nature (formerly AutoMindful) looks after your survivor in Project Zomboi
 2. Enable **Second Nature** for your game and restart the client.
 3. For a manual installation, copy `mods/SecondNature` into your Zomboid user folder's `mods` directory. Linux normally uses `~/Zomboid/mods/SecondNature`.
 
-**Mod ID:** `SecondNature` since 0.7.0. Saves and servers made earlier name it `AutoMindful`; the Workshop item carries the same mod under that ID too, listed as *Second Nature (legacy ID: only for saves made before 0.7.0)*, so those saves keep working unchanged and are told once how to switch: enable Second Nature and turn off the legacy entry in that save's mods. Settings, logs and the survivor's progress carry over either way, and a save with both enabled runs the mod once. New saves only need Second Nature. Server owners can keep `Mods=AutoMindful` or switch to `Mods=SecondNature`.
+**Mod ID:** `SecondNature`. Until 0.6.0 the mod was a different Workshop item with the ID `AutoMindful`; that item has been removed. For a save that used it, subscribe to Second Nature, then turn it on in that save's mods (**Load**, select the save, **More**, **Mods**) in place of the missing AutoMindful. Settings, logs and the survivor's progress carry over. Servers change `Mods=AutoMindful` to `Mods=SecondNature` and `WorkshopItems=` to Second Nature's item.
 
 If you already have a development copy under `~/Zomboid/Workshop/SecondNature/Contents/mods/SecondNature`, check which directory the game actually selects for mod ID `SecondNature`. A new copy in `mods` does not replace the files in that staging directory. Update the selected copy, check its `42/mod.info` version, and restart the client. Local installation does not update the public Workshop item.
 
@@ -43,14 +43,22 @@ Press **0** to open or close it, if that key is free, or choose **Show window**.
 | Tab | What it shows |
 | --- | --- |
 | Now | Idle: active needs and the jobs you can start. Running: what it is doing and why, XP gained, **Stop** and **Switch**. |
+| Body | Wounds, nutrition and what is coming up, read live from the game (see below). |
 | Supplies | Known food, drink, reading and painkillers, how far care may reach, and what is still borrowed. |
+| Kitchen | Every stove, microwave, grill, fireplace and campfire nearby and what it needs, food, fridges and freezers, and the dishes it could make. |
 | Log | Recent decisions with their reasons, and **Copy report**. |
 | Guide | What Yoga, Meditation, Mindfulness and Zen do at your rank. |
 | Settings | Everything in **Options > Mods > Second Nature**, applied as you click. |
 
 The **_** button shrinks a running job to one line that stays on screen, with its progress and **Stop**.
 
-Hover over Lifestyle's Zen moodle for its tier and XP effects. On the character's **Skills** tab, **Yoga** sits below **Meditation** with Lifestyle's own progress; hover a box for that rank's benefits. The row never registers a perk or grants XP.
+**Body tab:** a stack of cards, the most urgent first. **Coming up** puts every card's next events in one timeline, in game and real time. **Wounds** lists each part most dangerous first, each condition in its own colour, the next step and the item it uses (or what is missing nearby), how soon it heals and when its dressing soaks through; **Treat** sees one part through, **Treat all** every wound, and **Dressing** replaces a dressing with the clean one you choose. **Nutrition** gives the weight, its trend and how long until the next weight line (in game days and real hours), how many calories stop a loss or a gain, and carbs, fat and protein with their effects; **More details** adds metabolism, what the current activity burns and the diet goal. The forecasts run the game's own nutrition rules, which `tools/game_rules.py` checks against the installed game. The Now tab shows a line for any card with something to say.
+
+**Food tooltips:** hover any food for what eating all of it does to this survivor now: the calories and stored energy, whether it starts or stops weight gain, whether it reaches the protein bonus to Strength XP, where its energy comes from, and how it suits the diet goal. **Nutrition on food** (Settings) shows it always, only when the game would print the label, or never.
+
+**Health tab:** a **Second Nature** button after Fitness opens the Nutrition card, the weight and its trend sit in the bottom strip, and each part's right-click menu gains **treat**, **fresh dressing / dress with** and **treat all**.
+
+Hover over Lifestyle's Zen or Mindfulness moodle for its tier and XP effects and a live countdown: how long until it drops a tier and until it is gone, in game and real time, with a bar from green to dark red. On the character's **Skills** tab, **Yoga** sits below **Meditation** with Lifestyle's own progress; hover a box for that rank's benefits. The row never registers a perk or grants XP.
 
 ### Moodle tiers
 
@@ -163,7 +171,7 @@ python3 tools/build.py
 python3 tools/verify.py
 ```
 
-The archive contains only Second Nature and its license, under `Contents/mods/SecondNature` and again under the legacy ID in `Contents/mods/AutoMindful`. The authoritative version is `mods/SecondNature/42/mod.info`. Game and Workshop libraries remain in their installed locations.
+The archive contains only Second Nature and its license, under `Contents/mods/SecondNature`. The authoritative version is `mods/SecondNature/42/mod.info`. Game and Workshop libraries remain in their installed locations.
 
 See [verification](docs/verification.md) for the native and portable checks, [0.1.3 verification](docs/verification-0.1.3.md) for the bulk-fluid journeys, [0.1.2 verification](docs/verification-0.1.2.md) for the earlier gameplay scope, and [upstream notes](docs/upstream.md) for Lifestyle's action lifecycle.
 

@@ -1,8 +1,8 @@
-# Publish AutoMindful releases to Steam Workshop
+# Publish Second Nature releases to Steam Workshop
 
-AutoMindful's release workflow builds and checks versioned GitHub assets. Workshop uploads are explicit foreground commands or manual runs of the shared [Steam Workshop publisher](https://github.com/DevGuyRash/steam-workshop-publisher). The former desktop service and dedicated GitHub runner have been removed. No background local publisher is required.
+Second Nature's release workflow builds and checks versioned GitHub assets. Workshop uploads are explicit foreground commands or manual runs of the shared [Steam Workshop publisher](https://github.com/DevGuyRash/steam-workshop-publisher). The former desktop service and dedicated GitHub runner have been removed. No background local publisher is required.
 
-Follow the publisher's [agent quickstart](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/agent-quickstart.md) for local uploads, its [desktop guide](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/desktop.md) for current-session requirements, and its [generic setup guide](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/setup.md) for release or cloud setup. Those guides own the reusable procedure. `AGENTS.md` links this file as AutoMindful's publishing entrypoint.
+Follow the publisher's [agent quickstart](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/agent-quickstart.md) for local uploads, its [desktop guide](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/desktop.md) for current-session requirements, and its [generic setup guide](https://github.com/DevGuyRash/steam-workshop-publisher/blob/main/docs/setup.md) for release or cloud setup. Those guides own the reusable procedure. `AGENTS.md` links this file as Second Nature's publishing entrypoint.
 
 Local candidates can be built and tested without creating a release tag, publishing a GitHub release, or uploading to Workshop. Complete local acceptance before those publication steps. The shared publisher now reuses the signed-in desktop Steam client for local uploads. Pass `--backend desktop` explicitly so an inherited environment setting cannot select another backend. Cloud publishing and an explicitly selected SteamCMD backend still use a separate login, which can replace another Steam session on the same account.
 
@@ -27,7 +27,7 @@ python3 desktop.py probe --app-id 108600
 python3 local.py DevGuyRash/SecondNature v0.1.2 --publish --backend desktop
 ```
 
-The listing text lives in [workshop/description.txt](../workshop/description.txt) (Steam BBCode). Uploads keep the current description unless `--description-file` is given, so add `--description-file /path/to/AutoMindful/workshop/description.txt` to the publish command when it changes.
+The listing text lives in [workshop/description.txt](../workshop/description.txt) (Steam BBCode). Uploads keep the current description unless `--description-file` is given, so add `--description-file /path/to/SecondNature/workshop/description.txt` to the publish command when it changes.
 
 Local release commands reuse the existing GitHub CLI login, and the upload uses the current desktop Steam session. No Steam password or Steam Guard prompt is needed. If the desktop probe fails, resolve the condition in Steam; do not silently switch to SteamCMD. The command runs in the foreground and installs no service. For a packaged local folder, the publisher also supports validation and upload through `folder.py` as described in its agent quickstart.
 
@@ -63,6 +63,18 @@ The selected logo master is [workshop/logo.png](../workshop/logo.png), and its g
 
 The shared publisher preserves the existing listing preview during ordinary content uploads. For an intentional logo replacement, stage the current released content with the new preview, then use the game-based desktop uploader above. Its update path sets content, preview, and change notes while preserving the existing item, title, description, visibility, tags, and required items. This uses the signed-in desktop Steam session and does not start SteamCMD or a separate login. Copy the validated preview to the local Workshop staging folder as well.
 
-## Mod IDs
+## Mod ID and Workshop item
 
-Since 0.7.0 the mod ID is `SecondNature`, and the package (`SecondNature-<version>.zip`) carries the same files a second time under the legacy ID `AutoMindful`, built by `tools/build.py` from the one source folder `mods/SecondNature`, with a `mod.info` that names it *Second Nature (legacy ID: only for saves made before 0.7.0)*. Saves and servers from before 0.7.0 keep working with the legacy ID and get a one-time notice on how to switch (`ModIdentity.lua`). Both copies share the internal Lua paths (`AutoMindful/...`), the settings key and the log folder, so enabling both loads each file once and nothing is lost. Drop the legacy copy only in a later release, after announcing it.
+Until 0.6.0 the mod was Workshop item `3837554362` with the mod ID `AutoMindful`. 0.7.0 moved it to the mod ID `SecondNature` on a new Workshop item, and the old item was deleted; the package carries only `Contents/mods/SecondNature`. Internal names keep the old one on purpose: the Lua folder (`media/lua/client/AutoMindful/...`), the settings key, the log folder (`Zomboid/Lua/AutoMindful`) and the survivor's saved data, so a save switched to the new mod keeps its settings and progress.
+
+## Create a new Workshop item
+
+Only when a new item is wanted, never to repair a failed update. Stage the released assets as for an update, then create the item hidden and publish it once it shows the right content. The listing text comes from `workshop/description.txt`, the title and tags from `workshop/workshop.txt`.
+
+```sh
+javac --release 25 -cp /path/to/projectzomboid/projectzomboid.jar -d /path/to/classes tools/SteamWorkshopBootstrap.java
+java -Dzomboid.steam=1 -Djava.library.path=/path/to/projectzomboid/natives -cp /path/to/classes:/path/to/projectzomboid/projectzomboid.jar SteamWorkshopBootstrap create /path/to/stage /path/to/cache
+java ... SteamWorkshopBootstrap publish-listing /path/to/stage /path/to/cache NEW_ITEM_ID
+```
+
+Run them from the game folder with `LD_LIBRARY_PATH` and `SteamAppId=108600` set as `tools/publish_desktop.py` sets them. `create` writes the new ID into the stage's `workshop.txt`; put it in `workshop-publisher.json` and the README links. `publish-listing` makes the item public and, given a further item ID, adds it as a required item. `delete STAGE CACHE ITEM_ID` deletes an item the signed-in account owns, permanently.

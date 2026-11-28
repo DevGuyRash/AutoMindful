@@ -7,7 +7,7 @@ Second Nature (formerly AutoMindful) looks after your survivor in Project Zomboi
 
 ## Install
 
-1. Subscribe to [Second Nature](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362). For Yoga and Meditation, also subscribe to [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858); Autopilot works without it.
+1. Subscribe to [Second Nature](https://steamcommunity.com/sharedfiles/filedetails/?id=3847462147). For Yoga and Meditation, also subscribe to [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858); Autopilot works without it.
 2. Enable **Second Nature** for your game and restart the client.
 3. For a manual installation, copy `mods/SecondNature` into your Zomboid user folder's `mods` directory. Linux normally uses `~/Zomboid/mods/SecondNature`.
 

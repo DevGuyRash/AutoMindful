@@ -42,7 +42,7 @@ The first command requests cloud validation. The second requests an upload. You 
 
 ## Keep the existing item
 
-Second Nature's own [workshop-publisher.json](../workshop-publisher.json) maps mod ID `SecondNature` to existing Workshop item [`3837554362`](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362), under Project Zomboid application ID `108600`. Routine updates preserve the title, description, tags, visibility, and required items. Do not create a replacement item to repair an upload or authentication failure.
+Second Nature's own [workshop-publisher.json](../workshop-publisher.json) maps mod ID `SecondNature` to existing Workshop item [`3847462147`](https://steamcommunity.com/sharedfiles/filedetails/?id=3847462147), under Project Zomboid application ID `108600`. Routine updates preserve the title, description, tags, visibility, and required items. Do not create a replacement item to repair an upload or authentication failure.
 
 Since 0.4.0 (Second Nature) [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858) is optional: Autopilot works without it, and Yoga and Meditation need it. Routine updates keep the listing's required items, so remove Lifestyle from the item's required items on Steam once when publishing 0.4.0 or later. The packaged executable files remain under `media/lua/client`. Once the mod is loaded on the client, it does not require a server-side component. With Lifestyle, its requirements and host rules still apply.
 
@@ -52,7 +52,7 @@ Prefer the shared publisher above; its desktop backend needs no installed game o
 
 ```sh
 python3 tools/workshop.py stage --archive /path/to/SecondNature-0.1.2.zip --manifest /path/to/manifest.json --tag v0.1.2 --notes-file /path/to/release-notes.txt --out /path/to/new/workshop-stage
-python3 tools/publish_desktop.py --game /path/to/ProjectZomboid/projectzomboid --stage /path/to/new/workshop-stage --item-id 3837554362
+python3 tools/publish_desktop.py --game /path/to/ProjectZomboid/projectzomboid --stage /path/to/new/workshop-stage --item-id 3847462147
 ```
 
 Staging checks package bytes against the tagged checkout and manifest before the native uploader calls Steam. The shared publisher validates the source repository's published release assets without executing its code and can upload through desktop Steam or explicitly selected SteamCMD. Every path updates the same existing item.
@@ -65,7 +65,7 @@ The shared publisher preserves the existing listing preview during ordinary cont
 
 ## Mod ID and Workshop item
 
-Until 0.6.0 the mod was Workshop item `3837554362` with the mod ID `AutoMindful`. 0.7.0 moved it to the mod ID `SecondNature` on a new Workshop item, and the old item was deleted; the package carries only `Contents/mods/SecondNature`. Internal names keep the old one on purpose: the Lua folder (`media/lua/client/AutoMindful/...`), the settings key, the log folder (`Zomboid/Lua/AutoMindful`) and the survivor's saved data, so a save switched to the new mod keeps its settings and progress.
+Until 0.6.0 the mod was Workshop item `3837554362` with the mod ID `AutoMindful`. 0.7.0 moved it to the mod ID `SecondNature` on a new Workshop item, `3847462147`, and the old item was deleted; the package carries only `Contents/mods/SecondNature`. Internal names keep the old one on purpose: the Lua folder (`media/lua/client/AutoMindful/...`), the settings key, the log folder (`Zomboid/Lua/AutoMindful`) and the survivor's saved data, so a save switched to the new mod keeps its settings and progress.
 
 ## Create a new Workshop item
 

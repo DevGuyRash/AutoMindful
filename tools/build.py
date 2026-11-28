@@ -16,23 +16,6 @@ VERSION_PATTERN = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 MENU_ICONS = {"mods/SecondNature/common/media/ui/AutoMindful/" + name + ".png"
               for name in ("Mindful", "Yoga", "Meditate", "Endurance")}
 MOD_ID = "SecondNature"
-# Saves and servers made before 0.7.0 name the mod AutoMindful. The package
-# carries the same files under that ID too, so they keep working; both copies
-# use the same internal Lua paths, so enabling both still loads each file once.
-LEGACY_ID = "AutoMindful"
-LEGACY_NAME = " (legacy ID: only for saves made before 0.7.0)"
-
-
-def legacy_info(data: bytes) -> bytes:
-    """The same mod.info under the old ID, its name saying what it is for."""
-    lines = []
-    for line in data.decode("utf-8").splitlines():
-        if line.startswith("id="):
-            line = "id=" + LEGACY_ID
-        elif line.startswith("name="):
-            line = line + LEGACY_NAME
-        lines.append(line)
-    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def release_version(tag: str) -> str:
@@ -61,14 +44,10 @@ def package_files() -> dict[str, bytes]:
             raise ValueError(f"Unexpected mod in package: {relative}")
         if path.name != "mod.info" and relative not in MENU_ICONS and not (path.suffix == ".lua" and "/media/lua/client/" in relative):
             raise ValueError(f"Unsupported package input: {relative}")
-        data = path.read_bytes()
-        result["Contents/" + relative] = data
-        legacy = relative.replace(f"mods/{MOD_ID}/", f"mods/{LEGACY_ID}/", 1)
-        result["Contents/" + legacy] = legacy_info(data) if path.name == "mod.info" else data
+        result["Contents/" + relative] = path.read_bytes()
     if any("Contents/" + icon not in result for icon in MENU_ICONS):
         raise ValueError("Missing packaged menu icon")
-    for mod in (MOD_ID, LEGACY_ID):
-        result[f"Contents/mods/{mod}/LICENSE"] = (ROOT / "LICENSE").read_bytes()
+    result[f"Contents/mods/{MOD_ID}/LICENSE"] = (ROOT / "LICENSE").read_bytes()
     return result
 
 
@@ -80,7 +59,7 @@ def build(output: Path, tag: str | None = None) -> Path:
     if not compiler:
         raise RuntimeError("Lua 5.1 compiler (luac5.1) is required")
     files = package_files()
-    scripts = [ROOT / name.removeprefix("Contents/") for name in files if name.endswith(".lua") and f"/mods/{MOD_ID}/" in "/" + name]
+    scripts = [ROOT / name.removeprefix("Contents/") for name in files if name.endswith(".lua")]
     if not scripts:
         raise RuntimeError("No client Lua found")
     for script in scripts:

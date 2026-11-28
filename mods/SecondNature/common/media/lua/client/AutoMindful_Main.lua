@@ -4,7 +4,6 @@ local Theme = require "AutoMindful/Theme"
 local Log = require "AutoMindful/Log"
 local Presence = require "AutoMindful/Presence"
 local WorldMenu = require "AutoMindful/WorldMenu"
-local ModIdentity = require "AutoMindful/ModIdentity"
 require "XpSystem/ISUI/ISCharacterInfo"
 require("AutoMindful/SkillsPane").install()
 local ZenMoodle = require "AutoMindful/ZenMoodle"
@@ -24,16 +23,13 @@ local function version(id)
 end
 
 local function onGameStart()
-    Log.start(ModIdentity.version(), version("LifestyleHobbies"))
+    Log.start(version("SecondNature"), version("LifestyleHobbies"))
     Theme.preload()
     ZenMoodle.onPlayerReady()
     WorldMenu.install()
     -- Mods loaded after this one may have replaced these since: wrap what is there now.
     FoodHover.install()
     HealthPanel.install()
-    -- A save from before 0.7.0 still on the old ID: told once how to switch.
-    local player = getSpecificPlayer and getSpecificPlayer(0)
-    if player then ModIdentity.notify(player) end
 end
 
 local function keyPressed(key)

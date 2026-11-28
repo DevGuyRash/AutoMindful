@@ -1,16 +1,4 @@
 version=1
 title=Second Nature - Autopilot and Training [B42]
-description=Second Nature (formerly AutoMindful) looks after your survivor while you play or are away, and trains skills for you.
-description=
-description=[h2]Features[/h2]
-description=Autopilot keeps the survivor fed, watered, rested and bandaged, watches supplies and warns before they run out. With Lifestyle: Hobbies it also trains Yoga and Meditation toward level 10 using Lifestyle's own actions and XP.
-description=
-description=[h2]How to use[/h2]
-description=Right-click your survivor (or open Lifestyle's Wellness menu) and choose Second Nature. Ordinary walking pauses and resumes the job; Stop All stops only Second Nature. Settings are in the window or Options > Mods > Second Nature.
-description=
-description=[h2]Requirements and multiplayer[/h2]
-description=Project Zomboid Build 42.22+. Lifestyle: Hobbies is optional and needed only for Yoga and Meditation. Tested on 42.22.2 with official Lifestyle 0.4.0.3.
-description=All executable code is client-side. Once loaded on the client, Second Nature does not need a server-side component. Server rules still apply.
-description=Mod ID: AutoMindful
 tags=Build 42
 visibility=private

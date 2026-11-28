@@ -11,7 +11,7 @@ Second Nature (formerly AutoMindful) looks after your survivor in Project Zomboi
 2. Enable the mods for your game and restart the client. The mod ID stays `AutoMindful`, so saves and settings carry over.
 3. For a manual installation, copy `mods/AutoMindful` into your Zomboid user folder's `mods` directory. Linux normally uses `~/Zomboid/mods/AutoMindful`.
 
-If you already have a development copy under `~/Zomboid/Workshop/AutoMindful/Contents/mods/AutoMindful`, check which directory the game actually selects for mod ID `AutoMindful`. A new copy in `mods` does not replace the files in that staging directory. Update the selected copy, check its `42/mod.info` version, and restart the client. Local installation does not update the public Workshop item.
+If you already have a development copy under `~/Zomboid/Workshop/SecondNature/Contents/mods/AutoMindful`, check which directory the game actually selects for mod ID `AutoMindful`. A new copy in `mods` does not replace the files in that staging directory. Update the selected copy, check its `42/mod.info` version, and restart the client. Local installation does not update the public Workshop item.
 
 Second Nature uses client Lua for Build 42.22 and later. It has no server scripts. Once Second Nature is loaded on the client, Second Nature itself does not require a server mod or server-side setup. With Lifestyle, its normal gameplay requirements still apply. The mod does not bypass server checks.
 

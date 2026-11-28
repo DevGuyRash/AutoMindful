@@ -1,6 +1,6 @@
 # 0.1.3 verification
 
-Version 0.1.3 adds safe bulk-fluid supplies, measured native transfers into empty drinking vessels, and separate return records for the source and vessel. After these checks, [v0.1.3 was released on GitHub](https://github.com/DevGuyRash/AutoMindful/releases/tag/v0.1.3) and uploaded to the [existing Workshop item](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362) on 2026-11-13. The upload reused the signed-in desktop Steam session without SteamCMD or a separate login.
+Version 0.1.3 adds safe bulk-fluid supplies, measured native transfers into empty drinking vessels, and separate return records for the source and vessel. After these checks, [v0.1.3 was released on GitHub](https://github.com/DevGuyRash/SecondNature/releases/tag/v0.1.3) and uploaded to the [existing Workshop item](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362) on 2026-11-13. The upload reused the signed-in desktop Steam session without SteamCMD or a separate login.
 
 The package contains ten client Lua files and no server implementation. It uses the installed game's fluid wrappers, transfer action, drinking action, and inventory actions. The [supply policy](supplies.md) describes source selection and mixture safety.
 

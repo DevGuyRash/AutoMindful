@@ -2,7 +2,7 @@
 -- (ISHealthPanel's handlers and the timed actions under media/lua/shared).
 -- Body parts, items and the world are doubles; every expected order comes
 -- from those rules, not from the planner.
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 for _, name in ipairs({"ISApplyBandage", "ISRemoveGlass", "ISRemoveBullet", "ISDisinfect", "ISStitch", "ISSplint",
         "ISCleanBurn", "ISComfreyCataplasm", "ISGarlicCataplasm", "ISPlantainCataplasm"}) do
     package.loaded["TimedActions/" .. name] = true

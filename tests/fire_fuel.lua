@@ -2,7 +2,7 @@
 -- branches, paper rubbish, charcoal and firewood, rags, a sheet, planks and
 -- logs last), and never what a player would want kept. Durations stand in for
 -- ISCampingMenu.getFuelDurationForItem; the game's own isValidFuel still decides.
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 function isClient() return false end
 local minutes = {Twigs = 15, Splinters = 10, TreeBranch2 = 60, LargeBranch = 90, Newspaper = 15, PaperBag = 5,
     Charcoal = 60, Firewood = 120, RippedSheetsDirty = 5, RippedSheets = 5, Sheet = 15, Plank = 120, Log = 360,

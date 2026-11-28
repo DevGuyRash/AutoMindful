@@ -82,10 +82,29 @@ class PreviewTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_legacy_id_carries_the_same_mod(self):
+        with zipfile.ZipFile(self.archive) as package:
+            names = package.namelist()
+            new = {n for n in names if n.startswith("Contents/mods/SecondNature/")}
+            old = {n for n in names if n.startswith("Contents/mods/AutoMindful/")}
+            self.assertEqual({n.replace("/SecondNature/", "/AutoMindful/", 1) for n in new}, old, "every file under both IDs")
+            for name in new:
+                twin = name.replace("/SecondNature/", "/AutoMindful/", 1)
+                if name.endswith("mod.info"):
+                    info = package.read(twin).decode()
+                    self.assertIn("id=AutoMindful", info.splitlines())
+                    self.assertIn("legacy ID", info)
+                    self.assertIn("id=SecondNature", package.read(name).decode().splitlines())
+                else:
+                    self.assertEqual(package.read(name), package.read(twin), name)
+
     def test_context_menu_art_in_the_actual_archive(self):
         with zipfile.ZipFile(self.archive) as package:
             icons = {p for p in package.namelist() if p.endswith(".png")}
-            self.assertEqual(icons, {"Contents/" + name for name in build.MENU_ICONS})
+            expected = {"Contents/" + name for name in build.MENU_ICONS}
+            # The same art under the legacy ID, for saves made before 0.7.0.
+            expected |= {name.replace("/mods/SecondNature/", "/mods/AutoMindful/") for name in expected}
+            self.assertEqual(icons, expected)
             images = set()
             for name in icons:
                 data = package.read(name)
@@ -167,7 +186,7 @@ class ReleaseTests(unittest.TestCase):
         with zipfile.ZipFile(self.archive) as source, zipfile.ZipFile(damaged, "w") as target:
             for name in source.namelist():
                 target.writestr(name, source.read(name))
-            target.writestr("Contents/mods/AutoMindful/.git/config", "not release content")
+            target.writestr("Contents/mods/SecondNature/.git/config", "not release content")
         record = json.loads(self.manifest.read_text())
         record["archiveSha256"] = hashlib.sha256(damaged.read_bytes()).hexdigest()
         manifest = self.root / "manifest.json"
@@ -177,7 +196,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_stage_rejects_mutation_and_untracked_files(self):
         stage = self.make_stage()
-        injected = stage / "Contents/mods/AutoMindful/config.vdf"
+        injected = stage / "Contents/mods/SecondNature/config.vdf"
         injected.write_text("not release content")
         with self.assertRaisesRegex(ValueError, "unexpected files"):
             workshop.checked_stage(stage)

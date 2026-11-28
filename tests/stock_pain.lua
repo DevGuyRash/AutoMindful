@@ -139,7 +139,7 @@ end)
 -- Run the real stock menu, timed action and AutoMindful medication guard
 -- together. Model Java JustTookPill's separate vitamin/analgesic branches and
 -- the network arrival of the positive effect/delta explicitly.
-package.path='mods/AutoMindful/common/media/lua/client/?.lua;'..package.path
+package.path='mods/SecondNature/common/media/lua/client/?.lua;'..package.path
 local PainCare=require "AutoMindful/PainCare"
 CharacterStat={PAIN="pain",INTOXICATION="intox"}
 function instanceof(i,k) return i and i.drainable and k=="DrainableComboItem" end

@@ -1,6 +1,6 @@
 -- Explicit Lua UI/player doubles. stock_skills_pane.lua reuses these boundaries
 -- but replaces the pane/bar implementation with untouched pinned B42 source.
-package.path="mods/AutoMindful/common/media/lua/client/?.lua;"..package.path
+package.path="mods/SecondNature/common/media/lua/client/?.lua;"..package.path
 local H={now=1000,players={},reads={},writes=0,passed=0}
 UIFont={Small="Small"}; Perks={None="None",Meditation="Meditation"}
 function getTimestampMs() return H.now end

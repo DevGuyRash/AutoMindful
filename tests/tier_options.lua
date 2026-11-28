@@ -1,4 +1,4 @@
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 local stock = arg and arg[1]
 if not loadUpstream and stock then
     function loadUpstream(name) return assert(loadfile(stock .. "/lua/" .. name))() end

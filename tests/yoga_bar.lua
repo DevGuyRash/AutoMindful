@@ -1,5 +1,5 @@
 -- Read-only lifecycle/visual geometry contract with explicit Java/UI doubles.
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 local function no() end
 local function forbidden() error("Yoga must never call native perk/XP APIs") end
 local function panel(name)

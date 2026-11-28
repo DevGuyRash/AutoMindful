@@ -8,10 +8,10 @@ Local candidates can be built and tested without creating a release tag, publish
 
 ## Build a release
 
-1. Set `modversion` in `mods/AutoMindful/42/mod.info` to the next stable version. This file is the authoritative package version.
+1. Set `modversion` in `mods/SecondNature/42/mod.info` to the next stable version. This file is the authoritative package version.
 2. Merge the change to `main` after checks pass.
 3. Publish a GitHub release with a matching tag such as `v0.1.2`, pointing to that commit on `main`.
-4. Wait for **Build release assets** to pass. It verifies tagged source and main-branch ancestry, runs the portable checks, and attaches `AutoMindful-<version>.zip`, `manifest.json`, and `release-notes.txt` to that release.
+4. Wait for **Build release assets** to pass. It verifies tagged source and main-branch ancestry, runs the portable checks, and attaches `SecondNature-<version>.zip`, `manifest.json`, and `release-notes.txt` to that release.
 
 The build uses release assets and does not require Actions artifact storage. A release builds its assets without automatically changing Steam Workshop. Manual build runs default to validation. Enable their upload option only to attach checked assets to the latest stable GitHub release. Drafts, prereleases, mismatched versions, and source outside `main` cannot publish release assets through this workflow.
 
@@ -42,7 +42,7 @@ The first command requests cloud validation. The second requests an upload. You 
 
 ## Keep the existing item
 
-AutoMindful's own [workshop-publisher.json](../workshop-publisher.json) maps mod ID `AutoMindful` to existing Workshop item [`3837554362`](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362), under Project Zomboid application ID `108600`. Routine updates preserve the title, description, tags, visibility, and required items. Do not create a replacement item to repair an upload or authentication failure.
+Second Nature's own [workshop-publisher.json](../workshop-publisher.json) maps mod ID `SecondNature` to existing Workshop item [`3837554362`](https://steamcommunity.com/sharedfiles/filedetails/?id=3837554362), under Project Zomboid application ID `108600`. Routine updates preserve the title, description, tags, visibility, and required items. Do not create a replacement item to repair an upload or authentication failure.
 
 Since 0.4.0 (Second Nature) [Lifestyle: Hobbies](https://steamcommunity.com/sharedfiles/filedetails/?id=3403870858) is optional: Autopilot works without it, and Yoga and Meditation need it. Routine updates keep the listing's required items, so remove Lifestyle from the item's required items on Steam once when publishing 0.4.0 or later. The packaged executable files remain under `media/lua/client`. Once the mod is loaded on the client, it does not require a server-side component. With Lifestyle, its requirements and host rules still apply.
 
@@ -51,7 +51,7 @@ Since 0.4.0 (Second Nature) [Lifestyle: Hobbies](https://steamcommunity.com/shar
 Prefer the shared publisher above; its desktop backend needs no installed game or JDK. The original native uploader remains available as an explicit fallback. It needs the installed game, JDK 25, and Steam signed into the owning account. It does not install or start a service.
 
 ```sh
-python3 tools/workshop.py stage --archive /path/to/AutoMindful-0.1.2.zip --manifest /path/to/manifest.json --tag v0.1.2 --notes-file /path/to/release-notes.txt --out /path/to/new/workshop-stage
+python3 tools/workshop.py stage --archive /path/to/SecondNature-0.1.2.zip --manifest /path/to/manifest.json --tag v0.1.2 --notes-file /path/to/release-notes.txt --out /path/to/new/workshop-stage
 python3 tools/publish_desktop.py --game /path/to/ProjectZomboid/projectzomboid --stage /path/to/new/workshop-stage --item-id 3837554362
 ```
 
@@ -62,3 +62,7 @@ Staging checks package bytes against the tagged checkout and manifest before the
 The selected logo master is [workshop/logo.png](../workshop/logo.png), and its generated prompt record is [workshop/logo-prompt.md](../workshop/logo-prompt.md). The listing uses [workshop/preview.png](../workshop/preview.png), a 256 × 256 PNG validated by `tools/workshop.py`.
 
 The shared publisher preserves the existing listing preview during ordinary content uploads. For an intentional logo replacement, stage the current released content with the new preview, then use the game-based desktop uploader above. Its update path sets content, preview, and change notes while preserving the existing item, title, description, visibility, tags, and required items. This uses the signed-in desktop Steam session and does not start SteamCMD or a separate login. Copy the validated preview to the local Workshop staging folder as well.
+
+## Mod IDs
+
+Since 0.7.0 the mod ID is `SecondNature`, and the package (`SecondNature-<version>.zip`) carries the same files a second time under the legacy ID `AutoMindful`, built by `tools/build.py` from the one source folder `mods/SecondNature`, with a `mod.info` that names it *Second Nature (legacy ID: only for saves made before 0.7.0)*. Saves and servers from before 0.7.0 keep working with the legacy ID and get a one-time notice on how to switch (`ModIdentity.lua`). Both copies share the internal Lua paths (`AutoMindful/...`), the settings key and the log folder, so enabling both loads each file once and nothing is lost. Drop the legacy copy only in a later release, after announcing it.

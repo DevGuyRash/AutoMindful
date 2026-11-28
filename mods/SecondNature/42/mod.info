@@ -1,5 +1,5 @@
 name=Second Nature
-id=AutoMindful
+id=SecondNature
 loadModAfter=LifestyleHobbies
 description=Second Nature (formerly AutoMindful): Autopilot looks after your survivor while you play or are away, and trains skills for you. Yoga and Meditation with Lifestyle: Hobbies. Client scripts only.
 modversion=0.6.0

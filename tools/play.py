@@ -27,7 +27,8 @@ def profile_options(profile: Path | None) -> dict[str, str]:
     return {key: value for key, value in rows if key in PROFILE_KEYS}
 
 
-def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[Path], profile: Path | None = None) -> int:
+def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[Path], profile: Path | None = None,
+         legacy: str | None = None) -> int:
     game, evidence = game.resolve(), evidence.resolve()
     lifestyle = lifestyle.resolve() if lifestyle else None
     if not (game / "projectzomboid.jar").is_file():
@@ -50,9 +51,10 @@ def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[
         launch = 1
     archive = build(evidence / f"package-{launch}")
     cache = evidence / "cache"
-    installed = cache / "mods/AutoMindful"
-    if installed.exists():
-        shutil.rmtree(installed)
+    for name in ("SecondNature", "AutoMindful"):
+        installed = cache / "mods" / name
+        if installed.exists():
+            shutil.rmtree(installed)
     with zipfile.ZipFile(archive) as package:
         for name in package.namelist():
             target = cache / Path(name).relative_to("Contents")
@@ -63,7 +65,9 @@ def play(game: Path, lifestyle: Path, evidence: Path, resume: bool, extra: list[
         lifestyle_link.unlink()
     if lifestyle and not lifestyle_link.exists():
         shutil.copytree(lifestyle, lifestyle_link, copy_function=os.link)
-    mod_ids = (["LifestyleHobbies"] if lifestyle else []) + ["AutoMindful"]
+    # legacy: a profile from before 0.7.0, with the old ID enabled instead.
+    ids = {"new": ["SecondNature"], "old": ["AutoMindful"], "both": ["AutoMindful", "SecondNature"]}[legacy or "new"]
+    mod_ids = (["LifestyleHobbies"] if lifestyle else []) + ids
     for mod in extra:
         target = cache / "mods" / mod.name
         if target.is_symlink():
@@ -138,7 +142,9 @@ if __name__ == "__main__":
     parser.add_argument("--profile-options", type=Path,
         help="Copy fonts and screen size from this options.ini")
     parser.add_argument("--extra-mod", action="append", type=Path, default=[])
+    parser.add_argument("--ids", choices=("new", "old", "both"), default="new",
+        help="Which of the mod's IDs the profile enables: new (SecondNature), old (AutoMindful, a save from before 0.7.0) or both")
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     raise SystemExit(play(args.game, args.lifestyle, args.evidence.expanduser(), args.resume, args.extra_mod,
-        args.profile_options))
+        args.profile_options, args.ids))

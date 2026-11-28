@@ -13,8 +13,26 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_PATTERN = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-MENU_ICONS = {"mods/AutoMindful/common/media/ui/AutoMindful/" + name + ".png"
+MENU_ICONS = {"mods/SecondNature/common/media/ui/AutoMindful/" + name + ".png"
               for name in ("Mindful", "Yoga", "Meditate", "Endurance")}
+MOD_ID = "SecondNature"
+# Saves and servers made before 0.7.0 name the mod AutoMindful. The package
+# carries the same files under that ID too, so they keep working; both copies
+# use the same internal Lua paths, so enabling both still loads each file once.
+LEGACY_ID = "AutoMindful"
+LEGACY_NAME = " (legacy ID: only for saves made before 0.7.0)"
+
+
+def legacy_info(data: bytes) -> bytes:
+    """The same mod.info under the old ID, its name saying what it is for."""
+    lines = []
+    for line in data.decode("utf-8").splitlines():
+        if line.startswith("id="):
+            line = "id=" + LEGACY_ID
+        elif line.startswith("name="):
+            line = line + LEGACY_NAME
+        lines.append(line)
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def release_version(tag: str) -> str:
@@ -24,7 +42,7 @@ def release_version(tag: str) -> str:
 
 
 def version() -> str:
-    lines = (ROOT / "mods/AutoMindful/42/mod.info").read_text(encoding="utf-8").splitlines()
+    lines = (ROOT / "mods/SecondNature/42/mod.info").read_text(encoding="utf-8").splitlines()
     versions = [line.removeprefix("modversion=").strip() for line in lines if line.startswith("modversion=")]
     if len(versions) != 1 or not re.fullmatch(VERSION_PATTERN, versions[0]):
         raise ValueError("42/mod.info must contain exactly one stable modversion=MAJOR.MINOR.PATCH")
@@ -39,14 +57,18 @@ def package_files() -> dict[str, bytes]:
         if not path.is_file():
             continue
         relative = path.relative_to(ROOT).as_posix()
-        if not relative.startswith("mods/AutoMindful/") or any(part.startswith(".") for part in path.relative_to(ROOT).parts):
+        if not relative.startswith(f"mods/{MOD_ID}/") or any(part.startswith(".") for part in path.relative_to(ROOT).parts):
             raise ValueError(f"Unexpected mod in package: {relative}")
         if path.name != "mod.info" and relative not in MENU_ICONS and not (path.suffix == ".lua" and "/media/lua/client/" in relative):
             raise ValueError(f"Unsupported package input: {relative}")
-        result["Contents/" + relative] = path.read_bytes()
+        data = path.read_bytes()
+        result["Contents/" + relative] = data
+        legacy = relative.replace(f"mods/{MOD_ID}/", f"mods/{LEGACY_ID}/", 1)
+        result["Contents/" + legacy] = legacy_info(data) if path.name == "mod.info" else data
     if any("Contents/" + icon not in result for icon in MENU_ICONS):
-        raise ValueError("Missing packaged AutoMindful menu icon")
-    result["Contents/mods/AutoMindful/LICENSE"] = (ROOT / "LICENSE").read_bytes()
+        raise ValueError("Missing packaged menu icon")
+    for mod in (MOD_ID, LEGACY_ID):
+        result[f"Contents/mods/{mod}/LICENSE"] = (ROOT / "LICENSE").read_bytes()
     return result
 
 
@@ -58,7 +80,7 @@ def build(output: Path, tag: str | None = None) -> Path:
     if not compiler:
         raise RuntimeError("Lua 5.1 compiler (luac5.1) is required")
     files = package_files()
-    scripts = [ROOT / name.removeprefix("Contents/") for name in files if name.endswith(".lua")]
+    scripts = [ROOT / name.removeprefix("Contents/") for name in files if name.endswith(".lua") and f"/mods/{MOD_ID}/" in "/" + name]
     if not scripts:
         raise RuntimeError("No client Lua found")
     for script in scripts:
@@ -69,7 +91,7 @@ def build(output: Path, tag: str | None = None) -> Path:
     staging = Path(tempfile.mkdtemp(prefix=".automindful-build-", dir=output))
     cleanup = True
     try:
-        archive = staging / f"AutoMindful-{current_version}.zip"
+        archive = staging / f"{MOD_ID}-{current_version}.zip"
         manifest = {}
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
             for name, data in files.items():
@@ -79,7 +101,7 @@ def build(output: Path, tag: str | None = None) -> Path:
                 package.writestr(entry, data)
                 manifest[name] = hashlib.sha256(data).hexdigest()
         (staging / "manifest.json").write_text(json.dumps({
-            "id": "AutoMindful", "version": current_version, "files": manifest,
+            "id": MOD_ID, "version": current_version, "files": manifest,
             "archiveSha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
         }, indent=2) + "\n", encoding="utf-8")
         artifacts = [archive, staging / "manifest.json"]

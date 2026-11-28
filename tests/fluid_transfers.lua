@@ -1,4 +1,4 @@
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. (package.path or "")
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. (package.path or "")
 local Fixtures = loadTest and loadTest("fluid_fixtures.lua") or assert(loadfile("tests/fluid_fixtures.lua"))()
 FluidCategory = Fixtures.categories
 for _, name in ipairs({"Fluids/ISFluidContainer", "Fluids/ISFluidUtil", "Fluids/ISFluidTransferAction",

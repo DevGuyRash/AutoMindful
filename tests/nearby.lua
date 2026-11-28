@@ -1,4 +1,4 @@
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 -- Explicit game-boundary doubles: discovery must never request/generate loot.
 package.loaded["AutoMindful/Consumables"] = {inspect = function(_, item)
     return {food = item.food == true and not item.unsafe, water = item.water == true and not item.unsafe}

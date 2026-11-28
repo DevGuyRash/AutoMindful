@@ -1,6 +1,6 @@
 -- The food hover: what eating all of a food does to this survivor now,
 -- against the game's calorie lines and protein band, worked by hand.
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 package.loaded["PZAPI/ModOptions"] = true
 for _, name in ipairs({"ISApplyBandage", "ISRemoveGlass", "ISRemoveBullet", "ISDisinfect", "ISStitch", "ISSplint",
         "ISCleanBurn", "ISComfreyCataplasm", "ISGarlicCataplasm", "ISPlantainCataplasm"}) do

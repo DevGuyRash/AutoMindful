@@ -69,7 +69,7 @@ def stage(archive: Path, manifest_path: Path, tag: str, output: Path, notes: str
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     expected = package_files()
     expected_hashes = {name: sha256(data) for name, data in expected.items()}
-    if manifest.get("id") != "AutoMindful" or manifest.get("version") != current or manifest.get("files") != expected_hashes:
+    if manifest.get("id") != "SecondNature" or manifest.get("version") != current or manifest.get("files") != expected_hashes:
         raise ValueError("Manifest does not match the checked-out release package")
     if sha256(archive.read_bytes()) != manifest.get("archiveSha256"):
         raise ValueError("Archive SHA256 does not match the verified manifest")

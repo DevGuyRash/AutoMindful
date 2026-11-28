@@ -1,4 +1,4 @@
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. (package.path or "")
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. (package.path or "")
 for _, name in ipairs({"ISUI/ISInventoryPaneContextMenu", "TimedActions/ISDrinkFluidAction",
         "TimedActions/ISInventoryTransferUtil", "TimedActions/ISDropWorldItemAction", "Fluids/ISFluidContainer",
         "Fluids/ISFluidUtil", "Fluids/ISFluidTransferAction"}) do package.loaded[name] = true end

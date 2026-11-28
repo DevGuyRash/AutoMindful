@@ -1,6 +1,6 @@
 -- Build 42's Kahlua exposes pairs, but no global next.
 next = nil
-local runtime = "mods/AutoMindful/common/media/lua/client/"
+local runtime = "mods/SecondNature/common/media/lua/client/"
 package.path = runtime .. "?.lua;" .. package.path
 package.loaded["AutoMindful/WaterSources"] = {scan=function() return {} end, choose=function() return nil end}
 for _, name in ipairs({"TimedActions/ISTimedActionQueue", "TimedActions/ISReadABook", "TimedActions/ISDrinkFluidAction", "TimedActions/ISWaitWhileGettingUp", "ISUI/ISWorldObjectContextMenu", "ISUI/ISInventoryPaneContextMenu", "TimedActions/ISInventoryTransferUtil", "TimedActions/ISBaseTimedAction", "TimedActions/ISDropWorldItemAction", "Fluids/ISFluidContainer", "Fluids/ISFluidUtil", "Fluids/ISFluidTransferAction"}) do

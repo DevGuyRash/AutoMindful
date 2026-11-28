@@ -1,7 +1,7 @@
 -- Portable tests use explicit Lifestyle option/action doubles. Pass Lifestyle's
 -- common/media directory to execute its installed builders, callbacks, constructors,
 -- updates and performs instead (world objects, transport and PZ queue are doubled).
-package.path="mods/AutoMindful/common/media/lua/client/?.lua;"..package.path
+package.path="mods/SecondNature/common/media/lua/client/?.lua;"..package.path
 local refs=(arg and arg[1]) or loadUpstream
 local function stock(path)
     if loadUpstream then return loadUpstream(path) end

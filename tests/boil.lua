@@ -2,7 +2,7 @@
 -- kitchen's shared drivers. The game's rules it must keep: DisinfectBandage
 -- takes 0.5 l of water in a container hotter than 1.6 (recipes_medical.txt,
 -- RecipeCodeOnTest.hotFluidContainer); the heat is never left on.
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 for _, name in ipairs({"ISApplyBandage", "ISRemoveGlass", "ISRemoveBullet", "ISDisinfect", "ISStitch", "ISSplint",
         "ISCleanBurn", "ISComfreyCataplasm", "ISGarlicCataplasm", "ISPlantainCataplasm"}) do
     package.loaded["TimedActions/" .. name] = true

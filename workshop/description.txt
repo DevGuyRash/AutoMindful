@@ -39,4 +39,4 @@ Project Zomboid Build 42.22+. Yoga and Meditation also need [url=https://steamco
 
 All Second Nature code runs on the client. On a server it must still be in the server's mod list, and the server's rules and, with Lifestyle, its own requirements apply.
 
-Mod ID: AutoMindful
+Mod ID: SecondNature. Saves made before 0.7.0 use the old ID, AutoMindful: the mod is included under it too, as "Second Nature (legacy ID)", so those saves keep working and get a one-time note on how to switch. New saves only need Second Nature.

@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-CLIENT = ROOT / "mods/AutoMindful/common/media/lua/client"
+CLIENT = ROOT / "mods/SecondNature/common/media/lua/client"
 NUTRITION = "zombie.characters.BodyDamage.Nutrition"
 XP = "zombie.characters.IsoGameCharacter$XP"
 

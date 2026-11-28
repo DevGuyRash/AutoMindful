@@ -1,4 +1,4 @@
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 local Coexist = require "AutoMindful/Coexist"
 local player = {getPlayerNum=function() return 0 end}
 assert(Coexist.owner(player) == nil, "No Auto All: nothing else is in charge")

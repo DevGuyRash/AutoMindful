@@ -1,4 +1,4 @@
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 local Fixtures = loadTest and loadTest("fluid_fixtures.lua") or assert(loadfile("tests/fluid_fixtures.lua"))()
 for _, name in ipairs({"ISUI/ISInventoryPaneContextMenu", "TimedActions/ISTakeWaterAction",
         "TimedActions/ISWaitWhileGettingUp", "TimedActions/ISWearClothing", "TimedActions/ISBaseTimedAction",

@@ -1,6 +1,6 @@
 -- The window and right-click menu as a player meets them, over explicit doubles
 -- for the game's widgets. Rows are measured, drawn and clicked by the real code.
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 for _, name in ipairs({"ISCollapsableWindow", "ISPanel", "ISButton", "ISContextMenu", "ISToolTip"}) do package.loaded["ISUI/" .. name] = true end
 package.loaded["PZAPI/ModOptions"] = true
 package.loaded["ISMeditation/ZenWellnessContextMenu"] = true

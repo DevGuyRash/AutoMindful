@@ -1,7 +1,7 @@
 -- Portable contracts; pass GAME/media and LIFESTYLE/common/media to exercise the
 -- real timed-action effects. The native Kahlua runner can select either reference
 -- tree with stock_hygiene.lua or lifestyle_hygiene.lua. No game/server is launched.
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 local Care = require "AutoMindful/HygieneCare"
 local empty = function() end
 local function list(t)

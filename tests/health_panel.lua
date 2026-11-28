@@ -1,6 +1,6 @@
 -- Second Nature in the game's Health tab: one button after Fitness, one
 -- weight line beside the game's hint, however often the methods are wrapped.
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 package.loaded["PZAPI/ModOptions"] = true
 for _, name in ipairs({"ISApplyBandage", "ISRemoveGlass", "ISRemoveBullet", "ISDisinfect", "ISStitch", "ISSplint",
         "ISCleanBurn", "ISComfreyCataplasm", "ISGarlicCataplasm", "ISPlantainCataplasm"}) do

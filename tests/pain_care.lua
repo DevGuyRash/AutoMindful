@@ -1,5 +1,5 @@
 next=nil -- shipped Kahlua compatibility
-package.path='mods/AutoMindful/common/media/lua/client/?.lua;'..package.path
+package.path='mods/SecondNature/common/media/lua/client/?.lua;'..package.path
 local P=require 'AutoMindful/PainCare'
 CharacterStat={PAIN='pain',INTOXICATION='intox'}
 function instanceof(i,k) return i.kind==k end

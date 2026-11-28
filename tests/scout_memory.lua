@@ -1,6 +1,6 @@
 -- Explicit world/adapter doubles only. Run in Lua 5.1 or the installed Kahlua
 -- verifier. Controller, stock pathfinding, safehouses and MP are not simulated.
-package.path="mods/AutoMindful/common/media/lua/client/?.lua;"..package.path
+package.path="mods/SecondNature/common/media/lua/client/?.lua;"..package.path
 local M=require "AutoMindful/ScoutMemory"
 local cells, reads, calls
 local function lookup(x,y,z) return x..":"..y..":"..z end

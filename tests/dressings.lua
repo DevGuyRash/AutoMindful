@@ -1,7 +1,7 @@
 -- Dressing care against the game's crafts: CleanBandage takes a dirty
 -- bandage or strip and 0.5 l of water; DisinfectRag a clean bandage or rag
 -- and 0.1 l of rubbing alcohol, vodka or whiskey (recipes_medical.txt).
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 for _, name in ipairs({"ISApplyBandage", "ISRemoveGlass", "ISRemoveBullet", "ISDisinfect", "ISStitch", "ISSplint",
         "ISCleanBurn", "ISComfreyCataplasm", "ISGarlicCataplasm", "ISPlantainCataplasm"}) do
     package.loaded["TimedActions/" .. name] = true

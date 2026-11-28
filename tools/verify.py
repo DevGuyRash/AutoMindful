@@ -58,11 +58,11 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
     if lifestyle:
         checks.append(check(evidence, "lifestyle-wellness-source", [sys.executable, "tools/extract_wellness_facts.py",
             str(lifestyle.expanduser().resolve()), "--check",
-            "mods/AutoMindful/common/media/lua/client/AutoMindful/WellnessFacts.lua"]))
+            "mods/SecondNature/common/media/lua/client/AutoMindful/WellnessFacts.lua"]))
     for name, script in (("scout-memory", "scout_memory.lua"),
                          ("lifestyle-care-journey", "lifestyle_care_journey.lua"),
                          ("lifestyle-restroom", "restroom_care.lua"), ("lifestyle-hygiene", "hygiene_care.lua"),
-                         ("ui-contracts", "ui.lua"), ("log-contracts", "log.lua"), ("regressions", "regressions.lua"), ("recovery-steward", "recovery_steward.lua"), ("first-aid", "first_aid.lua"), ("nutrition", "nutrition.lua"), ("food-hover", "food_hover.lua"), ("health-panel", "health_panel.lua"), ("countdowns", "countdowns.lua"), ("dressings", "dressings.lua"), ("boil", "boil.lua"), ("fire-fuel", "fire_fuel.lua"), ("no-lifestyle", "no_lifestyle.lua"), ("coexist", "coexist.lua"), ("kitchen", "kitchen.lua"), ("diet", "diet.lua"), ("decision-status", "decision_status.lua"), ("training-cycle", "training_cycle.lua"),
+                         ("ui-contracts", "ui.lua"), ("log-contracts", "log.lua"), ("regressions", "regressions.lua"), ("recovery-steward", "recovery_steward.lua"), ("first-aid", "first_aid.lua"), ("nutrition", "nutrition.lua"), ("food-hover", "food_hover.lua"), ("health-panel", "health_panel.lua"), ("countdowns", "countdowns.lua"), ("dressings", "dressings.lua"), ("boil", "boil.lua"), ("fire-fuel", "fire_fuel.lua"), ("no-lifestyle", "no_lifestyle.lua"), ("coexist", "coexist.lua"), ("mod-identity", "mod_identity.lua"), ("kitchen", "kitchen.lua"), ("diet", "diet.lua"), ("decision-status", "decision_status.lua"), ("training-cycle", "training_cycle.lua"),
                          ("training-scheduler-integration", "training_scheduler_integration.lua"),
                          ("tier-targets", "tier_targets.lua"), ("tier-options", "tier_options.lua"),
                          ("wellness-provider", "wellness_provider.lua"),
@@ -125,7 +125,7 @@ def verify(evidence: Path, game: Path | None, lifestyle: Path | None, tag: str |
                                      ("native-lifestyle-restroom", "restroom_care.lua"),
                                      ("native-lifestyle-stock-wash", "stock_hygiene.lua"),
                                      ("native-lifestyle-hygiene", "lifestyle_hygiene.lua"),
-                                     ("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"), ("native-log-contracts", "log.lua"), ("native-regressions", "regressions.lua"), ("native-recovery-steward", "recovery_steward.lua"), ("native-first-aid", "first_aid.lua"), ("native-nutrition", "nutrition.lua"), ("native-food-hover", "food_hover.lua"), ("native-health-panel", "health_panel.lua"), ("native-countdowns", "countdowns.lua"), ("native-dressings", "dressings.lua"), ("native-boil", "boil.lua"), ("native-fire-fuel", "fire_fuel.lua"), ("native-no-lifestyle", "no_lifestyle.lua"), ("native-coexist", "coexist.lua"), ("native-kitchen", "kitchen.lua"), ("native-diet", "diet.lua"), ("native-stock-interject", "stock_interject.lua"),
+                                     ("native-contracts", "contracts.lua"), ("native-ui-contracts", "ui.lua"), ("native-log-contracts", "log.lua"), ("native-regressions", "regressions.lua"), ("native-recovery-steward", "recovery_steward.lua"), ("native-first-aid", "first_aid.lua"), ("native-nutrition", "nutrition.lua"), ("native-food-hover", "food_hover.lua"), ("native-health-panel", "health_panel.lua"), ("native-countdowns", "countdowns.lua"), ("native-dressings", "dressings.lua"), ("native-boil", "boil.lua"), ("native-fire-fuel", "fire_fuel.lua"), ("native-no-lifestyle", "no_lifestyle.lua"), ("native-coexist", "coexist.lua"), ("native-mod-identity", "mod_identity.lua"), ("native-kitchen", "kitchen.lua"), ("native-diet", "diet.lua"), ("native-stock-interject", "stock_interject.lua"),
                                      ("native-decision-status", "decision_status.lua"),
                                      ("native-training-cycle", "training_cycle.lua"),
                                      ("native-training-scheduler-integration", "training_scheduler_integration.lua"),

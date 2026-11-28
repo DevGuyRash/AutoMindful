@@ -1,7 +1,7 @@
 -- A bite between somebody else's actions, over the game's own queue, base
 -- action and queue-actions action. Characters and items are doubles.
 local media=not loadUpstream and assert(arg and arg[1],"Pass the game media path")
-package.path="mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path="mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 package.preload.ISBaseObject=function()
     ISBaseObject={}
     function ISBaseObject:derive(kind)

@@ -1,7 +1,7 @@
 -- Moodle tier countdowns against Lifestyle's own decay (LSPerTenMinutes,
 -- doMindfulnessDuration) and the sandbox day length, worked by hand: every
 -- expected number below comes from those rules, not from the code.
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 local function near(a, b, tolerance) return math.abs(a - b) <= (tolerance or 1e-6) end
 
 local now, minutesPerDay, timeOfDay = 1000, 90, 9.5

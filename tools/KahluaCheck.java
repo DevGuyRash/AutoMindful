@@ -11,7 +11,7 @@ import se.krka.kahlua.vm.LuaClosure;
 public final class KahluaCheck {
     public static void main(String[] args) throws Exception {
         Path root = Path.of(args[0]).toRealPath();
-        Path modules = root.resolve("mods/AutoMindful/common/media/lua/client");
+        Path modules = root.resolve("mods/SecondNature/common/media/lua/client");
         Path references = args.length > 1 && !args[1].equals("-") ? Path.of(args[1]).toRealPath() : null;
         String script = args.length > 2 ? args[2] : "contracts.lua";
         J2SEPlatform platform = J2SEPlatform.getInstance();

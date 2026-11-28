@@ -33,7 +33,7 @@ if not loadUpstream and arg and arg[2] == "--kahlua-queue-lookup" then
         return luaRawget(instance, key)
     end
 end
-package.path="mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path="mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 local Y=require "AutoMindful/ActionYield"
 local owner={}
 local function player()

@@ -1,4 +1,4 @@
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. package.path
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. package.path
 local moduleName = "AutoMindful/CompletionHUD"
 -- Observe only screen output and event registrations. No window/input API is mocked.
 local now, width, sm = 1000, 640, 16

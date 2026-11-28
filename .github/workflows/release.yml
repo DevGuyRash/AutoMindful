@@ -60,7 +60,7 @@ jobs:
       - name: Build, check and stage the exact release bytes
         run: |
           python3 tools/verify.py --tag "$RELEASE_TAG" --evidence "$RUNNER_TEMP/verification"
-          python3 tools/workshop.py stage --tag "$RELEASE_TAG" --archive "$RUNNER_TEMP/verification/package/AutoMindful-${RELEASE_TAG#v}.zip" --manifest "$RUNNER_TEMP/verification/package/manifest.json" --out "$RUNNER_TEMP/workshop" --notes-file "$RUNNER_TEMP/release-notes.txt"
+          python3 tools/workshop.py stage --tag "$RELEASE_TAG" --archive "$RUNNER_TEMP/verification/package/SecondNature-${RELEASE_TAG#v}.zip" --manifest "$RUNNER_TEMP/verification/package/manifest.json" --out "$RUNNER_TEMP/workshop" --notes-file "$RUNNER_TEMP/release-notes.txt"
       - name: Record the checked release identity
         id: package
         run: |
@@ -92,4 +92,4 @@ jobs:
         if: github.event_name == 'release' || inputs.publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/verification/package/AutoMindful-${RELEASE_TAG#v}.zip" "$RUNNER_TEMP/verification/package/manifest.json" "$RUNNER_TEMP/release-notes.txt" --clobber
+        run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/verification/package/SecondNature-${RELEASE_TAG#v}.zip" "$RUNNER_TEMP/verification/package/manifest.json" "$RUNNER_TEMP/release-notes.txt" --clobber

@@ -1,4 +1,4 @@
-package.path = "mods/AutoMindful/common/media/lua/client/?.lua;" .. (package.path or "")
+package.path = "mods/SecondNature/common/media/lua/client/?.lua;" .. (package.path or "")
 local Cycle = require "AutoMindful/TrainingCycle"
 
 local function entry(level, fraction, eligible, needs, rawXP)

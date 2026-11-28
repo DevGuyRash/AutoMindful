@@ -44,9 +44,13 @@ function Identity.notify(player)
     if not player or Identity.mode() ~= "legacy" then return false end
     if player:getModData()[Identity.noticeKey] then return false end
     Saved.set(player, Identity.noticeKey, true)
-    Alerts.notice(player, "Second Nature has a new mod ID",
-        "This save uses the old one (AutoMindful) and keeps working as it is. To switch, enable Second Nature and turn off "
-        .. "its legacy entry in this save's mods. Settings and progress carry over.")
+    -- On a server the host chooses the mods: nothing for the player to change.
+    local online = isClient and isClient()
+    Alerts.notice(player, "Second Nature has a new mod ID", online
+        and ("This server uses the old one (AutoMindful) and keeps working as it is. The host can switch to SecondNature "
+            .. "in the server's mod list at any time. Settings and progress carry over.")
+        or ("This save uses the old one (AutoMindful) and keeps working as it is. To switch, enable Second Nature and turn off "
+            .. "its legacy entry in this save's mods. Settings and progress carry over."))
     Log.event(player, "identity.legacy", "noticed", true)
     return true
 end

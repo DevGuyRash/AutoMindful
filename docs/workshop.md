@@ -8,10 +8,10 @@ Local candidates can be built and tested without creating a release tag, publish
 
 ## Build a release
 
-1. Set `modversion` in `mods/AutoMindful/42/mod.info` to the next stable version. This file is the authoritative package version.
+1. Set `modversion` in `mods/SecondNature/42/mod.info` to the next stable version. This file is the authoritative package version.
 2. Merge the change to `main` after checks pass.
 3. Publish a GitHub release with a matching tag such as `v0.1.2`, pointing to that commit on `main`.
-4. Wait for **Build release assets** to pass. It verifies tagged source and main-branch ancestry, runs the portable checks, and attaches `AutoMindful-<version>.zip`, `manifest.json`, and `release-notes.txt` to that release.
+4. Wait for **Build release assets** to pass. It verifies tagged source and main-branch ancestry, runs the portable checks, and attaches `SecondNature-<version>.zip`, `manifest.json`, and `release-notes.txt` to that release.
 
 The build uses release assets and does not require Actions artifact storage. A release builds its assets without automatically changing Steam Workshop. Manual build runs default to validation. Enable their upload option only to attach checked assets to the latest stable GitHub release. Drafts, prereleases, mismatched versions, and source outside `main` cannot publish release assets through this workflow.
 
@@ -51,7 +51,7 @@ Since 0.4.0 (Second Nature) [Lifestyle: Hobbies](https://steamcommunity.com/shar
 Prefer the shared publisher above; its desktop backend needs no installed game or JDK. The original native uploader remains available as an explicit fallback. It needs the installed game, JDK 25, and Steam signed into the owning account. It does not install or start a service.
 
 ```sh
-python3 tools/workshop.py stage --archive /path/to/AutoMindful-0.1.2.zip --manifest /path/to/manifest.json --tag v0.1.2 --notes-file /path/to/release-notes.txt --out /path/to/new/workshop-stage
+python3 tools/workshop.py stage --archive /path/to/SecondNature-0.1.2.zip --manifest /path/to/manifest.json --tag v0.1.2 --notes-file /path/to/release-notes.txt --out /path/to/new/workshop-stage
 python3 tools/publish_desktop.py --game /path/to/ProjectZomboid/projectzomboid --stage /path/to/new/workshop-stage --item-id 3837554362
 ```
 

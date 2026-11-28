@@ -20,6 +20,13 @@ active = {"\\AutoMindful"}
 assert(Identity.mode() == "legacy", "Only the old ID: a legacy save")
 assert(Identity.notify(player) and #notices == 1 and notices[1].detail:find("legacy entry", 1, true), "Told how to switch")
 assert(not Identity.notify(player) and #notices == 1, "Only once per save")
+-- On a server, the host is the one to switch.
+local server={data={}}
+function server:getModData() return self.data end
+function isClient() return true end
+active = {"AutoMindful"}
+assert(Identity.notify(server) and notices[2].detail:find("host", 1, true), "A server player is told the host can switch")
+isClient = nil
 active = {"AutoMindfulFixture"}
 assert(Identity.mode() == "unknown", "A different mod whose ID merely starts the same is not ours")
 function getActivatedMods() error("broken") end

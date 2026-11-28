@@ -163,7 +163,7 @@ python3 tools/build.py
 python3 tools/verify.py
 ```
 
-The archive contains only Second Nature and its license under `Contents/mods/AutoMindful`. The authoritative version is `mods/AutoMindful/42/mod.info`. Game and Workshop libraries remain in their installed locations.
+The archive contains only Second Nature and its license, under `Contents/mods/SecondNature` and again under the legacy ID in `Contents/mods/AutoMindful`. The authoritative version is `mods/SecondNature/42/mod.info`. Game and Workshop libraries remain in their installed locations.
 
 See [verification](docs/verification.md) for the native and portable checks, [0.1.3 verification](docs/verification-0.1.3.md) for the bulk-fluid journeys, [0.1.2 verification](docs/verification-0.1.2.md) for the earlier gameplay scope, and [upstream notes](docs/upstream.md) for Lifestyle's action lifecycle.
 
